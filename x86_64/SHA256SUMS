@@ -1,0 +1,8 @@
+e6ec8516e26fa9e5a6f8845ddad4076ca03372b3377b649ddef2bfceec1da91c  ./ffmpeg-full-9.0.1-1-x86_64.pkg.tar.zst
+0b127750434437e88c3a164e9f6432f10b26831c5fe87636466289be59d124b8  ./ggml-cuda-git-1:b10240.r3.563dec81c1-1-x86_64.pkg.tar.zst
+a6f5bae9ab00967ddb3e052332a0c2d0a675f7728d22904020997379b33c0536  ./linuxqq-clipsync-git-r36.cbbca25-1-x86_64.pkg.tar.zst
+cf170f71a2969ebe11510816cc9ccc480e4c6886c54debb4ba1914e56edc28bd  ./mpeghdec-4.0.1-1-x86_64.pkg.tar.zst
+2c7a2e7a0b7a999b934b1eb2d4a98cda0c606bfd5be4fe97615d21e8f8ec0cb1  ./quirc-1.2-4-x86_64.pkg.tar.zst
+05529bb231e3c93b3b8d1950355a091b0c43b0599f909e967eba99e9ac327318  ./svt-jpeg-xs-git-0.9.0.r72.gbf70ac1-1-x86_64.pkg.tar.zst
+a2b416145c522d1b4d5849275447225086d643e037eff0fd60e25fcebdc6ae65  ./whisper-cpp-cuda-git-1.9.2.r53.g1fe009c-1-x86_64.pkg.tar.zst
+7dc52162f240635d3e5297d017720f56ce8db0ae51cc9e71e38fd56f30cf364b  ./xclip-git-r190.2c3b811-1-x86_64.pkg.tar.zst
