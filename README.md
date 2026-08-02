@@ -34,7 +34,9 @@
 在日常使用的目录克隆 `main` 源码分支：
 
 ```bash
-git clone https://github.com/emoeem/pkgbuild.git ~/pkgbuild-source
+git clone --single-branch --branch main \
+  https://github.com/emoeem/pkgbuild.git \
+  ~/pkgbuild-source
 cd ~/pkgbuild-source
 ```
 
@@ -62,6 +64,8 @@ https://aur.archlinux.org/package-name.git
 ```bash
 ./scripts/add-aur-package.sh --no-push package-name
 ```
+
+完整执行流程见 `docs/add-aur-package.md`。
 
 自维护脚本只需放入 `packages/package-name/`，并确保其中同时存在
 `PKGBUILD` 和最新的 `.SRCINFO`。没有 `.aur-url` 的目录不会被自动覆盖。
@@ -100,11 +104,32 @@ SigLevel = Never
 Server = file:///var/lib/emoeem-repo/x86_64
 ```
 
-更新本地仓库镜像：
+## 自动更新客户端
+
+从 `main` 源码目录执行一次：
 
 ```bash
-git -C /var/lib/emoeem-repo pull --ff-only origin repo
-sudo pacman -Syy
+./client/install.sh
+```
+
+安装器会创建 `emoeem-update` 命令和 systemd timer。定时器每六小时：
+
+1. 以仓库所有者身份读取私人 GitHub 凭据。
+2. 强制同步最新的单提交 `repo` 快照。
+3. 清理 reflog 和旧 Git 对象，避免 `.git` 随构建次数累计。
+4. 校验软件包 SHA256。
+5. 只更新 pacman 的 `emoeem.db` 和 `emoeem.files` 缓存。
+
+也可以随时手动更新：
+
+```bash
+emoeem-update
+```
+
+查看定时器：
+
+```bash
+systemctl list-timers emoeem-repo-update.timer
 ```
 
 如果把 `repo/x86_64` 同步到自己的私有 HTTP 服务器，只需把 `Server`

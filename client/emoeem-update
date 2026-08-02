@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly config_file="${EMOEEM_CONFIG_FILE:-/etc/emoeem-repo.conf}"
+
+if (( EUID != 0 )) && [[ "${EMOEEM_ALLOW_UNPRIVILEGED:-0}" != "1" ]]; then
+    exec sudo -- "$0" "$@"
+fi
+
+if (( $# != 0 )); then
+    printf 'Usage: %s\n' "$(basename "$0")" >&2
+    exit 2
+fi
+
+if [[ ! -r "$config_file" ]]; then
+    printf 'Configuration file not found: %s\n' "$config_file" >&2
+    exit 1
+fi
+
+# The installer creates this root-owned file with shell-escaped values.
+# shellcheck source=/dev/null
+source "$config_file"
+
+readonly repository_path="${REPOSITORY_PATH:-/var/lib/emoeem-repo}"
+readonly repository_owner="${REPOSITORY_OWNER:-}"
+readonly pacman_sync_dir="${PACMAN_SYNC_DIR:-/var/lib/pacman/sync}"
+readonly pacman_lock="${PACMAN_LOCK_FILE:-/var/lib/pacman/db.lck}"
+
+if [[ -z "$repository_owner" ]] || ! id "$repository_owner" >/dev/null 2>&1; then
+    printf 'Invalid repository owner: %s\n' "$repository_owner" >&2
+    exit 1
+fi
+
+owner_home="$(getent passwd "$repository_owner" | cut -d: -f6)"
+if [[ -z "$owner_home" ]]; then
+    printf 'Unable to determine the home directory for %s.\n' \
+        "$repository_owner" >&2
+    exit 1
+fi
+readonly owner_home
+
+run_as_owner() {
+    if [[ "$(id -un)" == "$repository_owner" ]]; then
+        env HOME="$owner_home" GIT_TERMINAL_PROMPT=0 "$@"
+    else
+        runuser -u "$repository_owner" -- \
+            env HOME="$owner_home" GIT_TERMINAL_PROMPT=0 "$@"
+    fi
+}
+
+if ! run_as_owner git -C "$repository_path" rev-parse --is-inside-work-tree \
+    >/dev/null 2>&1; then
+    printf 'Git repository not found: %s\n' "$repository_path" >&2
+    exit 1
+fi
+
+if [[ -n "$(run_as_owner git -C "$repository_path" status --porcelain)" ]]; then
+    printf '%s contains local changes; refusing to discard them.\n' \
+        "$repository_path" >&2
+    exit 1
+fi
+
+if [[ -e "$pacman_lock" ]]; then
+    printf 'Pacman is currently running; retry after %s is removed.\n' \
+        "$pacman_lock" >&2
+    exit 1
+fi
+
+printf 'Fetching the latest private repository snapshot...\n'
+run_as_owner git -C "$repository_path" fetch \
+    --depth=1 \
+    --prune \
+    origin \
+    '+refs/heads/repo:refs/remotes/origin/repo'
+
+run_as_owner git -C "$repository_path" reset --hard origin/repo
+run_as_owner git -C "$repository_path" reflog expire --expire=now --all
+run_as_owner git -C "$repository_path" gc --prune=now
+
+repository_arch="${repository_path}/x86_64"
+for file in emoeem.db.tar.zst emoeem.files.tar.zst SHA256SUMS; do
+    if [[ ! -f "${repository_arch}/${file}" ]]; then
+        printf 'Repository file is missing: %s\n' \
+            "${repository_arch}/${file}" >&2
+        exit 1
+    fi
+done
+
+(
+    cd "$repository_arch"
+    sha256sum --check SHA256SUMS
+)
+
+install -d -m0755 "$pacman_sync_dir"
+install -m0644 \
+    "${repository_arch}/emoeem.db.tar.zst" \
+    "${pacman_sync_dir}/emoeem.db"
+install -m0644 \
+    "${repository_arch}/emoeem.files.tar.zst" \
+    "${pacman_sync_dir}/emoeem.files"
+
+printf 'The emoeem repository is current. Local Git storage:\n'
+du -sh "${repository_path}/.git"

@@ -1,0 +1,9 @@
+[Unit]
+Description=Update the private emoeem pacman repository
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/emoeem-repo.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/emoeem-update
