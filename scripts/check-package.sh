@@ -7,51 +7,74 @@ repo_root="$(
     pwd
 )"
 readonly repo_root
-readonly package_dir="${repo_root}/packages/ffmpeg-full"
 
-required_files=(
-    ".SRCINFO"
-    "PKGBUILD"
-    "LICENSE"
-    "010-ffmpeg-add-svt-hevc.patch"
-    "030-ffmpeg-add-svt-vp9.patch"
-    "040-ffmpeg-add-av_stream_get_first_dts-for-chromium.patch"
-    "050-ffmpeg-fix-cuda-nvcc-with-gcc14.patch"
-    "060-ffmpeg-whisper.cpp-fix-pkgconfig.patch"
-)
+if (( $# == 0 )); then
+    mapfile -t package_names < <(
+        find "${repo_root}/packages" \
+            -mindepth 2 \
+            -maxdepth 2 \
+            -type f \
+            -name PKGBUILD \
+            -printf '%h\n' |
+            xargs -r -n1 basename |
+            sort -u
+    )
+else
+    package_names=("$@")
+fi
 
-for file in "${required_files[@]}"; do
-    if [[ ! -f "${package_dir}/${file}" ]]; then
-        printf 'Missing required package file: %s\n' "$file" >&2
-        exit 1
-    fi
-done
-
-bash -n "${package_dir}/PKGBUILD"
-bash -n "${repo_root}"/scripts/*.sh
-
-pkgver="$(awk -F ' = ' '$1 == "\tpkgver" { print $2; exit }' \
-    "${package_dir}/.SRCINFO")"
-pkgrel="$(awk -F ' = ' '$1 == "\tpkgrel" { print $2; exit }' \
-    "${package_dir}/.SRCINFO")"
-
-if [[ -z "$pkgver" || -z "$pkgrel" ]]; then
-    printf 'Unable to read pkgver/pkgrel from .SRCINFO\n' >&2
+if (( ${#package_names[@]} == 0 )); then
+    printf 'No package directories containing PKGBUILD were found.\n' >&2
     exit 1
 fi
 
-grep -Fxq "pkgver=${pkgver}" "${package_dir}/PKGBUILD"
-grep -Fxq "pkgrel=${pkgrel}" "${package_dir}/PKGBUILD"
-
-while IFS= read -r source; do
-    [[ "$source" == *"://"* || "$source" == *"::"* ]] && continue
-    if [[ ! -f "${package_dir}/${source}" ]]; then
-        printf 'Local source listed in .SRCINFO is missing: %s\n' "$source" >&2
+for package_name in "${package_names[@]}"; do
+    if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
+        printf 'Invalid package directory name: %s\n' "$package_name" >&2
         exit 1
     fi
-done < <(
-    awk -F ' = ' '$1 == "\tsource" { print $2 }' \
-        "${package_dir}/.SRCINFO"
-)
 
-printf 'ffmpeg-full %s-%s package files look consistent.\n' "$pkgver" "$pkgrel"
+    package_dir="${repo_root}/packages/${package_name}"
+    for file in PKGBUILD .SRCINFO; do
+        if [[ ! -f "${package_dir}/${file}" ]]; then
+            printf 'Missing %s for package %s.\n' "$file" "$package_name" >&2
+            exit 1
+        fi
+    done
+
+    bash -n "${package_dir}/PKGBUILD"
+
+    while IFS= read -r source; do
+        [[ "$source" == *"://"* || "$source" == *"::"* ]] && continue
+        if [[ ! -f "${package_dir}/${source}" ]]; then
+            printf '%s lists a missing local source: %s\n' \
+                "$package_name" "$source" >&2
+            exit 1
+        fi
+    done < <(
+        awk -F ' = ' '$1 == "\tsource" { print $2 }' \
+            "${package_dir}/.SRCINFO"
+    )
+
+    pkgbase="$(
+        awk -F ' = ' '$1 == "pkgbase" { print $2; exit }' \
+            "${package_dir}/.SRCINFO"
+    )"
+    pkgver="$(
+        awk -F ' = ' '$1 == "\tpkgver" { print $2; exit }' \
+            "${package_dir}/.SRCINFO"
+    )"
+    pkgrel="$(
+        awk -F ' = ' '$1 == "\tpkgrel" { print $2; exit }' \
+            "${package_dir}/.SRCINFO"
+    )"
+
+    if [[ -z "$pkgbase" || -z "$pkgver" || -z "$pkgrel" ]]; then
+        printf 'Unable to read package metadata for %s.\n' "$package_name" >&2
+        exit 1
+    fi
+
+    printf '%s %s-%s looks consistent.\n' "$pkgbase" "$pkgver" "$pkgrel"
+done
+
+bash -n "${repo_root}"/scripts/*.sh

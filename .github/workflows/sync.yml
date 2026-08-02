@@ -1,12 +1,18 @@
-name: Sync ffmpeg-full from AUR
+name: Sync AUR package sources
 
 on:
   workflow_dispatch:
+    inputs:
+      packages:
+        description: Package names separated by commas, or all
+        required: true
+        default: all
+        type: string
   schedule:
-    - cron: "17 3 * * 0"
+    - cron: "17 3 * * *"
 
 concurrency:
-  group: sync-ffmpeg-full
+  group: sync-aur-packages
   cancel-in-progress: false
 
 permissions:
@@ -15,7 +21,7 @@ permissions:
 
 jobs:
   sync:
-    name: Update package files
+    name: Update AUR-managed packages
     runs-on: ubuntu-24.04
 
     steps:
@@ -23,39 +29,60 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Sync AUR files
-        run: ./scripts/sync-ffmpeg-full.sh
+        shell: bash
+        env:
+          REQUESTED_PACKAGES: ${{ inputs.packages }}
+        run: |
+          set -Eeuo pipefail
+          selection="${REQUESTED_PACKAGES:-all}"
+          if [[ "$selection" == "all" ]]; then
+            ./scripts/sync-aur-packages.sh
+          else
+            selection="${selection// /}"
+            IFS=',' read -ra packages <<< "$selection"
+            ./scripts/sync-aur-packages.sh "${packages[@]}"
+          fi
 
-      - name: Detect changes
+      - name: Detect changed packages
         id: changes
         shell: bash
         run: |
-          if git diff --quiet -- packages/ffmpeg-full; then
+          set -Eeuo pipefail
+          mapfile -t packages < <(
+            git diff --name-only -- packages |
+              awk -F/ '$1 == "packages" && NF >= 3 { print $2 }' |
+              sort -u
+          )
+
+          if (( ${#packages[@]} == 0 )); then
             echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "packages=" >> "$GITHUB_OUTPUT"
           else
+            package_list="$(IFS=,; echo "${packages[*]}")"
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "packages=$package_list" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Commit update
+      - name: Commit updates
         if: steps.changes.outputs.changed == 'true'
         shell: bash
+        env:
+          PACKAGES: ${{ steps.changes.outputs.packages }}
         run: |
           set -Eeuo pipefail
-          version="$(
-            awk -F ' = ' '$1 == "\tpkgver" { print $2; exit }' \
-              packages/ffmpeg-full/.SRCINFO
-          )"
-          release="$(
-            awk -F ' = ' '$1 == "\tpkgrel" { print $2; exit }' \
-              packages/ffmpeg-full/.SRCINFO
-          )"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/ffmpeg-full
-          git commit -m "chore: sync ffmpeg-full ${version}-${release}"
+          git add packages
+          git commit -m "chore: sync AUR packages: $PACKAGES"
           git push
 
-      - name: Start package build
+      - name: Start package builds
         if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run build.yml --ref main -f make_jobs=2
+          PACKAGES: ${{ steps.changes.outputs.packages }}
+        run: |
+          gh workflow run build.yml \
+            --ref main \
+            -f "packages=$PACKAGES" \
+            -f make_jobs=2

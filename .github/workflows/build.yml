@@ -1,10 +1,15 @@
-name: Build ffmpeg-full
+name: Build private Arch repository
 
 on:
   workflow_dispatch:
     inputs:
+      packages:
+        description: Package names separated by commas, or all
+        required: true
+        default: all
+        type: string
       make_jobs:
-        description: Parallel compiler jobs
+        description: Parallel compiler jobs per package
         required: true
         default: "2"
         type: choice
@@ -17,24 +22,60 @@ on:
     branches:
       - main
     paths:
-      - "packages/ffmpeg-full/**"
-      - "scripts/build-in-arch.sh"
-      - "scripts/check-package.sh"
-      - "scripts/install-built-package.sh"
+      - "packages/**"
+      - "config/**"
+      - "scripts/**"
       - ".github/workflows/build.yml"
 
-concurrency:
-  group: ffmpeg-full-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  select:
+    name: Select packages
+    runs-on: ubuntu-24.04
+    outputs:
+      packages: ${{ steps.select.outputs.packages }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Select build set
+        id: select
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_PACKAGES: ${{ inputs.packages }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          selection="${REQUESTED_PACKAGES:-all}"
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            selection="changed"
+          fi
+          packages="$(
+            python scripts/select-packages.py \
+              --selection "$selection" \
+              --before "$BEFORE_SHA" \
+              --after "$AFTER_SHA"
+          )"
+          echo "Selected packages: $packages"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
   build:
-    name: Build x86_64 package
+    name: Build ${{ matrix.package }}
+    needs: select
+    if: needs.select.outputs.packages != '[]'
     runs-on: ${{ vars.BUILD_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.select.outputs.packages) }}
     env:
       MAKE_JOBS: ${{ inputs.make_jobs || '2' }}
 
@@ -42,20 +83,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Read package metadata
-        id: package
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          srcinfo="packages/ffmpeg-full/.SRCINFO"
-          pkgver="$(awk -F ' = ' '$1 == "\tpkgver" { print $2; exit }' "$srcinfo")"
-          pkgrel="$(awk -F ' = ' '$1 == "\tpkgrel" { print $2; exit }' "$srcinfo")"
-          test -n "$pkgver"
-          test -n "$pkgrel"
-          echo "version=${pkgver}-${pkgrel}" >> "$GITHUB_OUTPUT"
-
-      - name: Validate repository files
-        run: ./scripts/check-package.sh
+      - name: Validate package files
+        run: ./scripts/check-package.sh "${{ matrix.package }}"
 
       - name: Reclaim runner disk space
         if: runner.environment == 'github-hosted'
@@ -74,6 +103,8 @@ jobs:
 
       - name: Build in Arch Linux
         shell: bash
+        env:
+          PACKAGE_NAME: ${{ matrix.package }}
         run: |
           set -Eeuo pipefail
           mkdir -p dist
@@ -82,6 +113,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/dist:/out" \
             --env "MAKE_JOBS=$MAKE_JOBS" \
+            --env "PACKAGE_NAME=$PACKAGE_NAME" \
             docker.io/library/archlinux:base-devel \
             bash /workspace/scripts/build-in-arch.sh
 
@@ -95,11 +127,90 @@ jobs:
             sha256sum --check SHA256SUMS
           )
 
-      - name: Upload private artifact
+      - name: Upload package artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ffmpeg-full-${{ steps.package.outputs.version }}-x86_64
+          name: built-${{ matrix.package }}-${{ github.run_id }}
           path: dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish:
+    name: Update private pacman repository
+    needs:
+      - select
+      - build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: private-pacman-repository
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v6
+        with:
+          path: source
+
+      - name: Checkout repository branch
+        uses: actions/checkout@v6
+        with:
+          ref: repo
+          path: published
+          fetch-depth: 1
+
+      - name: Download built packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: built-*-${{ github.run_id }}
+          path: incoming
+          merge-multiple: true
+
+      - name: Prepare signing key
+        shell: bash
+        env:
+          REPOSITORY_PRIVATE_KEY: ${{ secrets.REPOSITORY_PRIVATE_KEY }}
+        run: |
+          install -m0600 /dev/null repository-key.asc
+          if [[ -n "$REPOSITORY_PRIVATE_KEY" ]]; then
+            printf '%s\n' "$REPOSITORY_PRIVATE_KEY" > repository-key.asc
+          fi
+
+      - name: Update repository database
+        shell: bash
+        env:
+          REPOSITORY_KEY_PASSPHRASE: ${{ secrets.REPOSITORY_KEY_PASSPHRASE }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p published/x86_64
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
+            --volume "$GITHUB_WORKSPACE/incoming:/incoming:ro" \
+            --volume "$GITHUB_WORKSPACE/published/x86_64:/repository" \
+            --volume "$GITHUB_WORKSPACE/repository-key.asc:/run/secrets/repository-key.asc:ro" \
+            --env "REPOSITORY_NAME=emoeem" \
+            --env "REPOSITORY_KEY_PASSPHRASE=$REPOSITORY_KEY_PASSPHRASE" \
+            docker.io/library/archlinux:base-devel \
+            bash /workspace/scripts/create-repository.sh
+
+      - name: Publish repository branch
+        shell: bash
+        working-directory: published
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit --amend \
+            --message "repo: update from ${GITHUB_SHA::12}"
+          git push --force-with-lease origin HEAD:repo
+
+      - name: Upload repository snapshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: emoeem-pacman-repository-${{ github.run_number }}
+          path: published/x86_64/
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

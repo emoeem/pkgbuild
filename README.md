@@ -1,60 +1,125 @@
-# ffmpeg-full 私有构建仓库
+# 私人 Arch Linux 软件仓库
 
-这个仓库使用 GitHub Actions 在官方 Arch Linux 容器中构建
-`ffmpeg-full`。当前导入的 AUR 版本是 `8.1.2-2`，构建目标为
-Arch Linux `x86_64`。
+这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
+软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-## 构建
+当前包含 `ffmpeg-full 8.1.2-2`。构建环境按以下优先级使用依赖：
 
-1. 打开仓库的 **Actions** 页面。
-2. 选择 **Build ffmpeg-full**。
-3. 点击 **Run workflow**；普通 GitHub runner 建议保留 `2` 个并行任务。
-4. 构建完成后，下载名为
-   `ffmpeg-full-<版本>-x86_64` 的私有 Artifact。
+1. Arch Linux 官方仓库
+2. archlinuxcn
+3. coderkun-aur
+4. Chaotic-AUR
+5. 仍未满足的依赖由 `yay` 从 AUR 构建并安装
 
-Artifact 保留 30 天，包含：
+构建容器按你的要求使用全局 `SigLevel = Never`，因此官方仓库和这三个
+第三方二进制仓库都不进行软件包或数据库签名校验。
 
-- `ffmpeg-full-*.pkg.tar.zst`
-- `SHA256SUMS`
-- `PKGINFO` 与 `BUILDINFO`
-- 本次实际使用的 `PKGBUILD` 和 `.SRCINFO`
-- `install-built-package.sh`
+目标包本身始终使用本项目保存的 PKGBUILD 重新构建，不会直接安装同名
+预编译包。
 
-构建容器会按 Chaotic-AUR 官方方式安装其 keyring 和 mirrorlist，让
-`decklink-sdk`、`svt-*` 等可用依赖优先使用预编译包；仓库中本地保存的
-`ffmpeg-full` PKGBUILD 始终会重新编译，不会直接下载同名二进制包。
+## 自动更新
 
-`ffmpeg-full` 仍依赖 CUDA 并会下载大量内容。标准 runner 资源紧张时，
-可以在仓库的
-**Settings -> Secrets and variables -> Actions -> Variables** 中设置
-`BUILD_RUNNER=self-hosted`，改用带 Docker 的 Linux 自托管 runner。
+**Sync AUR package sources** 工作流每天 `03:17 UTC` 检查一次所有带
+`.aur-url` 的包目录。AUR 脚本发生变化时，它会：
 
-## 安装
+1. 更新对应的 PKGBUILD、`.SRCINFO`、补丁和其他源文件。
+2. 提交变化到 `main`。
+3. 只触发发生变化的软件包构建。
+4. 构建成功后更新 `repo` 分支中的软件包和仓库数据库。
 
-在 Arch Linux 上解压 Artifact，校验并安装：
+也可以在 Actions 页面手动运行同步或指定包构建。
+
+## 添加 AUR 软件包
 
 ```bash
-sha256sum -c SHA256SUMS
-chmod +x install-built-package.sh
-./install-built-package.sh ./ffmpeg-full-*.pkg.tar.zst
+./scripts/add-aur-package.sh package-name
+git add packages/package-name
+git commit -m "package: add package-name"
+git push
 ```
 
-安装脚本会使用已有的 `paru` 或 `yay` 补齐官方仓库及 AUR 运行依赖，
-然后调用 `pacman -U` 安装构建好的包。
-
-## 同步 AUR
-
-**Sync ffmpeg-full from AUR** 工作流每周日检查一次上游。只有 AUR
-内容变化时才会提交更新，并启动新的构建。也可以在 Actions 页面手动运行。
-
-包文件保存在 `packages/ffmpeg-full/`，来源为：
+默认地址是：
 
 ```text
-https://aur.archlinux.org/ffmpeg-full.git
+https://aur.archlinux.org/package-name.git
 ```
 
-## 许可提醒
+也可以传入其他 Git PKGBUILD 仓库：
 
-这个包的许可标识是 `LicenseRef-nonfree-and-unredistributable`。仓库和
-Artifact 应保持私有，仅供最终用户本人构建和使用；不要公开发布、共享
-构建产物或用于商业用途。
+```bash
+./scripts/add-aur-package.sh package-name https://example.com/package.git
+```
+
+自维护脚本只需放入 `packages/package-name/`，并确保其中同时存在
+`PKGBUILD` 和最新的 `.SRCINFO`。没有 `.aur-url` 的目录不会被自动覆盖。
+
+## 构建产物
+
+每个包会生成独立的私有 Actions Artifact。所有成功产物随后被合并到
+`repo` 分支的 `x86_64/`：
+
+- `*.pkg.tar.zst`
+- `emoeem.db` 与 `emoeem.db.tar.zst`
+- `emoeem.files` 与 `emoeem.files.tar.zst`
+- `SHA256SUMS`
+- `emoeem.conf`
+
+更新数据库时会删除同一个包的旧版本。`repo` 分支每次使用 amend 和
+force-with-lease 更新，从而避免 Git 历史长期保存所有旧二进制包。
+
+## 作为 pacman 仓库使用
+
+GitHub 私有仓库不能直接作为匿名 HTTP pacman Server。先将私有 `repo`
+分支克隆到 Arch Linux 机器：
+
+```bash
+sudo git clone --depth 1 --branch repo \
+  git@github.com:emoeem/pkgbuild.git \
+  /var/lib/emoeem-repo
+```
+
+将下面内容加入 `/etc/pacman.conf`：
+
+```ini
+[emoeem]
+SigLevel = Never
+Server = file:///var/lib/emoeem-repo/x86_64
+```
+
+更新本地仓库镜像：
+
+```bash
+sudo git -C /var/lib/emoeem-repo fetch origin repo
+sudo git -C /var/lib/emoeem-repo reset --hard origin/repo
+sudo pacman -Syy
+```
+
+如果把 `repo/x86_64` 同步到自己的私有 HTTP 服务器，只需把 `Server`
+改成服务器地址，就可以像普通 Arch 仓库一样使用。
+
+## 仓库签名
+
+默认生成未签名的私人仓库。需要包和数据库签名时，在 GitHub 仓库
+Actions Secrets 中设置：
+
+- `REPOSITORY_PRIVATE_KEY`：ASCII armored GPG 私钥。
+- `REPOSITORY_KEY_PASSPHRASE`：私钥密码；无密码时留空。
+
+工作流会签名每个软件包、数据库和 files 数据库，并将公钥导出为
+`x86_64/emoeem-key.asc`。客户端导入并本地信任该密钥后，可改用：
+
+```ini
+SigLevel = Required DatabaseRequired
+```
+
+建议为 CI 单独创建仅用于仓库签名的 GPG 子密钥。
+
+## 资源与许可
+
+`ffmpeg-full` 会下载 CUDA，完整构建仍可能消耗较多时间和磁盘。可以在
+仓库的 Actions Variables 中设置 `BUILD_RUNNER=self-hosted`，改用带
+Docker 的 Linux 自托管 runner。
+
+`ffmpeg-full` 的许可标识是
+`LicenseRef-nonfree-and-unredistributable`。仓库必须保持私有，产物仅供
+最终用户本人构建和使用，不要公开发布或用于商业用途。
