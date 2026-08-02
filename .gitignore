@@ -1,0 +1,3 @@
+dist/
+*.pkg.tar.*
+*.pkg.tar.*.sig
