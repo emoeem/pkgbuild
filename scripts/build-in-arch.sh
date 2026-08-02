@@ -45,6 +45,9 @@ chown -R builder:builder "$package_dir"
 sed -Ei \
     's/(^OPTIONS=.*[[:space:]])debug([[:space:]\)])/\1!debug\2/' \
     /etc/makepkg.conf
+sed -Ei \
+    "/'https?::/ s/--retry 3 --retry-delay 3/--retry 10 --retry-all-errors --retry-delay 5 --connect-timeout 30/" \
+    /etc/makepkg.conf
 
 as_builder() {
     runuser -u builder -- \
@@ -85,6 +88,10 @@ if [[ "$package_name" == "ffmpeg-full" ]]; then
         exit 1
     fi
     as_builder gpg --batch --import /tmp/ffmpeg-devel.asc
+
+    printf 'Downloading and verifying FFmpeg sources...\n'
+    as_builder bash -c \
+        "cd '$package_dir' && makepkg --verifysource --noconfirm"
 fi
 
 printf 'Bootstrapping yay-bin...\n'
