@@ -122,7 +122,8 @@ if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
 fi
 
 printf 'Resolving dependencies, building and installing %s...\n' "$package_name"
-if ! as_builder yay -Bi "$package_dir" \
+yay_status=0
+as_builder yay -Bi "$package_dir" \
     --noconfirm \
     --needed \
     --pgpfetch \
@@ -132,15 +133,8 @@ if ! as_builder yay -Bi "$package_dir" \
     --answerdiff None \
     --answeredit None \
     --answerupgrade None \
-    --mflags "--cleanbuild --clean --noconfirm"; then
-    while IFS= read -r log_file; do
-        printf '\nFailure details from %s:\n' "$log_file" >&2
-        tail -n 200 "$log_file" >&2 || true
-    done < <(
-        find "$package_dir" -type f -path '*/ffbuild/config.log' | sort
-    )
-    exit 1
-fi
+    --mflags "--cleanbuild --clean --noconfirm" ||
+    yay_status=$?
 
 mapfile -d '' package_files < <(
     find "$package_dir" -maxdepth 1 -type f \
@@ -150,8 +144,23 @@ mapfile -d '' package_files < <(
 )
 
 if (( ${#package_files[@]} == 0 )); then
+    while IFS= read -r log_file; do
+        printf '\nFailure details from %s:\n' "$log_file" >&2
+        tail -n 200 "$log_file" >&2 || true
+    done < <(
+        find "$package_dir" -type f -path '*/ffbuild/config.log' | sort
+    )
     printf 'No package files were produced for %s.\n' "$package_name" >&2
-    exit 1
+    if (( yay_status == 0 )); then
+        yay_status=1
+    fi
+    exit "$yay_status"
+fi
+
+if (( yay_status != 0 )); then
+    printf \
+        'yay exited with status %d after producing the target package; continuing without installing it.\n' \
+        "$yay_status"
 fi
 
 for package_file in "${package_files[@]}"; do
