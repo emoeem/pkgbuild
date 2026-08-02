@@ -50,8 +50,21 @@ sed -Ei \
     /etc/makepkg.conf
 
 as_builder() {
+    local -a environment=(
+        "HOME=${builder_home}"
+        "MAKEFLAGS=-j${make_jobs}"
+    )
+
+    if [[ "$package_name" == "ffmpeg-full" ]]; then
+        environment+=(
+            "CUDA_PATH=/opt/cuda"
+            "NVCC_CCBIN=/usr/bin/g++-15"
+            "PATH=/opt/cuda/bin:${PATH}"
+        )
+    fi
+
     runuser -u builder -- \
-        env HOME="$builder_home" MAKEFLAGS="-j${make_jobs}" "$@"
+        env "${environment[@]}" "$@"
 }
 
 printf 'Creating an isolated package source snapshot...\n'
@@ -109,7 +122,7 @@ if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
 fi
 
 printf 'Resolving dependencies, building and installing %s...\n' "$package_name"
-as_builder yay -Bi "$package_dir" \
+if ! as_builder yay -Bi "$package_dir" \
     --noconfirm \
     --needed \
     --pgpfetch \
@@ -119,7 +132,15 @@ as_builder yay -Bi "$package_dir" \
     --answerdiff None \
     --answeredit None \
     --answerupgrade None \
-    --mflags "--cleanbuild --clean --noconfirm"
+    --mflags "--cleanbuild --clean --noconfirm"; then
+    while IFS= read -r log_file; do
+        printf '\nFailure details from %s:\n' "$log_file" >&2
+        tail -n 200 "$log_file" >&2 || true
+    done < <(
+        find "$package_dir" -type f -path '*/ffbuild/config.log' | sort
+    )
+    exit 1
+fi
 
 mapfile -d '' package_files < <(
     find "$package_dir" -maxdepth 1 -type f \
