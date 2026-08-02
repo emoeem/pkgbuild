@@ -20,8 +20,12 @@ Artifact 保留 30 天，包含：
 - 本次实际使用的 `PKGBUILD` 和 `.SRCINFO`
 - `install-built-package.sh`
 
-`ffmpeg-full` 依赖 CUDA 和多项 AUR 软件包，首次构建会下载大量内容。
-标准 runner 资源紧张时，可以在仓库的
+构建容器会按 Chaotic-AUR 官方方式安装其 keyring 和 mirrorlist，让
+`decklink-sdk`、`svt-*` 等可用依赖优先使用预编译包；仓库中本地保存的
+`ffmpeg-full` PKGBUILD 始终会重新编译，不会直接下载同名二进制包。
+
+`ffmpeg-full` 仍依赖 CUDA 并会下载大量内容。标准 runner 资源紧张时，
+可以在仓库的
 **Settings -> Secrets and variables -> Actions -> Variables** 中设置
 `BUILD_RUNNER=self-hosted`，改用带 Docker 的 Linux 自托管 runner。
 

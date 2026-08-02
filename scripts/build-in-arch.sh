@@ -11,6 +11,9 @@ readonly package_dir="${build_root}/${package_name}"
 readonly package_remote="${build_root}/${package_name}-origin.git"
 readonly builder_home="/home/builder"
 readonly ffmpeg_signing_key="FCF986EA15E6E293A5644F10B4322F04D67658D8"
+readonly chaotic_key_fingerprint="EF925EA60F33D0CB85C44AD13056513887B78AEB"
+readonly chaotic_keyserver="hkps://keyserver.ubuntu.com"
+readonly chaotic_base_url="https://cdn-mirror.chaotic.cx/chaotic-aur"
 
 make_jobs="${MAKE_JOBS:-2}"
 if [[ ! "$make_jobs" =~ ^[1-9][0-9]*$ ]]; then
@@ -28,6 +31,35 @@ printf 'Using %s parallel build job(s).\n' "$make_jobs"
 sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 5/' /etc/pacman.conf
 pacman-key --init
 pacman-key --populate archlinux
+
+printf 'Enabling Chaotic-AUR for prebuilt AUR dependencies...\n'
+chaotic_key_received=0
+for attempt in 1 2 3 4 5; do
+    if pacman-key --recv-key "$chaotic_key_fingerprint" \
+        --keyserver "$chaotic_keyserver"; then
+        chaotic_key_received=1
+        break
+    fi
+    printf 'Chaotic-AUR key download failed (attempt %d/5); retrying...\n' \
+        "$attempt" >&2
+    sleep $((attempt * 5))
+done
+
+if (( chaotic_key_received == 0 )); then
+    printf 'Unable to retrieve the Chaotic-AUR signing key.\n' >&2
+    exit 1
+fi
+
+pacman-key --lsign-key "$chaotic_key_fingerprint"
+pacman -U --noconfirm \
+    "${chaotic_base_url}/chaotic-keyring.pkg.tar.zst" \
+    "${chaotic_base_url}/chaotic-mirrorlist.pkg.tar.zst"
+cat >> /etc/pacman.conf <<'EOF'
+
+[chaotic-aur]
+Include = /etc/pacman.d/chaotic-mirrorlist
+EOF
+
 pacman -Syu --needed --noconfirm git gnupg sudo curl
 
 useradd --create-home --shell /bin/bash builder
