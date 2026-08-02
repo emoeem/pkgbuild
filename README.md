@@ -31,14 +31,21 @@
 
 ## 添加 AUR 软件包
 
+在日常使用的目录克隆 `main` 源码分支：
+
 ```bash
-./scripts/add-aur-package.sh package-name
-git add packages/package-name
-git commit -m "package: add package-name"
-git push
+git clone https://github.com/emoeem/pkgbuild.git ~/pkgbuild-source
+cd ~/pkgbuild-source
 ```
 
-默认地址是：
+添加软件包只需要一条命令：
+
+```bash
+./scripts/add-aur-package.sh package-name
+```
+
+脚本会自动同步 `main`、下载并校验 AUR 构建文件、提交新包并推送。
+推送后 GitHub Actions 会自动构建并更新 `repo` 分支。默认 AUR 地址是：
 
 ```text
 https://aur.archlinux.org/package-name.git
@@ -48,6 +55,12 @@ https://aur.archlinux.org/package-name.git
 
 ```bash
 ./scripts/add-aur-package.sh package-name https://example.com/package.git
+```
+
+只想生成本地提交而暂时不推送时：
+
+```bash
+./scripts/add-aur-package.sh --no-push package-name
 ```
 
 自维护脚本只需放入 `packages/package-name/`，并确保其中同时存在
@@ -69,12 +82,13 @@ force-with-lease 更新，从而避免 Git 历史长期保存所有旧二进制�
 
 ## 作为 pacman 仓库使用
 
-GitHub 私有仓库不能直接作为匿名 HTTP pacman Server。先将私有 `repo`
-分支克隆到 Arch Linux 机器：
+GitHub 私有仓库不能直接作为匿名 HTTP pacman Server。创建普通用户可写
+的目录，再使用已有的 HTTPS 凭据克隆私有 `repo` 分支：
 
 ```bash
-sudo git clone --depth 1 --branch repo \
-  git@github.com:emoeem/pkgbuild.git \
+sudo install -d -o "$USER" -g "$(id -gn)" /var/lib/emoeem-repo
+git clone --depth 1 --branch repo \
+  https://github.com/emoeem/pkgbuild.git \
   /var/lib/emoeem-repo
 ```
 
@@ -89,8 +103,7 @@ Server = file:///var/lib/emoeem-repo/x86_64
 更新本地仓库镜像：
 
 ```bash
-sudo git -C /var/lib/emoeem-repo fetch origin repo
-sudo git -C /var/lib/emoeem-repo reset --hard origin/repo
+git -C /var/lib/emoeem-repo pull --ff-only origin repo
 sudo pacman -Syy
 ```
 
