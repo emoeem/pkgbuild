@@ -56,6 +56,7 @@ def select(selection: str, before: str, after: str) -> list[str]:
                     and len(parts) >= 3
                     and parts[0] == "packages"
                 }
+                & available_set
             )
     else:
         selected = sorted(

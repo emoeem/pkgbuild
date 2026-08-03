@@ -33,6 +33,8 @@ package_name="$1"
 aur_url="${2:-https://aur.archlinux.org/${package_name}.git}"
 package_dir="${repo_root}/packages/${package_name}"
 package_path="packages/${package_name}"
+removal_file="${repo_root}/removals/${package_name}"
+removal_path="removals/${package_name}"
 
 if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
     printf 'Invalid package name: %s\n' "$package_name" >&2
@@ -66,15 +68,22 @@ mkdir -p "$package_dir"
 printf '%s\n' "$aur_url" > "${package_dir}/.aur-url"
 "${repo_root}/scripts/sync-aur-packages.sh" "$package_name"
 
-git -C "$repo_root" add -- "$package_path"
-if git -C "$repo_root" diff --cached --quiet -- "$package_path"; then
+commit_paths=("$package_path")
+if git -C "$repo_root" ls-files --error-unmatch "$removal_path" \
+    >/dev/null 2>&1; then
+    rm -f "$removal_file"
+    commit_paths+=("$removal_path")
+fi
+
+git -C "$repo_root" add --all -- "${commit_paths[@]}"
+if git -C "$repo_root" diff --cached --quiet -- "${commit_paths[@]}"; then
     printf 'No files were added for %s.\n' "$package_name" >&2
     exit 1
 fi
 
 git -C "$repo_root" commit \
     --message "package: add ${package_name}" \
-    -- "$package_path"
+    -- "${commit_paths[@]}"
 
 if (( push_changes == 0 )); then
     printf 'Added and committed %s locally. Push it with:\n' "$package_name"

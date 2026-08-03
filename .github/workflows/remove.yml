@@ -1,0 +1,184 @@
+name: Remove packages from private repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: Repository package names separated by commas
+        required: true
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - "removals/**"
+      - "scripts/create-repository.sh"
+      - ".github/workflows/remove.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  remove:
+    name: Remove repository packages
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: private-pacman-repository
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v6
+        with:
+          path: source
+          fetch-depth: 0
+
+      - name: Select package removals
+        id: removals
+        shell: bash
+        working-directory: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_PACKAGES: ${{ inputs.packages }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          output_file="$GITHUB_WORKSPACE/remove-packages.txt"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            printf '%s\n' "${REQUESTED_PACKAGES//,/$'\n'}" > "$output_file"
+          else
+            infrastructure_changed=false
+            if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+              infrastructure_changed=true
+            elif git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" |
+                grep -Eq \
+                  '^(\.github/workflows/remove\.yml|scripts/create-repository\.sh)$'; then
+              infrastructure_changed=true
+            fi
+
+            if [[ "$infrastructure_changed" == "true" ]]; then
+              find removals -maxdepth 1 -type f ! -name .gitkeep \
+                -print0 |
+                sort -z |
+                xargs -0 -r cat > "$output_file"
+            else
+              mapfile -t removal_files < <(
+                git diff \
+                  --diff-filter=AM \
+                  --name-only \
+                  "$BEFORE_SHA" \
+                  "$AFTER_SHA" \
+                  -- removals |
+                  sort -u
+              )
+              : > "$output_file"
+              for removal_file in "${removal_files[@]}"; do
+                [[ -f "$removal_file" ]] && cat "$removal_file" >> "$output_file"
+              done
+            fi
+          fi
+
+          sed -i \
+            -e 's/^[[:space:]]*//' \
+            -e 's/[[:space:]]*$//' \
+            -e '/^$/d' \
+            "$output_file"
+          sort -u -o "$output_file" "$output_file"
+
+          while IFS= read -r package_name; do
+            if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
+              echo "Invalid package name: $package_name" >&2
+              exit 1
+            fi
+          done < "$output_file"
+
+          if [[ -s "$output_file" ]]; then
+            package_list="$(paste -sd, "$output_file")"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "packages=$package_list" >> "$GITHUB_OUTPUT"
+            echo "Removing repository packages: $package_list"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "packages=" >> "$GITHUB_OUTPUT"
+            echo "No package removals were selected."
+          fi
+
+      - name: Checkout repository branch
+        if: steps.removals.outputs.changed == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: repo
+          path: published
+          fetch-depth: 1
+
+      - name: Prepare signing key
+        if: steps.removals.outputs.changed == 'true'
+        shell: bash
+        env:
+          REPOSITORY_PRIVATE_KEY: ${{ secrets.REPOSITORY_PRIVATE_KEY }}
+        run: |
+          install -m0600 /dev/null repository-key.asc
+          if [[ -n "$REPOSITORY_PRIVATE_KEY" ]]; then
+            printf '%s\n' "$REPOSITORY_PRIVATE_KEY" > repository-key.asc
+          fi
+
+      - name: Update repository database
+        if: steps.removals.outputs.changed == 'true'
+        shell: bash
+        env:
+          REPOSITORY_KEY_PASSPHRASE: ${{ secrets.REPOSITORY_KEY_PASSPHRASE }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p incoming published/x86_64
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
+            --volume "$GITHUB_WORKSPACE/incoming:/incoming:ro" \
+            --volume "$GITHUB_WORKSPACE/remove-packages.txt:/remove-packages:ro" \
+            --volume "$GITHUB_WORKSPACE/published/x86_64:/repository" \
+            --volume "$GITHUB_WORKSPACE/repository-key.asc:/run/secrets/repository-key.asc:ro" \
+            --env "REPOSITORY_NAME=emoeem" \
+            --env "REPOSITORY_KEY_PASSPHRASE=$REPOSITORY_KEY_PASSPHRASE" \
+            docker.io/library/archlinux:base-devel \
+            bash /workspace/scripts/create-repository.sh
+
+      - name: Publish repository branch
+        if: steps.removals.outputs.changed == 'true'
+        shell: bash
+        working-directory: published
+        env:
+          PACKAGES: ${{ steps.removals.outputs.packages }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          if git diff --cached --quiet; then
+            echo "The selected packages were already absent."
+            exit 0
+          fi
+          git commit --amend \
+            --message "repo: remove ${PACKAGES}"
+          git push --force-with-lease origin HEAD:repo
+
+      - name: Pack repository snapshot
+        if: steps.removals.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tar \
+            --create \
+            --file emoeem-pacman-repository.tar \
+            --directory published/x86_64 \
+            .
+
+      - name: Upload repository snapshot
+        if: steps.removals.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: emoeem-pacman-repository-${{ github.run_number }}
+          path: emoeem-pacman-repository.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

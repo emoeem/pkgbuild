@@ -70,6 +70,33 @@ https://aur.archlinux.org/package-name.git
 自维护脚本只需放入 `packages/package-name/`，并确保其中同时存在
 `PKGBUILD` 和最新的 `.SRCINFO`。没有 `.aur-url` 的目录不会被自动覆盖。
 
+## 删除软件包
+
+从源码和二进制仓库删除一个 package base：
+
+```bash
+./scripts/remove-package.sh package-name
+```
+
+脚本从 `.SRCINFO` 记录该 package base 产生的所有子包，删除源码目录并
+推送。GitHub Actions 随后从 `repo` 分支删除相应软件包并重建 pacman
+数据库。只创建本地提交时使用 `--no-push`。
+
+仓库删除不会自动卸载电脑上已经安装的软件包。删除发布完成后，可以运行
+`emoeem-update` 立即同步本地仓库。
+
+## fzf 管理界面
+
+安装 `fzf` 和 GitHub CLI 后，可以通过一个菜单完成添加、删除、同步、
+构建、本地仓库更新和安装：
+
+```bash
+sudo pacman -S fzf github-cli
+./manage.sh
+```
+
+多选软件包时使用 `Tab`。完整说明见 `docs/package-management.md`。
+
 ## 构建产物
 
 每个包会生成独立的私有 Actions Artifact。Artifact 使用 tar 作为传输

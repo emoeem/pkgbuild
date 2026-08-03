@@ -6,22 +6,75 @@ readonly incoming_dir="${INCOMING_DIR:-/incoming}"
 readonly repository_dir="${REPOSITORY_DIR:-/repository}"
 readonly repository_name="${REPOSITORY_NAME:-emoeem}"
 readonly repository_key="${REPOSITORY_KEY:-/run/secrets/repository-key.asc}"
+readonly removal_file="${REMOVE_PACKAGES_FILE:-/remove-packages}"
 
 mkdir -p "$repository_dir"
 rm -f "${repository_dir}/.gitkeep"
+
+package_name_from_archive() {
+    bsdtar -xOf "$1" .PKGINFO |
+        awk -F ' = ' '$1 == "pkgname" { print $2; exit }'
+}
+
+remove_repository_package() {
+    local target_name="$1"
+    local package_file package_name
+    local removed=0
+
+    while IFS= read -r -d '' package_file; do
+        package_name="$(package_name_from_archive "$package_file")"
+        if [[ "$package_name" == "$target_name" ]]; then
+            printf 'Removing %s from the repository.\n' \
+                "$(basename "$package_file")"
+            rm -f "$package_file" "${package_file}.sig"
+            removed=1
+        fi
+    done < <(
+        find "$repository_dir" -maxdepth 1 -type f \
+            -name '*.pkg.tar.zst' \
+            -print0 |
+            sort -z
+    )
+
+    if (( removed == 0 )); then
+        printf '%s is already absent from the repository.\n' "$target_name"
+    fi
+}
 
 mapfile -d '' incoming_packages < <(
     find "$incoming_dir" -type f -name '*.pkg.tar.zst' -print0 | sort -z
 )
 
-if (( ${#incoming_packages[@]} == 0 )); then
-    printf 'No package files were provided to create-repository.sh.\n' >&2
+removal_packages=()
+if [[ -f "$removal_file" ]]; then
+    mapfile -t removal_packages < <(
+        sed '/^[[:space:]]*$/d' "$removal_file" | sort -u
+    )
+fi
+
+if (( ${#incoming_packages[@]} == 0 && ${#removal_packages[@]} == 0 )); then
+    printf 'No package files or removals were provided.\n' >&2
     exit 1
 fi
 
+for package_name in "${removal_packages[@]}"; do
+    if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
+        printf 'Invalid package name in %s: %s\n' \
+            "$removal_file" "$package_name" >&2
+        exit 1
+    fi
+    remove_repository_package "$package_name"
+done
+
 for package_file in "${incoming_packages[@]}"; do
+    package_name="$(package_name_from_archive "$package_file")"
+    if [[ -z "$package_name" ]]; then
+        printf 'Unable to read pkgname from %s.\n' "$package_file" >&2
+        exit 1
+    fi
+
+    remove_repository_package "$package_name"
     destination="${repository_dir}/$(basename "$package_file")"
-    rm -f "$destination" "${destination}.sig"
     cp "$package_file" "$destination"
 done
 
@@ -63,13 +116,34 @@ else
 fi
 
 database="${repository_dir}/${repository_name}.db.tar.zst"
-repo-add -R --include-sigs "$database" "${repository_packages[@]}"
-
 rm -f \
+    "${repository_dir}/${repository_name}.db" \
+    "${repository_dir}/${repository_name}.db.tar.zst" \
+    "${repository_dir}/${repository_name}.db.tar.zst.old" \
     "${repository_dir}/${repository_name}.db.sig" \
     "${repository_dir}/${repository_name}.db.tar.zst.sig" \
+    "${repository_dir}/${repository_name}.files" \
+    "${repository_dir}/${repository_name}.files.tar.zst" \
+    "${repository_dir}/${repository_name}.files.tar.zst.old" \
     "${repository_dir}/${repository_name}.files.sig" \
     "${repository_dir}/${repository_name}.files.tar.zst.sig"
+
+if (( ${#repository_packages[@]} > 0 )); then
+    repo-add --include-sigs "$database" "${repository_packages[@]}"
+else
+    for archive in \
+        "${repository_dir}/${repository_name}.db.tar.zst" \
+        "${repository_dir}/${repository_name}.files.tar.zst"; do
+        bsdtar --create --file - --format ustar --files-from /dev/null |
+            zstd --quiet --stdout > "$archive"
+    done
+    ln -sfn \
+        "${repository_name}.db.tar.zst" \
+        "${repository_dir}/${repository_name}.db"
+    ln -sfn \
+        "${repository_name}.files.tar.zst" \
+        "${repository_dir}/${repository_name}.files"
+fi
 
 if [[ -n "$signing_key" ]]; then
     for archive in \
@@ -101,7 +175,11 @@ EOF
 
 (
     cd "$repository_dir"
-    sha256sum ./*.pkg.tar.zst > SHA256SUMS
+    if (( ${#repository_packages[@]} > 0 )); then
+        sha256sum ./*.pkg.tar.zst > SHA256SUMS
+    else
+        : > SHA256SUMS
+    fi
 )
 
 printf 'Repository %s now contains:\n' "$repository_name"

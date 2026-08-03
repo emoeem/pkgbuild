@@ -89,7 +89,15 @@ done
 
 (
     cd "$repository_arch"
-    sha256sum --check SHA256SUMS
+    if [[ -s SHA256SUMS ]]; then
+        sha256sum --check SHA256SUMS
+    elif find . -maxdepth 1 -type f -name '*.pkg.tar.zst' -print -quit |
+        grep -q .; then
+        printf 'SHA256SUMS is empty but package archives are present.\n' >&2
+        exit 1
+    else
+        printf 'The repository currently contains no package archives.\n'
+    fi
 )
 
 install -d -m0755 "$pacman_sync_dir"
