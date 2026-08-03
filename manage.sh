@@ -13,15 +13,15 @@ pacman_repository="${PKGBUILD_PACMAN_REPOSITORY:-emoeem}"
 default_make_jobs="${PKGBUILD_DEFAULT_MAKE_JOBS:-2}"
 
 if [[ ! "$github_repository" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
-    printf 'Invalid GitHub repository: %s\n' "$github_repository" >&2
+    printf 'GitHub 仓库配置无效：%s\n' "$github_repository" >&2
     exit 2
 fi
 if [[ ! "$pacman_repository" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
-    printf 'Invalid pacman repository: %s\n' "$pacman_repository" >&2
+    printf 'pacman 仓库配置无效：%s\n' "$pacman_repository" >&2
     exit 2
 fi
 if [[ ! "$default_make_jobs" =~ ^[1-4]$ ]]; then
-    printf 'Invalid default compiler job count: %s\n' \
+    printf '默认编译线程数无效：%s\n' \
         "$default_make_jobs" >&2
     exit 2
 fi
@@ -32,11 +32,11 @@ readonly default_make_jobs
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--no-push]
+用法：$(basename "$0") [--no-push]
 
-Open the fzf package repository manager.
+打开基于 fzf 的私人软件仓库管理界面。
 
-  --no-push  Start with automatic Git pushes disabled.
+  --no-push  启动时关闭自动 Git 推送。
 EOF
 }
 
@@ -58,16 +58,16 @@ fi
 
 for command_name in git fzf; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
-        printf '%s is required.\n' "$command_name" >&2
+        printf '缺少必需命令：%s\n' "$command_name" >&2
         if [[ "$command_name" == "fzf" ]]; then
-            printf 'Install it with: sudo pacman -S fzf\n' >&2
+            printf '安装命令：sudo pacman -S fzf\n' >&2
         fi
         exit 1
     fi
 done
 
 if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    printf '%s is not a Git checkout.\n' "$repo_root" >&2
+    printf '%s 不是 Git 工作目录。\n' "$repo_root" >&2
     exit 1
 fi
 
@@ -81,7 +81,7 @@ readonly -a fzf_options=(
 
 pause_after_action() {
     printf '\n'
-    read -r -p 'Press Enter to return to the menu...' _ || true
+    read -r -p '按 Enter 返回主菜单...' _ || true
 }
 
 prompt_value() {
@@ -124,7 +124,7 @@ select_one() {
 
 select_managed_package() {
     managed_packages |
-        fzf "${fzf_options[@]}" --prompt='Package> '
+        fzf "${fzf_options[@]}" --prompt='软件包> '
 }
 
 select_managed_packages() {
@@ -133,26 +133,26 @@ select_managed_packages() {
             "${fzf_options[@]}" \
             --multi \
             --bind='ctrl-a:select-all,ctrl-d:deselect-all' \
-            --header='Tab: toggle  Ctrl-A: all  Ctrl-D: none' \
-            --prompt='Packages> '
+            --header='Tab：选择/取消  Ctrl-A：全选  Ctrl-D：取消全选' \
+            --prompt='软件包> '
 }
 
 select_aur_packages() {
     {
-        printf '%s\n' all
+        printf '%s\n' '全部 AUR 软件包'
         aur_packages
     } |
         fzf \
             "${fzf_options[@]}" \
             --multi \
             --bind='ctrl-a:select-all,ctrl-d:deselect-all' \
-            --header='Choose all, or select packages with Tab' \
-            --prompt='AUR sync> '
+            --header='选择“全部 AUR 软件包”，或使用 Tab 多选' \
+            --prompt='同步 AUR> '
 }
 
 require_gh() {
     if ! command -v gh >/dev/null 2>&1; then
-        printf 'GitHub CLI is required. Install it with: sudo pacman -S github-cli\n' \
+        printf '缺少 GitHub CLI。安装命令：sudo pacman -S github-cli\n' \
             >&2
         return 1
     fi
@@ -166,7 +166,7 @@ add_aur_package() {
     local package_name
     local -a arguments=()
 
-    package_name="$(prompt_value 'AUR package base')" || return
+    package_name="$(prompt_value 'AUR package base 名称')" || return
     [[ -n "$package_name" ]] || return
     (( push_changes == 0 )) && arguments+=(--no-push)
     "${repo_root}/scripts/add-aur-package.sh" \
@@ -178,9 +178,9 @@ add_custom_package() {
     local package_name git_url
     local -a arguments=()
 
-    package_name="$(prompt_value 'Package base')" || return
+    package_name="$(prompt_value 'Package base 名称')" || return
     [[ -n "$package_name" ]] || return
-    git_url="$(prompt_value 'PKGBUILD Git URL')" || return
+    git_url="$(prompt_value 'PKGBUILD Git 地址')" || return
     [[ -n "$git_url" ]] || return
     (( push_changes == 0 )) && arguments+=(--no-push)
     "${repo_root}/scripts/add-aur-package.sh" \
@@ -197,11 +197,11 @@ remove_package() {
     [[ -n "$package_name" ]] || return
     confirmation="$(
         select_one \
-            "Remove ${package_name}" \
-            'Cancel' \
-            'Remove from repository'
+            "确认删除 ${package_name}" \
+            '取消' \
+            '从仓库删除'
     )" || return
-    [[ "$confirmation" == 'Remove from repository' ]] || return
+    [[ "$confirmation" == '从仓库删除' ]] || return
 
     (( push_changes == 0 )) && arguments+=(--no-push)
     "${repo_root}/scripts/remove-package.sh" \
@@ -219,7 +219,7 @@ sync_aur_sources() {
 
     selection="selected"
     for package_name in "${packages[@]}"; do
-        if [[ "$package_name" == "all" ]]; then
+        if [[ "$package_name" == "全部 AUR 软件包" ]]; then
             selection="all"
             break
         fi
@@ -235,12 +235,16 @@ sync_aur_sources() {
         --repo "$github_repository" \
         --ref main \
         -f "packages=${package_csv}"
-    printf 'AUR synchronization requested for: %s\n' "$package_csv"
+    if [[ "$package_csv" == "all" ]]; then
+        printf '已请求同步全部 AUR 软件包。\n'
+    else
+        printf '已请求同步 AUR 软件包：%s\n' "$package_csv"
+    fi
 }
 
 build_packages() {
     local candidate make_jobs package_csv jobs_choice
-    local -a jobs_options=("${default_make_jobs} (default)")
+    local -a jobs_options=("${default_make_jobs} （默认）")
     local -a packages=()
 
     require_gh || return
@@ -252,7 +256,7 @@ build_packages() {
             jobs_options+=("$candidate")
     done
     jobs_choice="$(
-        select_one 'Compiler jobs' "${jobs_options[@]}"
+        select_one '编译线程数' "${jobs_options[@]}"
     )" || return
     make_jobs="${jobs_choice%% *}"
     package_csv="$(IFS=,; printf '%s' "${packages[*]}")"
@@ -262,13 +266,13 @@ build_packages() {
         --ref main \
         -f "packages=${package_csv}" \
         -f "make_jobs=${make_jobs}"
-    printf 'Build requested for: %s (make jobs: %s)\n' \
+    printf '已请求构建：%s（编译线程数：%s）\n' \
         "$package_csv" "$make_jobs"
 }
 
 update_local_repository() {
     if ! command -v emoeem-update >/dev/null 2>&1; then
-        printf 'emoeem-update is not installed. Run ./client/install.sh first.\n' \
+        printf '尚未安装 emoeem-update，请先运行 ./client/install.sh。\n' \
             >&2
         return 1
     fi
@@ -287,33 +291,83 @@ install_repository_package() {
             sort -u
     )
     if (( ${#packages[@]} == 0 )); then
-        printf 'No packages are currently available from %s.\n' \
+        printf '%s 仓库当前没有可安装的软件包。\n' \
             "$pacman_repository" >&2
         return 1
     fi
 
     package_name="$(
-        select_one 'Install package' "${packages[@]}"
+        select_one '安装软件包' "${packages[@]}"
     )" || return
     [[ -n "$package_name" ]] || return
     sudo pacman -S "${pacman_repository}/${package_name}"
 }
 
+translate_action_status() {
+    case "$1" in
+        queued) printf '排队中' ;;
+        in_progress) printf '运行中' ;;
+        completed) printf '已完成' ;;
+        requested) printf '已请求' ;;
+        waiting) printf '等待中' ;;
+        pending) printf '待处理' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+translate_action_conclusion() {
+    case "$1" in
+        success) printf '成功' ;;
+        failure) printf '失败' ;;
+        cancelled) printf '已取消' ;;
+        skipped) printf '已跳过' ;;
+        neutral) printf '中性' ;;
+        timed_out) printf '超时' ;;
+        action_required) printf '需要处理' ;;
+        startup_failure) printf '启动失败' ;;
+        stale) printf '已过期' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+translate_workflow_name() {
+    case "$1" in
+        'Build private Arch repository')
+            printf '构建私人 Arch 仓库'
+            ;;
+        'Remove packages from private repository')
+            printf '从私人仓库删除软件包'
+            ;;
+        'Sync AUR package sources')
+            printf '同步 AUR 软件包源'
+            ;;
+        *)
+            printf '%s' "$1"
+            ;;
+    esac
+}
+
 show_recent_actions() {
-    local run_id selected
+    local conclusion run_data run_id selected status title workflow
     local -a runs=()
 
     require_gh || return
-    mapfile -t runs < <(
+    run_data="$(
         gh run list \
             --repo "$github_repository" \
             --limit 30 \
             --json databaseId,status,conclusion,workflowName,displayTitle \
             --jq \
             '.[] | [.databaseId, .status, (.conclusion // "-"), .workflowName, .displayTitle] | @tsv'
-    )
+    )" || return
+    while IFS=$'\t' read -r run_id status conclusion workflow title; do
+        [[ -n "$run_id" ]] || continue
+        runs+=(
+            "${run_id}"$'\t'"$(translate_action_status "$status")"$'\t'"$(translate_action_conclusion "$conclusion")"$'\t'"$(translate_workflow_name "$workflow")"$'\t'"${title}"
+        )
+    done <<< "$run_data"
     if (( ${#runs[@]} == 0 )); then
-        printf 'No GitHub Actions runs were found.\n'
+        printf '没有找到 GitHub Actions 运行记录。\n'
         return
     fi
 
@@ -323,7 +377,8 @@ show_recent_actions() {
                 "${fzf_options[@]}" \
                 --delimiter=$'\t' \
                 --with-nth=2.. \
-                --prompt='Actions run> '
+                --header='状态 | 结果 | 工作流 | 标题' \
+                --prompt='Actions 运行记录> '
     )" || return
     run_id="${selected%%$'\t'*}"
     gh run view "$run_id" --repo "$github_repository"
@@ -332,59 +387,59 @@ show_recent_actions() {
 while true; do
     branch="$(git -C "$repo_root" branch --show-current)"
     package_count="$(managed_packages | wc -l)"
-    install_label="Install package from ${pacman_repository}"
+    install_label="从 ${pacman_repository} 安装软件包"
     if (( push_changes == 1 )); then
-        push_label='ON'
+        push_label='开启'
     else
-        push_label='OFF'
+        push_label='关闭'
     fi
 
     action="$(
         select_one \
-            "${github_repository} | ${branch:-detached} | ${package_count} packages | push ${push_label}" \
-            'Add AUR package' \
-            'Add package from custom Git' \
-            'Remove package from repository' \
-            'Sync AUR sources on GitHub' \
-            'Build packages on GitHub' \
-            'Update local pacman repository' \
+            "${github_repository} | 分支 ${branch:-游离状态} | ${package_count} 个软件包 | 自动推送 ${push_label}" \
+            '添加 AUR 软件包' \
+            '从自定义 Git 添加软件包' \
+            '从仓库删除软件包' \
+            '在 GitHub 上同步 AUR 源' \
+            '在 GitHub 上构建软件包' \
+            '更新本地 pacman 仓库' \
             "$install_label" \
-            'Show recent GitHub Actions' \
-            'Pull source branch' \
-            "Toggle automatic push (${push_label})" \
-            'Exit'
+            '查看最近的 GitHub Actions' \
+            '拉取最新 main 分支' \
+            "切换自动推送（当前${push_label}）" \
+            '退出'
     )" || exit 0
 
     action_status=0
     case "$action" in
-        'Add AUR package')
+        '添加 AUR 软件包')
             add_aur_package || action_status=$?
             ;;
-        'Add package from custom Git')
+        '从自定义 Git 添加软件包')
             add_custom_package || action_status=$?
             ;;
-        'Remove package from repository')
+        '从仓库删除软件包')
             remove_package || action_status=$?
             ;;
-        'Sync AUR sources on GitHub')
+        '在 GitHub 上同步 AUR 源')
             sync_aur_sources || action_status=$?
             ;;
-        'Build packages on GitHub')
+        '在 GitHub 上构建软件包')
             build_packages || action_status=$?
             ;;
-        'Update local pacman repository')
+        '更新本地 pacman 仓库')
             update_local_repository || action_status=$?
             ;;
         "$install_label")
             install_repository_package || action_status=$?
             ;;
-        'Show recent GitHub Actions')
+        '查看最近的 GitHub Actions')
             show_recent_actions || action_status=$?
             ;;
-        'Pull source branch')
+        '拉取最新 main 分支')
             pull_main || action_status=$?
             ;;
-        Toggle*)
+        切换自动推送*)
             if (( push_changes == 1 )); then
                 push_changes=0
             else
@@ -392,13 +447,13 @@ while true; do
             fi
             continue
             ;;
-        'Exit')
+        '退出')
             exit 0
             ;;
     esac
 
     if (( action_status != 0 )); then
-        printf '\nAction failed with status %d.\n' "$action_status" >&2
+        printf '\n操作失败，退出状态：%d。\n' "$action_status" >&2
     fi
     pause_after_action
 done
