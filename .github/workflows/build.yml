@@ -127,11 +127,25 @@ jobs:
             sha256sum --check SHA256SUMS
           )
 
+      - name: Pack package artifact
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ matrix.package }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifact
+          tar \
+            --create \
+            --file "artifact/${PACKAGE_NAME}.tar" \
+            --directory dist \
+            .
+          tar --list --file "artifact/${PACKAGE_NAME}.tar"
+
       - name: Upload package artifact
         uses: actions/upload-artifact@v7
         with:
           name: built-${{ matrix.package }}-${{ github.run_id }}
-          path: dist/
+          path: artifact/${{ matrix.package }}.tar
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
@@ -167,6 +181,30 @@ jobs:
           path: incoming
           merge-multiple: true
 
+      - name: Extract built packages
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p incoming-packages
+          archive_count=0
+          while IFS= read -r -d '' archive; do
+            archive_name="$(basename "$archive" .tar)"
+            destination="incoming-packages/${archive_name}"
+            mkdir -p "$destination"
+            tar --extract --file "$archive" --directory "$destination"
+            archive_count=$((archive_count + 1))
+          done < <(
+            find incoming -maxdepth 1 -type f -name '*.tar' -print0 |
+              sort -z
+          )
+
+          if (( archive_count == 0 )); then
+            echo "No package transport archives were downloaded." >&2
+            exit 1
+          fi
+
+          find incoming-packages -type f -printf '%P %k KiB\n' | sort
+
       - name: Prepare signing key
         shell: bash
         env:
@@ -186,7 +224,7 @@ jobs:
           mkdir -p published/x86_64
           docker run --rm \
             --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
-            --volume "$GITHUB_WORKSPACE/incoming:/incoming:ro" \
+            --volume "$GITHUB_WORKSPACE/incoming-packages:/incoming:ro" \
             --volume "$GITHUB_WORKSPACE/published/x86_64:/repository" \
             --volume "$GITHUB_WORKSPACE/repository-key.asc:/run/secrets/repository-key.asc:ro" \
             --env "REPOSITORY_NAME=emoeem" \
@@ -206,11 +244,21 @@ jobs:
             --message "repo: update from ${GITHUB_SHA::12}"
           git push --force-with-lease origin HEAD:repo
 
+      - name: Pack repository snapshot
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tar \
+            --create \
+            --file emoeem-pacman-repository.tar \
+            --directory published/x86_64 \
+            .
+
       - name: Upload repository snapshot
         uses: actions/upload-artifact@v7
         with:
           name: emoeem-pacman-repository-${{ github.run_number }}
-          path: published/x86_64/
+          path: emoeem-pacman-repository.tar
           if-no-files-found: error
           compression-level: 0
           retention-days: 30

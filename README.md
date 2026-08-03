@@ -72,8 +72,10 @@ https://aur.archlinux.org/package-name.git
 
 ## 构建产物
 
-每个包会生成独立的私有 Actions Artifact。所有成功产物随后被合并到
-`repo` 分支的 `x86_64/`：
+每个包会生成独立的私有 Actions Artifact。Artifact 使用 tar 作为传输
+容器，以便保留 Arch `epoch` 产生的冒号文件名；发布任务解包后，原始软件包
+文件名和内容不会发生变化。所有成功产物随后被合并到 `repo` 分支的
+`x86_64/`：
 
 - `*.pkg.tar.zst`
 - `emoeem.db` 与 `emoeem.db.tar.zst`

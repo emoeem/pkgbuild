@@ -52,8 +52,10 @@ https://aur.archlinux.org/package-name.git
 `packages/**` 的变化会触发 `build.yml`。工作流只选择发生变化的软件包，
 在 Arch Linux 容器中安装二进制仓库或 AUR 依赖，然后运行 makepkg。
 
-成功生成的 `*.pkg.tar.zst` 会先作为 Actions Artifact 保存，再合并到
-`repo` 分支。`repo` 分支使用 amend 和 force-with-lease 保持单提交快照。
+成功生成的 `*.pkg.tar.zst` 会封装在 tar 中作为 Actions Artifact 保存，
+从而兼容 `epoch` 带来的冒号文件名。发布任务解包后再合并到 `repo` 分支，
+因此软件包原始名称不会改变。`repo` 分支使用 amend 和 force-with-lease
+保持单提交快照。
 
 每天的 `sync.yml` 会检查所有带 `.aur-url` 的包。AUR commit 变化时，它
 会更新文件、提交到 `main`，并只重建变化的软件包。
