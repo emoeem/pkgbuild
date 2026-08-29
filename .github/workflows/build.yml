@@ -30,6 +30,10 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_TAG: repo
+  REPOSITORY_NAME: emoeem
+
 jobs:
   select:
     name: Select packages
@@ -126,6 +130,19 @@ jobs:
             cd dist
             sha256sum --check SHA256SUMS
           )
+          # GitHub rejects release assets larger than 2 GiB.
+          max_bytes=$((2 * 1024 * 1024 * 1024))
+          while IFS= read -r -d '' package_file; do
+              size_bytes="$(stat -c %s "$package_file")"
+              if (( size_bytes > max_bytes )); then
+                  printf \
+                      '%s is %d MiB, exceeding the 2 GiB release asset size limit.\n' \
+                      "$package_file" "$((size_bytes / 1048576))" >&2
+                  exit 1
+              fi
+          done < <(
+              find dist -maxdepth 1 -type f -name '*.pkg.tar.zst' -print0
+          )
 
       - name: Pack package artifact
         shell: bash
@@ -151,7 +168,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Update private pacman repository
+    name: Publish pacman repository release
     needs:
       - select
       - build
@@ -160,7 +177,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: private-pacman-repository
+      group: pacman-repository-release
       cancel-in-progress: false
 
     steps:
@@ -168,13 +185,6 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           path: source
-
-      - name: Checkout repository branch
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-        with:
-          ref: repo
-          path: published
-          fetch-depth: 1
 
       - name: Download built packages
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
@@ -217,51 +227,39 @@ jobs:
             printf '%s\n' "$REPOSITORY_PRIVATE_KEY" > repository-key.asc
           fi
 
+      - name: Fetch current repository state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_DIR: published/x86_64
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          bash source/scripts/fetch-repository-state.sh
+
       - name: Update repository database
         shell: bash
         env:
           REPOSITORY_KEY_PASSPHRASE: ${{ secrets.REPOSITORY_KEY_PASSPHRASE }}
         run: |
           set -Eeuo pipefail
-          mkdir -p published/x86_64
           docker run --rm \
             --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/incoming-packages:/incoming:ro" \
             --volume "$GITHUB_WORKSPACE/published/x86_64:/repository" \
             --volume "$GITHUB_WORKSPACE/repository-key.asc:/run/secrets/repository-key.asc:ro" \
-            --env "REPOSITORY_NAME=emoeem" \
+            --env "REPOSITORY_NAME=${REPOSITORY_NAME}" \
+            --env "REPOSITORY_SERVER=https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}" \
             --env "REPOSITORY_KEY_PASSPHRASE=$REPOSITORY_KEY_PASSPHRASE" \
             docker.io/library/archlinux:base-devel \
             bash /workspace/scripts/create-repository.sh
 
-      - name: Publish repository branch
+      - name: Publish repository release
         shell: bash
-        working-directory: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_DIR: published/x86_64
+          RELEASE_REPOSITORY: ${{ github.repository }}
         run: |
           set -Eeuo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add --all
-          git commit --amend \
-            --message "repo: update from ${GITHUB_SHA::12}"
-          git push --force-with-lease origin HEAD:repo
-
-      - name: Pack repository snapshot
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          tar \
-            --create \
-            --file emoeem-pacman-repository.tar \
-            --directory published/x86_64 \
-            .
-
-      - name: Upload repository snapshot
-        continue-on-error: true
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
-        with:
-          name: emoeem-pacman-repository-${{ github.run_number }}
-          path: emoeem-pacman-repository.tar
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 7
+          bash source/scripts/publish-release.sh

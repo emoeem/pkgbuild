@@ -7,6 +7,7 @@ readonly repository_dir="${REPOSITORY_DIR:-/repository}"
 readonly repository_name="${REPOSITORY_NAME:-emoeem}"
 readonly repository_key="${REPOSITORY_KEY:-/run/secrets/repository-key.asc}"
 readonly removal_file="${REMOVE_PACKAGES_FILE:-/remove-packages}"
+readonly repository_server="${REPOSITORY_SERVER:-file:///absolute/path/to/private-repo/x86_64}"
 
 mkdir -p "$repository_dir"
 rm -f "${repository_dir}/.gitkeep"
@@ -167,10 +168,35 @@ else
     signature_level="Never"
 fi
 
+# pacman 直接下载 <repo>.db / <repo>.files，而 GitHub Release 资产不支持
+# 符号链接，因此把仓库发布为不带 .tar.zst 后缀的常规文件。
+rm -f \
+    "${repository_dir}/${repository_name}.db" \
+    "${repository_dir}/${repository_name}.files" \
+    "${repository_dir}/${repository_name}.db.sig" \
+    "${repository_dir}/${repository_name}.files.sig"
+mv -f \
+    "${repository_dir}/${repository_name}.db.tar.zst" \
+    "${repository_dir}/${repository_name}.db"
+mv -f \
+    "${repository_dir}/${repository_name}.files.tar.zst" \
+    "${repository_dir}/${repository_name}.files"
+if [[ -n "$signing_key" ]]; then
+    mv -f \
+        "${repository_dir}/${repository_name}.db.tar.zst.sig" \
+        "${repository_dir}/${repository_name}.db.sig"
+    mv -f \
+        "${repository_dir}/${repository_name}.files.tar.zst.sig" \
+        "${repository_dir}/${repository_name}.files.sig"
+fi
+rm -f \
+    "${repository_dir}/${repository_name}.db.tar.zst.old" \
+    "${repository_dir}/${repository_name}.files.tar.zst.old"
+
 cat > "${repository_dir}/${repository_name}.conf" <<EOF
 [${repository_name}]
 SigLevel = ${signature_level}
-Server = file:///absolute/path/to/private-repo/x86_64
+Server = ${repository_server}
 EOF
 
 (

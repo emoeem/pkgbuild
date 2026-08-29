@@ -11,9 +11,9 @@ ROOT = Path(__file__).resolve().parent.parent
 PACKAGES_DIR = ROOT / "packages"
 PACKAGE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9@._+-]+$")
 INFRASTRUCTURE_PREFIXES = (
-    ".github/workflows/build.yml",
     "config/",
-    "scripts/",
+    "scripts/build-in-arch.sh",
+    "scripts/setup-build-repositories.sh",
 )
 
 

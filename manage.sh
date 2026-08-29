@@ -354,13 +354,7 @@ check_local_packages() {
 }
 
 update_local_repository() {
-    if ! command -v emoeem-update >/dev/null 2>&1; then
-        printf '尚未安装 emoeem-update，请先运行 ./client/install.sh。\n' \
-            >&2
-        return 1
-    fi
-
-    emoeem-update
+    sudo pacman -Sy
     pacman -Sl "$pacman_repository"
 }
 

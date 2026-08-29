@@ -13,10 +13,15 @@ on:
     paths:
       - "removals/**"
       - "scripts/create-repository.sh"
+      - "scripts/publish-release.sh"
       - ".github/workflows/remove.yml"
 
 permissions:
   contents: read
+
+env:
+  RELEASE_TAG: repo
+  REPOSITORY_NAME: emoeem
 
 jobs:
   remove:
@@ -25,7 +30,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: private-pacman-repository
+      group: pacman-repository-release
       cancel-in-progress: false
 
     steps:
@@ -107,13 +112,16 @@ jobs:
             echo "No package removals were selected."
           fi
 
-      - name: Checkout repository branch
+      - name: Fetch current repository state
         if: steps.removals.outputs.changed == 'true'
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-        with:
-          ref: repo
-          path: published
-          fetch-depth: 1
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_DIR: published/x86_64
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          bash source/scripts/fetch-repository-state.sh
 
       - name: Prepare signing key
         if: steps.removals.outputs.changed == 'true'
@@ -140,51 +148,19 @@ jobs:
             --volume "$GITHUB_WORKSPACE/remove-packages.txt:/remove-packages:ro" \
             --volume "$GITHUB_WORKSPACE/published/x86_64:/repository" \
             --volume "$GITHUB_WORKSPACE/repository-key.asc:/run/secrets/repository-key.asc:ro" \
-            --env "REPOSITORY_NAME=emoeem" \
+            --env "REPOSITORY_NAME=${REPOSITORY_NAME}" \
+            --env "REPOSITORY_SERVER=https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}" \
             --env "REPOSITORY_KEY_PASSPHRASE=$REPOSITORY_KEY_PASSPHRASE" \
             docker.io/library/archlinux:base-devel \
             bash /workspace/scripts/create-repository.sh
 
-      - name: Publish repository branch
+      - name: Publish repository release
         if: steps.removals.outputs.changed == 'true'
-        id: publish
         shell: bash
-        working-directory: published
         env:
-          PACKAGES: ${{ steps.removals.outputs.packages }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_DIR: published/x86_64
+          RELEASE_REPOSITORY: ${{ github.repository }}
         run: |
           set -Eeuo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add --all
-          if git diff --cached --quiet; then
-            echo "The selected packages were already absent."
-            echo "published=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git commit --amend \
-            --message "repo: remove ${PACKAGES}"
-          git push --force-with-lease origin HEAD:repo
-          echo "published=true" >> "$GITHUB_OUTPUT"
-
-      - name: Pack repository snapshot
-        if: steps.publish.outputs.published == 'true'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          tar \
-            --create \
-            --file emoeem-pacman-repository.tar \
-            --directory published/x86_64 \
-            .
-
-      - name: Upload repository snapshot
-        if: steps.publish.outputs.published == 'true'
-        continue-on-error: true
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
-        with:
-          name: emoeem-pacman-repository-${{ github.run_number }}
-          path: emoeem-pacman-repository.tar
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 7
+          bash source/scripts/publish-release.sh
