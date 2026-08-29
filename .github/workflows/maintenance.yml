@@ -1,0 +1,159 @@
+name: Maintenance
+
+on:
+  schedule:
+    # Daily at 16:17 UTC, well after the 03:17 UTC AUR sync builds finish.
+    - cron: "17 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: maintenance
+  cancel-in-progress: false
+
+jobs:
+  clean-artifacts:
+    name: Delete stale artifacts
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Delete artifacts older than 72 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          cutoff="$(date -u -d '72 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          deleted_total=0
+          while :; do
+            mapfile -t ids < <(
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+                --jq ".artifacts[] | select(.created_at < \"${cutoff}\") | .id"
+            )
+            if (( ${#ids[@]} == 0 )); then
+              break
+            fi
+            remaining_before="$(
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+                --jq '.total_count'
+            )"
+            for id in "${ids[@]}"; do
+              if gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}"; then
+                deleted_total=$((deleted_total + 1))
+              fi
+            done
+            remaining_after="$(
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+                --jq '.total_count'
+            )"
+            if (( remaining_after >= remaining_before )) || (( deleted_total > 500 )); then
+              break
+            fi
+          done
+          remaining="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+              --jq '.total_count'
+          )"
+          printf 'Deleted %s artifact(s); %s remain.\n' \
+            "$deleted_total" "$remaining" >> "$GITHUB_STEP_SUMMARY"
+
+  check-sonames:
+    name: Detect outdated soname dependencies
+    runs-on: ubuntu-24.04
+    outputs:
+      stale: ${{ steps.dispatch.outputs.stale }}
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v6
+
+      - name: Checkout repository branch
+        uses: actions/checkout@v6
+        with:
+          ref: repo
+          path: published
+          fetch-depth: 1
+
+      - name: Compare linked sonames with current repositories
+        run: |
+          set -Eeuo pipefail
+          mkdir -p maintenance-out
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$GITHUB_WORKSPACE/maintenance-out:/out" \
+            docker.io/library/archlinux:base-devel \
+            bash -s -- /published <<'CONTAINER'
+          set -Eeuo pipefail
+          published="$1"
+
+          # Use the same third-party repositories as the build containers so
+          # soname resolution matches what packages were linked against.
+          /workspace/scripts/setup-build-repositories.sh
+          printf '\n[emoeem]\nSigLevel = Never\nServer = file://%s/x86_64\n' \
+            "$published" >> /etc/pacman.conf
+
+          pacman -Syu --noconfirm expac > /dev/null
+
+          mapfile -t repo_names < <(pacman -Slq)
+          provides="$(
+            expac -S '%P' "${repo_names[@]}" | tr ' ' '\n' | sort -u
+          )"
+
+          : > /out/stale.txt
+          : > /out/report.txt
+          for package_file in "$published"/x86_64/*.pkg.tar.zst; do
+            [[ -e "$package_file" ]] || continue
+            pkgname="$(
+              bsdtar -xOf "$package_file" .BUILDINFO |
+                awk -F ' = ' '$1 == "pkgname" { print $2; exit }'
+            )"
+            [[ -n "$pkgname" ]] || continue
+
+            mapfile -t soname_deps < <(
+              bsdtar -xOf "$package_file" .PKGINFO .BUILDINFO |
+                awk -F ' = ' '$1 == "depend" || $1 == "depends" { print $2 }' |
+                grep '\.so=' | sort -u
+            )
+
+            missing=""
+            for soname in "${soname_deps[@]}"; do
+              if ! grep -qxF -- "$soname" <<<"$provides"; then
+                missing+="${soname} "
+              fi
+            done
+
+            if [[ -n "$missing" ]]; then
+              printf '%s\n' "$pkgname" >> /out/stale.txt
+              printf 'STALE %s: missing %s\n' "$pkgname" "$missing" \
+                >> /out/report.txt
+            else
+              printf 'OK    %s (%s soname deps)\n' \
+                "$pkgname" "${#soname_deps[@]}" >> /out/report.txt
+            fi
+          done
+          sort -u -o /out/stale.txt /out/stale.txt
+          cat /out/report.txt
+          CONTAINER
+
+      - name: Dispatch rebuilds for stale packages
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          if [[ -s maintenance-out/stale.txt ]]; then
+            stale="$(paste -sd, maintenance-out/stale.txt)"
+            printf 'Stale packages: %s\n' "$stale" | tee -a "$GITHUB_STEP_SUMMARY"
+            gh workflow run build.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              -f packages="$stale" \
+              -f make_jobs=4
+            printf 'Triggered rebuild for: %s\n' "$stale" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            printf 'stale=%s\n' "$stale" >> "$GITHUB_OUTPUT"
+          else
+            printf 'All packages are up to date with current repository sonames.\n' \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            printf 'stale=\n' >> "$GITHUB_OUTPUT"
+          fi
+          cat maintenance-out/report.txt >> "$GITHUB_STEP_SUMMARY" || true
