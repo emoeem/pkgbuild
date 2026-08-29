@@ -46,11 +46,22 @@ for package_name in "${package_names[@]}"; do
 
     if command -v makepkg >/dev/null 2>&1; then
         generated_srcinfo="$(mktemp)"
-        if ! (cd "$package_dir" && makepkg --printsrcinfo >"$generated_srcinfo"); then
+        makepkg_tmp="$(mktemp -d)"
+        # makepkg verifies write access to BUILDDIR/PKGDEST even for
+        # --printsrcinfo and defaults them to the package directory, which
+        # may be read-only (CI mounts the workspace with :ro).
+        if ! (
+            cd "$package_dir" &&
+            BUILDDIR="$makepkg_tmp" SRCDEST="$makepkg_tmp" \
+                PKGDEST="$makepkg_tmp" LOGDEST="$makepkg_tmp" \
+                makepkg --printsrcinfo >"$generated_srcinfo"
+        ); then
+            rm -rf "$makepkg_tmp"
             rm -f "$generated_srcinfo"
             printf 'Unable to generate .SRCINFO for %s.\n' "$package_name" >&2
             exit 1
         fi
+        rm -rf "$makepkg_tmp"
         if ! diff -u "${package_dir}/.SRCINFO" "$generated_srcinfo"; then
             rm -f "$generated_srcinfo"
             printf 'PKGBUILD and .SRCINFO differ for %s.\n' "$package_name" >&2

@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           fetch-depth: 0
 
@@ -81,7 +81,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Validate package files
         run: ./scripts/check-package.sh "${{ matrix.package }}"
@@ -148,7 +148,7 @@ jobs:
           path: artifact/${{ matrix.package }}.tar
           if-no-files-found: error
           compression-level: 0
-          retention-days: 30
+          retention-days: 7
 
   publish:
     name: Update private pacman repository
@@ -165,12 +165,12 @@ jobs:
 
     steps:
       - name: Checkout source branch
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           path: source
 
       - name: Checkout repository branch
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           ref: repo
           path: published
@@ -257,10 +257,11 @@ jobs:
             .
 
       - name: Upload repository snapshot
+        continue-on-error: true
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
         with:
           name: emoeem-pacman-repository-${{ github.run_number }}
           path: emoeem-pacman-repository.tar
           if-no-files-found: error
           compression-level: 0
-          retention-days: 30
+          retention-days: 7
