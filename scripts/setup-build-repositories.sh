@@ -36,9 +36,11 @@ set_signature_level() {
 }
 
 sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 5/' "$pacman_config"
-set_signature_level "SigLevel" "Never"
-set_signature_level "LocalFileSigLevel" "Never"
-set_signature_level "RemoteFileSigLevel" "Never"
+# Keep Arch Linux package and database signature checks enabled.  The
+# third-party repositories below are explicitly unsigned and scoped locally.
+set_signature_level "SigLevel" "Required DatabaseOptional"
+set_signature_level "LocalFileSigLevel" "Optional"
+set_signature_level "RemoteFileSigLevel" "Required DatabaseOptional"
 
 pacman-key --init
 pacman-key --populate archlinux
@@ -55,3 +57,19 @@ pacman -U --noconfirm "$chaotic_mirrorlist_url"
 append_repository \
     "chaotic-aur" \
     $'SigLevel = Never\nInclude = /etc/pacman.d/chaotic-mirrorlist'
+
+printf 'Enabling CachyOS binary repositories...\n'
+# Mirror the target system repository set so built packages link against the
+# same library builds that CachyOS machines run.
+append_repository \
+    "cachyos-v3" \
+    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
+append_repository \
+    "cachyos-core-v3" \
+    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
+append_repository \
+    "cachyos-extra-v3" \
+    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
+append_repository \
+    "cachyos" \
+    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64/$repo'

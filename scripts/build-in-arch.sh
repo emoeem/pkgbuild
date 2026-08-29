@@ -31,7 +31,7 @@ fi
 printf 'Building %s with %s parallel job(s).\n' "$package_name" "$make_jobs"
 
 "${workspace_dir}/scripts/setup-build-repositories.sh"
-pacman -Syu --needed --noconfirm git gnupg sudo curl
+pacman -Syu --needed --noconfirm git gnupg sudo curl namcap
 
 useradd --create-home --shell /bin/bash builder
 printf 'builder ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/builder
@@ -82,6 +82,8 @@ printf 'Checking that .SRCINFO matches PKGBUILD...\n'
 as_builder bash -c \
     "cd '$package_dir' && makepkg --printsrcinfo > /tmp/SRCINFO.generated"
 diff -u "${package_dir}/.SRCINFO" /tmp/SRCINFO.generated
+printf 'Running namcap on PKGBUILD...\n'
+as_builder namcap "${package_dir}/PKGBUILD"
 
 if [[ "$package_name" == "ffmpeg-full" ]]; then
     readonly ffmpeg_signing_key="FCF986EA15E6E293A5644F10B4322F04D67658D8"
@@ -165,6 +167,8 @@ fi
 
 for package_file in "${package_files[@]}"; do
     filename="$(basename "$package_file")"
+    printf 'Running namcap on %s...\n' "$filename"
+    as_builder namcap "$package_file"
     cp "$package_file" "$output_dir/"
     bsdtar -xOf "$package_file" .PKGINFO > "${output_dir}/${filename}.PKGINFO"
     bsdtar -xOf "$package_file" .BUILDINFO > "${output_dir}/${filename}.BUILDINFO"
