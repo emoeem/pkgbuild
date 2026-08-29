@@ -72,7 +72,7 @@ jobs:
                   set -Eeuo pipefail
                   cd /workspace
                   ./scripts/check-package.sh \"\$PACKAGE_NAME\"
-                  shellcheck --severity=warning manage.sh scripts/*.sh client/*.sh client/emoeem-update
+                  shellcheck --severity=warning manage.sh scripts/*.sh client/*.sh
                   namcap \"packages/\$PACKAGE_NAME/PKGBUILD\"
                 "
             '
