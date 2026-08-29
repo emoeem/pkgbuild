@@ -36,10 +36,14 @@ set_signature_level() {
 }
 
 sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 5/' "$pacman_config"
-# Keep Arch Linux package and database signature checks enabled.  The
-# third-party repositories below are explicitly unsigned and scoped locally.
+# Keep Arch Linux repository package and database signature checks enabled.
+# The third-party repositories below are explicitly unsigned and scoped
+# locally.
 set_signature_level "SigLevel" "Required DatabaseOptional"
-set_signature_level "LocalFileSigLevel" "Optional"
+# Local-file installs stay unverified: the chaotic mirrorlist package is
+# fetched over HTTPS, is unsigned for us, and would otherwise require
+# importing the chaotic key into every build container.
+set_signature_level "LocalFileSigLevel" "Never"
 set_signature_level "RemoteFileSigLevel" "Required DatabaseOptional"
 
 pacman-key --init
