@@ -31,7 +31,7 @@ fi
 printf 'Building %s with %s parallel job(s).\n' "$package_name" "$make_jobs"
 
 "${workspace_dir}/scripts/setup-build-repositories.sh"
-pacman -Syu --needed --noconfirm git gnupg sudo curl namcap
+pacman -Syu --needed --noconfirm git gnupg sudo curl jq namcap
 
 useradd --create-home --shell /bin/bash builder
 printf 'builder ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/builder
