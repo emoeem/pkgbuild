@@ -44,6 +44,21 @@ for package_name in "${package_names[@]}"; do
 
     bash -n "${package_dir}/PKGBUILD"
 
+    if command -v makepkg >/dev/null 2>&1; then
+        generated_srcinfo="$(mktemp)"
+        if ! (cd "$package_dir" && makepkg --printsrcinfo >"$generated_srcinfo"); then
+            rm -f "$generated_srcinfo"
+            printf 'Unable to generate .SRCINFO for %s.\n' "$package_name" >&2
+            exit 1
+        fi
+        if ! diff -u "${package_dir}/.SRCINFO" "$generated_srcinfo"; then
+            rm -f "$generated_srcinfo"
+            printf 'PKGBUILD and .SRCINFO differ for %s.\n' "$package_name" >&2
+            exit 1
+        fi
+        rm -f "$generated_srcinfo"
+    fi
+
     while IFS= read -r source; do
         [[ "$source" == *"://"* || "$source" == *"::"* ]] && continue
         if [[ ! -f "${package_dir}/${source}" ]]; then

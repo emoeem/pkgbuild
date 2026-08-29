@@ -16,7 +16,6 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  actions: write
   contents: write
 
 jobs:
@@ -26,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Sync AUR files
         shell: bash
@@ -75,14 +74,3 @@ jobs:
           git add packages
           git commit -m "chore: sync AUR packages: $PACKAGES"
           git push
-
-      - name: Start package builds
-        if: steps.changes.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PACKAGES: ${{ steps.changes.outputs.packages }}
-        run: |
-          gh workflow run build.yml \
-            --ref main \
-            -f "packages=$PACKAGES" \
-            -f make_jobs=2

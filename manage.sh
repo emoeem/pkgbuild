@@ -77,6 +77,18 @@ readonly -a fzf_options=(
     --border
     --cycle
     --info=inline
+    --pointer='▶'
+    --marker='✓'
+    --color='border:bright-black,prompt:cyan,pointer:yellow,marker:green,header:blue'
+)
+
+readonly -a fzf_package_options=(
+    "${fzf_options[@]}"
+    --delimiter=$'\t'
+    --with-nth=2..
+    --preview="sed -n '1,220p' '${repo_root}/packages/{1}/PKGBUILD'"
+    --preview-window='right:55%:wrap'
+    --bind='ctrl-/:toggle-preview'
 )
 
 pause_after_action() {
@@ -103,15 +115,54 @@ managed_packages() {
         sort -u
 }
 
-aur_packages() {
-    find "${repo_root}/packages" \
-        -mindepth 2 \
-        -maxdepth 2 \
-        -type f \
-        -name .aur-url \
-        -printf '%h\n' |
-        xargs -r -n1 basename |
-        sort -u
+package_records() {
+    local package_dir package_name pkgdesc pkgrel pkgver arch
+
+    while IFS= read -r package_dir; do
+        package_name="$(basename "$package_dir")"
+        pkgver="$(awk -F ' = ' '$1 == "\tpkgver" { print $2; exit }' \
+            "${package_dir}/.SRCINFO")"
+        pkgrel="$(awk -F ' = ' '$1 == "\tpkgrel" { print $2; exit }' \
+            "${package_dir}/.SRCINFO")"
+        pkgdesc="$(awk -F ' = ' '$1 == "\tpkgdesc" { print $2; exit }' \
+            "${package_dir}/.SRCINFO")"
+        arch="$(awk -F ' = ' '$1 == "\tarch" { print $2; exit }' \
+            "${package_dir}/.SRCINFO")"
+        printf '%s\t%s-%s\t%s\t%s\n' \
+            "$package_name" "$pkgver" "$pkgrel" "$arch" "$pkgdesc"
+    done < <(
+        find "${repo_root}/packages" \
+            -mindepth 2 \
+            -maxdepth 2 \
+            -type f \
+            -name PKGBUILD \
+            -printf '%h\n' |
+            sort -u
+    )
+}
+
+aur_package_records() {
+    local package_dir package_name pkgdesc pkgrel pkgver
+
+    while IFS= read -r package_dir; do
+        package_name="$(basename "$package_dir")"
+        pkgver="$(awk -F ' = ' '$1 == "\tpkgver" { print $2; exit }' \
+            "${package_dir}/.SRCINFO")"
+        pkgrel="$(awk -F ' = ' '$1 == "\tpkgrel" { print $2; exit }' \
+            "${package_dir}/.SRCINFO")"
+        pkgdesc="$(awk -F ' = ' '$1 == "\tpkgdesc" { print $2; exit }' \
+            "${package_dir}/.SRCINFO")"
+        printf '%s\t%s-%s\t%s\n' \
+            "$package_name" "$pkgver" "$pkgrel" "$pkgdesc"
+    done < <(
+        find "${repo_root}/packages" \
+            -mindepth 2 \
+            -maxdepth 2 \
+            -type f \
+            -name .aur-url \
+            -printf '%h\n' |
+            sort -u
+    )
 }
 
 select_one() {
@@ -123,31 +174,51 @@ select_one() {
 }
 
 select_managed_package() {
-    managed_packages |
-        fzf "${fzf_options[@]}" --prompt='软件包> '
+    local selected
+
+    selected="$(
+        package_records |
+            fzf "${fzf_package_options[@]}" --prompt='软件包> ' \
+                --header='版本 | 架构 | 描述（预览 PKGBUILD）'
+    )" || return
+    printf '%s\n' "${selected%%$'\t'*}"
 }
 
 select_managed_packages() {
-    managed_packages |
+    local selected
+
+    selected="$(
+        package_records |
         fzf \
-            "${fzf_options[@]}" \
+            "${fzf_package_options[@]}" \
             --multi \
             --bind='ctrl-a:select-all,ctrl-d:deselect-all' \
-            --header='Tab：选择/取消  Ctrl-A：全选  Ctrl-D：取消全选' \
+            --header='版本 | 架构 | 描述；Tab：选择  Ctrl-A：全选  Ctrl-D：取消全选' \
             --prompt='软件包> '
+    )" || return
+    while IFS=$'\t' read -r package_name _; do
+        [[ -n "$package_name" ]] && printf '%s\n' "$package_name"
+    done <<< "$selected"
 }
 
 select_aur_packages() {
-    {
-        printf '%s\n' '全部 AUR 软件包'
-        aur_packages
-    } |
+    local selected
+
+    selected="$(
+        {
+            printf '%s\n' '全部 AUR 软件包'
+            aur_package_records
+        } |
         fzf \
-            "${fzf_options[@]}" \
+            "${fzf_package_options[@]}" \
             --multi \
             --bind='ctrl-a:select-all,ctrl-d:deselect-all' \
             --header='选择“全部 AUR 软件包”，或使用 Tab 多选' \
             --prompt='同步 AUR> '
+    )" || return
+    while IFS=$'\t' read -r package_name _; do
+        [[ -n "$package_name" ]] && printf '%s\n' "$package_name"
+    done <<< "$selected"
 }
 
 require_gh() {
@@ -159,6 +230,10 @@ require_gh() {
 }
 
 pull_main() {
+    if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
+        printf '工作区存在未提交修改，已取消拉取以避免覆盖本地工作。\n' >&2
+        return 1
+    fi
     git -C "$repo_root" pull --ff-only origin main
 }
 
@@ -268,6 +343,14 @@ build_packages() {
         -f "make_jobs=${make_jobs}"
     printf '已请求构建：%s（编译线程数：%s）\n' \
         "$package_csv" "$make_jobs"
+}
+
+check_local_packages() {
+    local -a packages=()
+
+    mapfile -t packages < <(select_managed_packages)
+    (( ${#packages[@]} > 0 )) || return
+    "${repo_root}/scripts/check-package.sh" "${packages[@]}"
 }
 
 update_local_repository() {
@@ -387,6 +470,11 @@ show_recent_actions() {
 while true; do
     branch="$(git -C "$repo_root" branch --show-current)"
     package_count="$(managed_packages | wc -l)"
+    if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
+        repository_state='有未提交修改'
+    else
+        repository_state='工作区干净'
+    fi
     install_label="从 ${pacman_repository} 安装软件包"
     if (( push_changes == 1 )); then
         push_label='开启'
@@ -396,12 +484,13 @@ while true; do
 
     action="$(
         select_one \
-            "${github_repository} | 分支 ${branch:-游离状态} | ${package_count} 个软件包 | 自动推送 ${push_label}" \
+            "${github_repository} | 分支 ${branch:-游离状态} | ${package_count} 个软件包 | ${repository_state} | 自动推送 ${push_label}" \
             '添加 AUR 软件包' \
             '从自定义 Git 添加软件包' \
             '从仓库删除软件包' \
             '在 GitHub 上同步 AUR 源' \
             '在 GitHub 上构建软件包' \
+            '检查本地 PKGBUILD' \
             '更新本地 pacman 仓库' \
             "$install_label" \
             '查看最近的 GitHub Actions' \
@@ -426,6 +515,9 @@ while true; do
             ;;
         '在 GitHub 上构建软件包')
             build_packages || action_status=$?
+            ;;
+        '检查本地 PKGBUILD')
+            check_local_packages || action_status=$?
             ;;
         '更新本地 pacman 仓库')
             update_local_repository || action_status=$?

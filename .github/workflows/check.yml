@@ -1,0 +1,78 @@
+name: Check Arch packages
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/**"
+      - "scripts/**"
+      - ".github/workflows/check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: Select packages
+    runs-on: ubuntu-24.04
+    outputs:
+      packages: ${{ steps.select.outputs.packages }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Select changed packages
+        id: select
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            before="${{ github.event.pull_request.base.sha }}"
+          else
+            before="$BEFORE_SHA"
+          fi
+          packages="$(python scripts/select-packages.py --selection changed --before "$before" --after "$AFTER_SHA")"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
+  check:
+    name: Validate ${{ matrix.package }}
+    needs: select
+    if: needs.select.outputs.packages != '[]'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.select.outputs.packages) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run Arch package checks
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ matrix.package }}
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --env "PACKAGE_NAME=$PACKAGE_NAME" \
+            docker.io/library/archlinux:base-devel \
+            bash -c '
+              set -Eeuo pipefail
+              pacman -Syu --needed --noconfirm shellcheck namcap
+              useradd --create-home checker
+              runuser -u checker -- env HOME=/home/checker PACKAGE_NAME="$PACKAGE_NAME" \
+                bash -c "
+                  set -Eeuo pipefail
+                  cd /workspace
+                  ./scripts/check-package.sh \"\$PACKAGE_NAME\"
+                  shellcheck --severity=warning manage.sh scripts/*.sh client/*.sh client/emoeem-update
+                  namcap \"packages/\$PACKAGE_NAME/PKGBUILD\"
+                "
+            '

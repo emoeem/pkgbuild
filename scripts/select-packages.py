@@ -2,12 +2,14 @@
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGES_DIR = ROOT / "packages"
+PACKAGE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9@._+-]+$")
 INFRASTRUCTURE_PREFIXES = (
     ".github/workflows/build.yml",
     "config/",
@@ -19,8 +21,19 @@ def available_packages() -> list[str]:
     return sorted(
         path.parent.name
         for path in PACKAGES_DIR.glob("*/PKGBUILD")
-        if path.is_file()
+        if path.is_file() and PACKAGE_NAME_PATTERN.fullmatch(path.parent.name)
     )
+
+
+def package_dependencies(package_name: str) -> set[str]:
+    srcinfo = PACKAGES_DIR / package_name / ".SRCINFO"
+    if not srcinfo.is_file():
+        return set()
+    dependencies: set[str] = set()
+    for line in srcinfo.read_text(encoding="utf-8").splitlines():
+        if line.startswith("\tdepends = "):
+            dependencies.add(line.removeprefix("\tdepends = "))
+    return dependencies
 
 
 def changed_paths(before: str, after: str) -> list[str]:
@@ -58,6 +71,17 @@ def select(selection: str, before: str, after: str) -> list[str]:
                 }
                 & available_set
             )
+            selected_set = set(selected)
+            changed = True
+            while changed:
+                changed = False
+                for candidate in available:
+                    if candidate in selected_set:
+                        continue
+                    if package_dependencies(candidate) & selected_set:
+                        selected_set.add(candidate)
+                        changed = True
+            selected = sorted(selected_set)
     else:
         selected = sorted(
             {item.strip() for item in selection.split(",") if item.strip()}
@@ -66,6 +90,10 @@ def select(selection: str, before: str, after: str) -> list[str]:
     unknown = sorted(set(selected) - available_set)
     if unknown:
         raise SystemExit(f"Unknown package(s): {', '.join(unknown)}")
+
+    invalid = sorted(item for item in selected if not PACKAGE_NAME_PATTERN.fullmatch(item))
+    if invalid:
+        raise SystemExit(f"Invalid package name(s): {', '.join(invalid)}")
 
     return selected
 

@@ -3,7 +3,38 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前包含 `ffmpeg-full 8.1.2-2`。构建环境按以下优先级使用依赖：
+当前维护 8 个 package base，构建环境按以下优先级使用依赖：
+
+## Features
+
+- 使用真实 Arch Linux `base-devel` 容器运行 `makepkg`。
+- Pull Request 和 Push 自动执行 Bash 语法、`.SRCINFO`、ShellCheck 与 namcap 检查。
+- 只构建发生变化的包；被变化包直接依赖的包也会自动重建。
+- 成功产物通过 `repo-add` 更新 `repo` 分支中的 pacman 仓库。
+
+## Packages
+
+| Package | Arch | 说明 |
+| --- | --- | --- |
+| `ffmpeg-full` | `x86_64` | 启用大量编解码器、CUDA 和 Whisper 支持的 FFmpeg |
+| `ggml-cuda-git` | `x86_64`, `aarch64` | CUDA 优化的 GGML |
+| `linuxqq-clipsync-git` | `x86_64` | Linux QQ Wayland 剪贴板同步 |
+| `mpeghdec` | `x86_64` | Fraunhofer MPEG-H 解码器 |
+| `quirc` | `i686`, `x86_64` | QR 解码库 |
+| `svt-jpeg-xs-git` | `x86_64` | JPEG XS 编解码器 |
+| `whisper-cpp-cuda-git` | `x86_64`, `aarch64` | CUDA 优化的 Whisper |
+| `xclip-git` | `x86_64` | X11 剪贴板命令行工具 |
+
+版本以各目录中的 `PKGBUILD` 和 `.SRCINFO` 为准。
+
+## Build and CI
+
+`check.yml` 在 Arch 容器中运行 `makepkg --printsrcinfo`、ShellCheck 和
+namcap；`build.yml` 独立负责只构建变更包及其直接/间接依赖，并将包作为
+Artifact 保存。构建成功后由 `repo-add` 更新 `repo` 分支。AUR 同步只提交源
+文件，提交本身会触发一次构建，不会重复 dispatch 同一个构建。
+
+构建环境按以下优先级使用依赖：
 
 1. Arch Linux 官方仓库
 2. archlinuxcn
@@ -11,11 +42,10 @@
 4. Chaotic-AUR
 5. 仍未满足的依赖由 `yay` 从 AUR 构建并安装
 
-构建容器按你的要求使用全局 `SigLevel = Never`，因此官方仓库和这三个
-第三方二进制仓库都不进行软件包或数据库签名校验。
+构建容器保留 Arch 官方仓库的签名校验；未签名的第三方仓库仅在各自的
+repository 段落中设置 `SigLevel = Never`。目标包本身仍由本项目保存的
+PKGBUILD 重新构建，不会直接安装同名预编译包。
 
-目标包本身始终使用本项目保存的 PKGBUILD 重新构建，不会直接安装同名
-预编译包。
 
 ## 自动更新
 

@@ -49,8 +49,10 @@ https://aur.archlinux.org/package-name.git
 
 ## 推送后的自动流程
 
-`packages/**` 的变化会触发 `build.yml`。工作流只选择发生变化的软件包，
-在 Arch Linux 容器中安装二进制仓库或 AUR 依赖，然后运行 makepkg。
+`packages/**` 的变化会先触发 `check.yml`，在 Arch Linux 容器中运行
+`makepkg --printsrcinfo`、ShellCheck 和 namcap。随后 `build.yml` 只选择发生
+变化的软件包及其依赖者，在 Arch Linux 容器中安装二进制仓库或 AUR 依赖，
+然后运行 makepkg。
 
 成功生成的 `*.pkg.tar.zst` 会封装在 tar 中作为 Actions Artifact 保存，
 从而兼容 `epoch` 带来的冒号文件名。发布任务解包后再合并到 `repo` 分支，
