@@ -56,6 +56,14 @@ for package_name in "${package_names[@]}"; do
 
     printf '%s\n' "$aur_url" > "${package_dir}/.aur-url"
     printf '%s\n' "$aur_commit" > "${package_dir}/.aur-commit"
+
+    # AUR syncs replace package files wholesale; local customizations must be
+    # re-applied on top before anything is committed or checked.
+    overlay="${repo_root}/scripts/overlays/${package_name}.sh"
+    if [[ -f "$overlay" ]]; then
+        printf 'Applying local overlay for %s...\n' "$package_name"
+        bash "$overlay" "$package_dir"
+    fi
 done
 
 "${repo_root}/scripts/check-package.sh" "${package_names[@]}"
