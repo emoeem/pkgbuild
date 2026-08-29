@@ -1,0 +1,36 @@
+# Maintainer: emoeem <emoeem@users.noreply.github.com>
+# Contributor: Josh Holmer <jholmer.in@gmail.com>
+# Based on the AUR package of the same name. The AUR version declares an
+# 'onnx' dependency that no repository provides and that the prebuilt
+# library does not link against (verified with readelf); dependencies are
+# corrected here so the package can build in a repository environment.
+
+_plug=mlrt
+pkgname=vapoursynth-plugin-${_plug}-ncnn-runtime
+pkgver=v15.14
+pkgrel=1
+pkgdesc="Plugin for VapourSynth: ${_plug} (Vulkan ncnn runtime, includes vsmlrt.py and models with RIFE v4.6)"
+arch=('x86_64')
+url='https://github.com/AmusementClub/vs-mlrt'
+license=('GPL-3.0')
+depends=('vapoursynth' 'gcc-libs' 'glibc')
+source=(
+	"vsncnn-linux-x64.zip::https://files.bluefalcon.cc/vsncnn-linux-x64-v15.14.zip"
+	"scripts.7z::https://github.com/AmusementClub/vs-mlrt/releases/download/v15.14/scripts.v15.14.7z"
+	"models.7z::https://github.com/AmusementClub/vs-mlrt/releases/download/v15.14/models.v15.14.7z"
+)
+sha256sums=(
+	'4bffbd7451a963ae68c6e4e59ea312baa16bb4d24019a4aac688f12df2c7d11a'
+	'19c6f89d2e34c714479b069290b1bae17e91ab3048f298264b8ab57cf0871849'
+	'08cd1361cf3cb68cec8db6c6ac58d69347e5bcfc039db3f8136cffb3940c36b0'
+)
+
+package() {
+	PLUGINDIR="$(python -c 'import vapoursynth; print(vapoursynth.get_plugin_dir())')"
+
+	install -Dm755 "libvsncnn.so" "${pkgdir}${PLUGINDIR}/libvsncnn.so"
+	for i in $(find models* -type f); do
+		install -Dm644 "${i}" "${pkgdir}${PLUGINDIR}/${i}"
+	done
+	install -Dm644 "vsmlrt.py" "${pkgdir}${PLUGINDIR}/vsmlrt.py"
+}
