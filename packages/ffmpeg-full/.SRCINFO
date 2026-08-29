@@ -1,7 +1,7 @@
 pkgbase = ffmpeg-full
 	pkgdesc = Complete solution to record, convert and stream audio and video (all possible features including libfdk-aac)
 	pkgver = 9.0.1
-	pkgrel = 1
+	pkgrel = 1.1
 	url = https://ffmpeg.org/
 	arch = x86_64
 	license = LicenseRef-nonfree-and-unredistributable
@@ -143,6 +143,7 @@ pkgbase = ffmpeg-full
 	depends = zlib
 	depends = zvbi
 	optdepends = nvidia-utils: for NVIDIA CUVID/NVDEC/NVENC support
+	optdepends = cuda: for NVIDIA NPP filters (scale_npp, transpose_npp, overlay_npp)
 	optdepends = vpl-runtime: for Intel Quick Sync Video
 	provides = ffmpeg
 	provides = libavcodec.so

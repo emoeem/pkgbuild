@@ -3,7 +3,7 @@
 
 pkgname=ffmpeg-full
 pkgver=9.0.1
-pkgrel=1
+pkgrel=1.1
 _svt_hevc_ver='4181c9ee0611baefb40b4c0ed10023cfd837d522'
 _whispercpp_ver='1.9.2'
 pkgdesc='Complete solution to record, convert and stream audio and video (all possible features including libfdk-aac)'
@@ -135,6 +135,7 @@ depends=(
     'zvbi')
 optdepends=(
     'nvidia-utils: for NVIDIA CUVID/NVDEC/NVENC support'
+    'cuda: for NVIDIA NPP filters (scale_npp, transpose_npp, overlay_npp)'
     'vpl-runtime: for Intel Quick Sync Video')
 makedepends=(
     'amf-headers'
@@ -382,7 +383,7 @@ build() {
         --enable-ffnvcodec \
         --enable-libdrm \
         --enable-libvpl \
-        --disable-libnpp \
+        --enable-libnpp \
         --enable-nvdec \
         --enable-nvenc \
         --disable-ohcodec \
