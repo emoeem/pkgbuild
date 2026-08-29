@@ -57,7 +57,14 @@ append_repository \
     "coderkun-aur" \
     $'SigLevel = Never\nServer = https://arch.suruatoel.xyz/$repo/$arch/'
 
-pacman -U --noconfirm "$chaotic_mirrorlist_url"
+# Download to the cache first: pacman -U from a URL verifies the file with
+# RemoteFileSigLevel, and the chaotic signing key is not present in build
+# containers. A local-file install skips that check (LocalFileSigLevel).
+curl -fsSL --retry 10 --retry-all-errors --retry-delay 5 --connect-timeout 30 \
+    -o /var/cache/pacman/pkg/chaotic-mirrorlist.pkg.tar.zst \
+    "$chaotic_mirrorlist_url"
+pacman -U --noconfirm \
+    /var/cache/pacman/pkg/chaotic-mirrorlist.pkg.tar.zst
 append_repository \
     "chaotic-aur" \
     $'SigLevel = Never\nInclude = /etc/pacman.d/chaotic-mirrorlist'
