@@ -67,12 +67,16 @@ jobs:
       - name: Checkout source branch
         uses: actions/checkout@v6
 
-      - name: Checkout repository branch
-        uses: actions/checkout@v6
-        with:
-          ref: repo
-          path: published
-          fetch-depth: 1
+      - name: Fetch current repository state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p published/x86_64
+          REPOSITORY_DIR="$GITHUB_WORKSPACE/published/x86_64" \
+          RELEASE_REPOSITORY="$GITHUB_REPOSITORY" \
+          RELEASE_TAG="repo" \
+            bash "$GITHUB_WORKSPACE/scripts/fetch-repository-state.sh"
 
       - name: Compare linked sonames with current repositories
         run: |
@@ -82,7 +86,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/maintenance-out:/out" \
             docker.io/library/archlinux:base-devel \
-            bash -s -- /published <<'CONTAINER'
+            bash -s -- /workspace/published <<'CONTAINER'
           set -Eeuo pipefail
           published="$1"
 
