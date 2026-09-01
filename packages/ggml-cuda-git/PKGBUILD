@@ -104,9 +104,9 @@ EOF
   if [[ ${aur_ggml_build_universal} == true ]]; then
     echo "Building universal binary [aur_ggml_build_universal == true]"
     _cmake_options+=(
-      -DGGML_BACKEND_DL=ON
+      -DGGML_BACKEND_DL=OFF
       -DGGML_NATIVE=OFF
-      -DGGML_CPU_ALL_VARIANTS=ON
+      -DGGML_CPU_ALL_VARIANTS=OFF
     )
   else
     # we lose GGML_NATIVE_DEFAULT due to how makepkg includes
