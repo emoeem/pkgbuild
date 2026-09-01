@@ -47,6 +47,7 @@ build() {
     -DWHISPER_BUILD_SERVER=ON \
     -DWHISPER_BUILD_TESTS=OFF \
     -DWHISPER_USE_SYSTEM_GGML=ON \
+    -DGGML_NATIVE=OFF \
     -Wno-dev
   cmake --build build
 }

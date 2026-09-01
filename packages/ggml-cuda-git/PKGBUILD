@@ -1,5 +1,5 @@
 # Maintainer: Bink
-: "${aur_ggml_build_universal:=false}"
+: "${aur_ggml_build_universal:=true}"
 pkgname=ggml-cuda-git
 _pkgname="${pkgname%-cuda-git}"
 _srcname=llama.cpp
