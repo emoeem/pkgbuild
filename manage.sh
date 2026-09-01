@@ -206,7 +206,7 @@ select_aur_packages() {
 
     selected="$(
         {
-            printf '%s\n' '全部 AUR 软件包'
+            printf '%s\t%s\n' '全部 AUR 软件包' '同步所有 AUR 管理的软件包'
             aur_package_records
         } |
         fzf \
@@ -221,10 +221,34 @@ select_aur_packages() {
     done <<< "$selected"
 }
 
+select_build_packages() {
+    local selected
+
+    selected="$(
+        {
+            printf '%s\t%s\n' '全部软件包' '构建所有托管软件包'
+            package_records
+        } |
+        fzf \
+            "${fzf_package_options[@]}" \
+            --multi \
+            --bind='ctrl-a:select-all,ctrl-d:deselect-all' \
+            --header='选择“全部软件包”，或使用 Tab 多选' \
+            --prompt='构建软件包> '
+    )" || return
+    while IFS=$'\t' read -r package_name _; do
+        [[ -n "$package_name" ]] && printf '%s\n' "$package_name"
+    done <<< "$selected"
+}
+
 require_gh() {
     if ! command -v gh >/dev/null 2>&1; then
         printf '缺少 GitHub CLI。安装命令：sudo pacman -S github-cli\n' \
             >&2
+        return 1
+    fi
+    if ! gh auth token >/dev/null 2>&1; then
+        printf 'GitHub CLI 未登录。运行：gh auth login\n' >&2
         return 1
     fi
 }
@@ -318,13 +342,27 @@ sync_aur_sources() {
 }
 
 build_packages() {
-    local candidate make_jobs package_csv jobs_choice
+    local candidate make_jobs package_csv jobs_choice selection
     local -a jobs_options=("${default_make_jobs} （默认）")
     local -a packages=()
 
     require_gh || return
-    mapfile -t packages < <(select_managed_packages)
+    mapfile -t packages < <(select_build_packages)
     (( ${#packages[@]} > 0 )) || return
+
+    selection="selected"
+    for candidate in "${packages[@]}"; do
+        if [[ "$candidate" == "全部软件包" ]]; then
+            selection="all"
+            break
+        fi
+    done
+
+    if [[ "$selection" == "all" ]]; then
+        package_csv="all"
+    else
+        package_csv="$(IFS=,; printf '%s' "${packages[*]}")"
+    fi
 
     for candidate in 1 2 3 4; do
         [[ "$candidate" == "$default_make_jobs" ]] ||
@@ -334,15 +372,24 @@ build_packages() {
         select_one '编译线程数' "${jobs_options[@]}"
     )" || return
     make_jobs="${jobs_choice%% *}"
-    package_csv="$(IFS=,; printf '%s' "${packages[*]}")"
 
     gh workflow run build.yml \
         --repo "$github_repository" \
         --ref main \
         -f "packages=${package_csv}" \
         -f "make_jobs=${make_jobs}"
-    printf '已请求构建：%s（编译线程数：%s）\n' \
-        "$package_csv" "$make_jobs"
+    if [[ "$package_csv" == "all" ]]; then
+        printf '已请求构建全部软件包（编译线程数：%s）。\n' "$make_jobs"
+    else
+        printf '已请求构建：%s（编译线程数：%s）\n' \
+            "$package_csv" "$make_jobs"
+    fi
+
+    if [[ "$(
+        select_one '跟踪这次构建？' '否' '跟踪'
+    )" == '跟踪' ]]; then
+        track_running_build
+    fi
 }
 
 check_local_packages() {
@@ -359,8 +406,8 @@ update_local_repository() {
 }
 
 install_repository_package() {
-    local package_name
-    local -a packages=()
+    local package_name selected
+    local -a packages=() chosen=()
 
     mapfile -t packages < <(
         pacman -Sl "$pacman_repository" 2>/dev/null |
@@ -373,11 +420,205 @@ install_repository_package() {
         return 1
     fi
 
-    package_name="$(
-        select_one '安装软件包' "${packages[@]}"
+    selected="$(
+        printf '%s\n' "${packages[@]}" |
+            fzf \
+                "${fzf_options[@]}" \
+                --multi \
+                --bind='ctrl-a:select-all,ctrl-d:deselect-all' \
+                --header='Tab：选择  Ctrl-A：全选  Ctrl-D：取消全选' \
+                --prompt='安装软件包> '
     )" || return
-    [[ -n "$package_name" ]] || return
-    sudo pacman -S "${pacman_repository}/${package_name}"
+    while IFS= read -r package_name; do
+        [[ -n "$package_name" ]] && chosen+=("$package_name")
+    done <<< "$selected"
+    (( ${#chosen[@]} > 0 )) || return
+
+    sudo pacman -S --needed \
+        "${chosen[@]/#/${pacman_repository}/}"
+}
+
+track_running_build() {
+    local run_data run_id run_title selected status conclusion jobs_data
+    local poll
+    local -a runs=() running_jobs=()
+
+    run_data="$(
+        gh run list \
+            --repo "$github_repository" \
+            --workflow build.yml \
+            --limit 5 \
+            --json databaseId,status,displayTitle \
+            --jq '.[] | select(.status != "completed") | [.databaseId, .displayTitle] | @tsv'
+    )" || return
+    if [[ -z "$run_data" ]]; then
+        printf '没有正在运行或排队的构建。\n'
+        return 0
+    fi
+    while IFS=$'\t' read -r run_id run_title; do
+        [[ -n "$run_id" ]] && runs+=("${run_id}"$'\t'"${run_title}")
+    done <<< "$run_data"
+    (( ${#runs[@]} > 0 )) || return 0
+    if (( ${#runs[@]} == 1 )); then
+        selected="${runs[0]}"
+    else
+        selected="$(
+            printf '%s\n' "${runs[@]}" |
+                fzf \
+                    "${fzf_options[@]}" \
+                    --delimiter=$'\t' \
+                    --with-nth=2.. \
+                    --prompt='跟踪构建> '
+        )" || return
+    fi
+    run_id="${selected%%$'\t'*}"
+
+    for poll in $(seq 1 90); do
+        status="$(
+            gh run view "$run_id" --repo "$github_repository" \
+                --json status,conclusion \
+                --jq '.status + ":" + (.conclusion // "-")'
+        )" || return
+        case "$status" in
+            completed:*) break ;;
+        esac
+        mapfile -t running_jobs < <(
+            gh run view "$run_id" --repo "$github_repository" \
+                --json jobs \
+                --jq '.jobs[] | select(.status == "in_progress") | .name' 2>/dev/null
+        )
+        if (( ${#running_jobs[@]} > 0 )); then
+            printf '[%3ds] 正在构建：%s\n' \
+                $((poll * 20)) "${running_jobs[*]}"
+        else
+            printf '[%3ds] 等待调度中...\n' $((poll * 20))
+        fi
+        sleep 20
+    done
+
+    if [[ "$status" != completed:* ]]; then
+        printf '跟踪超时，构建仍在进行。可以稍后从「查看最近的 GitHub Actions」继续。\n'
+        return 0
+    fi
+    conclusion="${status#completed:}"
+    printf '构建完成，结果：%s。\n' \
+        "$(translate_action_conclusion "$conclusion")"
+    jobs_data="$(
+        gh run view "$run_id" --repo "$github_repository" \
+            --json jobs \
+            --jq '.jobs[] | select(.name | startswith("Build ")) | [.name, (.conclusion // .status)] | @tsv'
+    )" || return
+    while IFS=$'\t' read -r run_title status; do
+        [[ -n "$run_title" ]] || continue
+        printf '  %-50s %s\n' "${run_title#Build }" \
+            "$(translate_action_conclusion "$status")"
+    done <<< "$jobs_data"
+}
+
+triage_failed_builds() {
+    local run_data run_id selected choice packages_csv
+    local -a runs=() failed_packages=()
+
+    run_data="$(
+        gh run list \
+            --repo "$github_repository" \
+            --workflow build.yml \
+            --limit 30 \
+            --json databaseId,conclusion,displayTitle \
+            --jq '.[] | select(.conclusion == "failure") | [.databaseId, .displayTitle] | @tsv'
+    )" || return
+    if [[ -z "$run_data" ]]; then
+        printf '最近没有失败的构建。\n'
+        return 0
+    fi
+    while IFS=$'\t' read -r run_id run_title; do
+        [[ -n "$run_id" ]] && runs+=("${run_id}"$'\t'"${run_title}")
+    done <<< "$run_data"
+    selected="$(
+        printf '%s\n' "${runs[@]}" |
+            fzf \
+                "${fzf_options[@]}" \
+                --delimiter=$'\t' \
+                --with-nth=2.. \
+                --prompt='失败构建> '
+    )" || return
+    run_id="${selected%%$'\t'*}"
+
+    mapfile -t failed_packages < <(
+        gh run view "$run_id" --repo "$github_repository" \
+            --json jobs \
+            --jq '.jobs[] | select(.conclusion == "failure") | .name | sub("^Build "; "")'
+    )
+    if (( ${#failed_packages[@]} == 0 )); then
+        printf '该构建没有失败的软件包任务（可能是发布阶段失败）。\n'
+        return 0
+    fi
+    printf '失败的软件包：\n'
+    printf '  %s\n' "${failed_packages[@]}"
+
+    choice="$(
+        select_one '处理方式' '返回' '查看失败日志' '重跑失败的软件包'
+    )" || return
+    case "$choice" in
+        '查看失败日志')
+            gh run view "$run_id" --repo "$github_repository" \
+                --log-failed | ${PAGER:-less -R}
+            ;;
+        '重跑失败的软件包')
+            packages_csv="$(IFS=,; printf '%s' "${failed_packages[*]}")"
+            gh workflow run build.yml \
+                --repo "$github_repository" \
+                --ref main \
+                -f "packages=${packages_csv}" \
+                -f "make_jobs=4"
+            printf '已请求重新构建：%s\n' "$packages_csv"
+            ;;
+    esac
+}
+
+check_local_updates() {
+    local package_name installed available status comparison
+    local -a rows=()
+
+    while IFS= read -r package_name; do
+        installed="$(
+            pacman -Q "$package_name" 2>/dev/null |
+                awk '{ print $2 }' || true
+        )"
+        available="$(
+            pacman -Si "${pacman_repository}/${package_name}" 2>/dev/null |
+                awk -F ': ' '/^(Version|版本)/ { print $2; exit }' || true
+        )"
+        if [[ -z "$available" ]]; then
+            status='不在仓库中'
+        elif [[ -z "$installed" ]]; then
+            status='本机未安装'
+        elif comparison="$(vercmp "$installed" "$available" 2>/dev/null)"; then
+            case "$comparison" in
+                -1) status='可升级' ;;
+                0) status='已是最新' ;;
+                *) status='本地版本更新' ;;
+            esac
+        elif [[ "$installed" == "$available" ]]; then
+            status='已是最新'
+        else
+            status='版本不同'
+        fi
+        rows+=("${status}"$'\t'"${package_name}"$'\t'"${installed:--}"$'\t'"${available:--}")
+    done < <(managed_packages)
+
+    if (( ${#rows[@]} == 0 )); then
+        printf '没有托管的软件包。\n'
+        return 0
+    fi
+
+    printf '%s\n' "${rows[@]}" |
+        sort -t$'\t' -k1,1 |
+        fzf \
+            "${fzf_options[@]}" \
+            --delimiter=$'\t' \
+            --header='状态 | 软件包 | 本机版本 | 仓库版本（先「更新本地 pacman 仓库」刷新）' \
+            --prompt='本地可更新检查> '
 }
 
 translate_action_status() {
@@ -417,6 +658,12 @@ translate_workflow_name() {
             ;;
         'Sync AUR package sources')
             printf '同步 AUR 软件包源'
+            ;;
+        'Check Arch packages')
+            printf '检查软件包配置'
+            ;;
+        'Maintenance')
+            printf '维护任务'
             ;;
         *)
             printf '%s' "$1"
@@ -484,7 +731,10 @@ while true; do
             '从仓库删除软件包' \
             '在 GitHub 上同步 AUR 源' \
             '在 GitHub 上构建软件包' \
+            '跟踪正在运行的构建' \
+            '排查失败的构建' \
             '检查本地 PKGBUILD' \
+            '检查本地软件包更新' \
             '更新本地 pacman 仓库' \
             "$install_label" \
             '查看最近的 GitHub Actions' \
@@ -510,8 +760,17 @@ while true; do
         '在 GitHub 上构建软件包')
             build_packages || action_status=$?
             ;;
+        '跟踪正在运行的构建')
+            track_running_build || action_status=$?
+            ;;
+        '排查失败的构建')
+            triage_failed_builds || action_status=$?
+            ;;
         '检查本地 PKGBUILD')
             check_local_packages || action_status=$?
+            ;;
+        '检查本地软件包更新')
+            check_local_updates || action_status=$?
             ;;
         '更新本地 pacman 仓库')
             update_local_repository || action_status=$?
