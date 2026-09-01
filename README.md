@@ -31,16 +31,26 @@
 
 `check.yml` 在 Arch 容器中运行 `makepkg --printsrcinfo`、ShellCheck 和
 namcap；`build.yml` 独立负责只构建变更包及其直接/间接依赖，并将包作为
-Artifact 保存。构建成功后由 `repo-add` 更新 `repo` 分支。AUR 同步只提交源
+Artifact 保存。构建成功后发布为滚动 GitHub Release（固定 tag `repo`），
+pacman 直接从 Release 资产下载仓库数据库和软件包。AUR 同步只提交源
 文件，提交本身会触发一次构建，不会重复 dispatch 同一个构建。
+个别软件包构建失败不会阻塞其他成功构建的软件包发布。
 
 构建环境按以下优先级使用依赖：
 
-1. Arch Linux 官方仓库
-2. archlinuxcn
-3. coderkun-aur
-4. Chaotic-AUR
-5. 仍未满足的依赖由 `yay` 从 AUR 构建并安装
+1. CachyOS 仓库（`cachyos-v3`、`cachyos-extra-v3`、`cachyos-core-v3`、
+   `cachyos`，使用官方 mirrorlist，容器同时接受 `x86_64_v3` 架构）
+2. Arch Linux 官方仓库
+3. archlinuxcn
+4. coderkun-aur
+5. Chaotic-AUR
+6. 仍未满足的依赖由 `yay` 从 AUR 构建并安装
+
+CachyOS 仓库排在 Arch 官方仓库之前，与目标系统的仓库优先级一致：构建
+链接到的是本机 CachyOS 系统实际运行的库版本。若把 CachyOS 排在后面，
+Arch 会在同名包冲突时胜出，当 CachyOS 先行替换了某个库（例如 openvino
+的小版本更新带来的 soname 变化）时，构建出的包在本机就会出现共享库
+找不到的问题。
 
 构建容器保留 Arch 官方仓库的签名校验；未签名的第三方仓库仅在各自的
 repository 段落中设置 `SigLevel = Never`。目标包本身仍由本项目保存的
@@ -58,6 +68,10 @@ PKGBUILD 重新构建，不会直接安装同名预编译包。
 4. 构建成功后更新 `repo` 分支中的软件包和仓库数据库。
 
 也可以在 Actions 页面手动运行同步或指定包构建。
+
+**Maintenance** 工作流每天 `16:17 UTC` 运行：清理过期 Artifact，并把已
+发布软件包记录的 soname 依赖与当前各仓库比对，发现依赖过时就自动触发
+对应软件包重建。
 
 ## 添加 AUR 软件包
 
