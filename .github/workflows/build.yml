@@ -172,7 +172,10 @@ jobs:
     needs:
       - select
       - build
-    if: needs.build.result == 'success'
+    # Publish even when some matrix builds failed: the release update is
+    # incremental (current release state + successful packages), so one
+    # broken package must not block shipping the rest.
+    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
