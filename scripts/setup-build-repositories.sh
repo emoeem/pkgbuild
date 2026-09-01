@@ -22,7 +22,47 @@ append_repository() {
         >> "$pacman_config"
 }
 
-set_signature_level() {
+insert_repository_before_section() {
+    local anchor_section="$1"
+    local repository_name="$2"
+    local repository_body="$3"
+
+    if grep -Fqx "[${repository_name}]" "$pacman_config"; then
+        return
+    fi
+
+    if ! grep -Fqx "[${anchor_section}]" "$pacman_config"; then
+        printf 'Anchor section [%s] not found in %s.\n' \
+            "$anchor_section" "$pacman_config" >&2
+        exit 1
+    fi
+
+    local block_file temporary_config
+    block_file="$(mktemp)"
+    temporary_config="$(mktemp)"
+
+    printf '[%s]\n%s\n' "$repository_name" "$repository_body" \
+        > "$block_file"
+
+    awk -v anchor="[${anchor_section}]" \
+        -v block_file="$block_file" '
+        !inserted && $0 == anchor {
+            while ((getline line < block_file) > 0) {
+                print line
+            }
+            close(block_file)
+            inserted = 1
+        }
+        { print }
+    ' "$pacman_config" > "$temporary_config"
+
+    rm -f "$block_file"
+
+    install -m 0644 "$temporary_config" "$pacman_config"
+    rm -f "$temporary_config"
+}
+
+set_pacman_setting() {
     local setting="$1"
     local value="$2"
 
@@ -39,15 +79,44 @@ sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 5/' "$pacman_config"
 # Keep Arch Linux repository package and database signature checks enabled.
 # The third-party repositories below are explicitly unsigned and scoped
 # locally.
-set_signature_level "SigLevel" "Required DatabaseOptional"
+set_pacman_setting "SigLevel" "Required DatabaseOptional"
 # Local-file installs stay unverified: the chaotic mirrorlist package is
 # fetched over HTTPS, is unsigned for us, and would otherwise require
 # importing the chaotic key into every build container.
-set_signature_level "LocalFileSigLevel" "Never"
-set_signature_level "RemoteFileSigLevel" "Required DatabaseOptional"
+set_pacman_setting "LocalFileSigLevel" "Never"
+set_pacman_setting "RemoteFileSigLevel" "Required DatabaseOptional"
 
 pacman-key --init
 pacman-key --populate archlinux
+
+printf 'Enabling CachyOS binary repositories ahead of the Arch Linux ones...\n'
+# Mirror the target system's repository priority: CachyOS machines resolve
+# identically named packages from the cachyos-* repositories before core and
+# extra, so inserting them ahead of [core] makes builds link against the
+# same library builds that the installed CachyOS system runs. Appending them
+# at the end let Arch win every conflict and produced binaries linked against
+# library versions CachyOS had already replaced.
+#
+# The v3 repositories ship the x86_64_v3 architecture; the container default
+# (Architecture = auto) only allows x86_64 and would silently ignore every
+# v3 package even with correct repository order.
+set_pacman_setting "Architecture" "x86_64 x86_64_v3"
+insert_repository_before_section \
+    "core" \
+    "cachyos-v3" \
+    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
+insert_repository_before_section \
+    "core" \
+    "cachyos-extra-v3" \
+    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
+insert_repository_before_section \
+    "core" \
+    "cachyos-core-v3" \
+    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
+insert_repository_before_section \
+    "core" \
+    "cachyos" \
+    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64/$repo'
 
 printf 'Enabling trusted third-party binary repositories...\n'
 append_repository \
@@ -68,19 +137,3 @@ pacman -U --noconfirm \
 append_repository \
     "chaotic-aur" \
     $'SigLevel = Never\nInclude = /etc/pacman.d/chaotic-mirrorlist'
-
-printf 'Enabling CachyOS binary repositories...\n'
-# Mirror the target system repository set so built packages link against the
-# same library builds that CachyOS machines run.
-append_repository \
-    "cachyos-v3" \
-    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
-append_repository \
-    "cachyos-core-v3" \
-    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
-append_repository \
-    "cachyos-extra-v3" \
-    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
-append_repository \
-    "cachyos" \
-    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64/$repo'
