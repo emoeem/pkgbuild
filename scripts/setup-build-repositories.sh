@@ -97,26 +97,41 @@ printf 'Enabling CachyOS binary repositories ahead of the Arch Linux ones...\n'
 # at the end let Arch win every conflict and produced binaries linked against
 # library versions CachyOS had already replaced.
 #
+# Use the official mirrorlists instead of hardcoding a single cdn.cachyos.org
+# server: the x86_64-v3 path on that CDN serves an HTML error page (the real
+# repositories live under x86_64_v3), and the mirrorlist files resolve both
+# problems by using the pacman $arch / $arch_v3 variables against a list of
+# mirrors, exactly like the packaged cachyos-mirrorlist and
+# cachyos-v3-mirrorlist on CachyOS machines. The v3 list is the base list
+# with $arch rewritten inside Server lines.
+#
 # The v3 repositories ship the x86_64_v3 architecture; the container default
 # (Architecture = auto) only allows x86_64 and would silently ignore every
 # v3 package even with correct repository order.
 set_pacman_setting "Architecture" "x86_64 x86_64_v3"
+readonly cachyos_mirrorlist_url="https://raw.githubusercontent.com/CachyOS/CachyOS-PKGBUILDS/master/cachyos-mirrorlist/cachyos-mirrorlist"
+curl -fsSL --retry 10 --retry-all-errors --retry-delay 5 --connect-timeout 30 \
+    -o /etc/pacman.d/cachyos-mirrorlist \
+    "$cachyos_mirrorlist_url"
+sed '/^Server = /s/\$arch/\$arch_v3/' /etc/pacman.d/cachyos-mirrorlist \
+    > /etc/pacman.d/cachyos-v3-mirrorlist
+
 insert_repository_before_section \
     "core" \
     "cachyos-v3" \
-    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
+    $'SigLevel = Never\nInclude = /etc/pacman.d/cachyos-v3-mirrorlist'
 insert_repository_before_section \
     "core" \
     "cachyos-extra-v3" \
-    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
+    $'SigLevel = Never\nInclude = /etc/pacman.d/cachyos-v3-mirrorlist'
 insert_repository_before_section \
     "core" \
     "cachyos-core-v3" \
-    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64-v3/$repo'
+    $'SigLevel = Never\nInclude = /etc/pacman.d/cachyos-v3-mirrorlist'
 insert_repository_before_section \
     "core" \
     "cachyos" \
-    $'SigLevel = Never\nServer = https://cdn.cachyos.org/repo/x86_64/$repo'
+    $'SigLevel = Never\nInclude = /etc/pacman.d/cachyos-mirrorlist'
 
 printf 'Enabling trusted third-party binary repositories...\n'
 append_repository \
