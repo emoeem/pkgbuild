@@ -42,6 +42,63 @@ remove_repository_package() {
     fi
 }
 
+# GitHub 会在上传 Release 资产时改写文件名：把特殊字符替换成 "."、
+# 合并连续的 "."，并去掉首尾的 "."。repo-add 会把本地文件名原样写入
+# %FILENAME%，pacman 再按这个名字下载；若与上传后的资产名不一致，
+# 客户端会请求到一个不存在的 URL（例如 epoch 版本 1:4.7.0 上传后
+# 实际叫 1.4.7.0，返回 404）。这里预先把包文件名改成 GitHub 会保存
+# 的名字，保证数据库与资产一致。
+github_asset_name() {
+    local name="$1"
+    local result
+    result="${name//[^A-Za-z0-9._-]/.}"
+    while [[ "$result" == *..* ]]; do
+        result="${result//../.}"
+    done
+    while [[ "$result" == .* ]]; do
+        result="${result#.}"
+    done
+    while [[ "$result" == *. ]]; do
+        result="${result%.}"
+    done
+    printf '%s' "$result"
+}
+
+# 在生成仓库数据库之前，把仓库目录中的包文件重命名为 GitHub 实际
+# 保存的资产名（若存在 .sig 签名一并跟随改名），避免 %FILENAME% 与
+# 上传后的资产名不一致。
+sanitize_package_filenames() {
+    local package_file package_name sanitized_name destination
+    while IFS= read -r -d '' package_file; do
+        package_name="$(basename "$package_file")"
+        sanitized_name="$(github_asset_name "$package_name")"
+        [[ "$sanitized_name" == "$package_name" ]] && continue
+
+        if [[ -z "$sanitized_name" ]]; then
+            printf 'Sanitized filename is empty for %s.\n' \
+                "$package_name" >&2
+            exit 1
+        fi
+        destination="${repository_dir}/${sanitized_name}"
+        if [[ -e "$destination" ]]; then
+            printf 'Sanitized filename collision: %s and %s.\n' \
+                "$package_name" "$sanitized_name" >&2
+            exit 1
+        fi
+        mv -f "$package_file" "$destination"
+        if [[ -f "${package_file}.sig" ]]; then
+            mv -f "${package_file}.sig" "${destination}.sig"
+        fi
+        printf 'Renamed package asset for GitHub: %s -> %s\n' \
+            "$package_name" "$sanitized_name"
+    done < <(
+        find "$repository_dir" -maxdepth 1 -type f \
+            -name '*.pkg.tar.zst' \
+            -print0 |
+            sort -z
+    )
+}
+
 mapfile -d '' incoming_packages < <(
     find "$incoming_dir" -type f -name '*.pkg.tar.zst' -print0 | sort -z
 )
@@ -78,6 +135,8 @@ for package_file in "${incoming_packages[@]}"; do
     destination="${repository_dir}/$(basename "$package_file")"
     cp "$package_file" "$destination"
 done
+
+sanitize_package_filenames
 
 mapfile -d '' repository_packages < <(
     find "$repository_dir" -maxdepth 1 -type f \
