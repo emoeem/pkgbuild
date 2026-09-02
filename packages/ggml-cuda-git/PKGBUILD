@@ -1,5 +1,5 @@
 # Maintainer: Bink
-: "${aur_ggml_build_universal:=true}"
+: "${aur_ggml_build_universal:=false}"
 pkgname=ggml-cuda-git
 _pkgname="${pkgname%-cuda-git}"
 _srcname=llama.cpp
@@ -104,9 +104,9 @@ EOF
   if [[ ${aur_ggml_build_universal} == true ]]; then
     echo "Building universal binary [aur_ggml_build_universal == true]"
     _cmake_options+=(
-      -DGGML_BACKEND_DL=OFF
+      -DGGML_BACKEND_DL=ON
       -DGGML_NATIVE=OFF
-      -DGGML_CPU_ALL_VARIANTS=OFF
+      -DGGML_CPU_ALL_VARIANTS=ON
     )
   else
     # we lose GGML_NATIVE_DEFAULT due to how makepkg includes
