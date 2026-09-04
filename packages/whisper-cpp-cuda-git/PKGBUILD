@@ -38,17 +38,9 @@ pkgver() {
 }
 
 build() {
-  # CI runners are AVX-512 (x86-64-v4) capable, but target CPUs like
-  # Ryzen 7000 mobile (Zen 3+) only support x86-64-v3. makepkg's default
-  # -march=native would make whisper.cpp's own sources crash with SIGILL
-  # on those CPUs; GGML_NATIVE only controls the ggml subproject.
-  local _cflags="${CFLAGS//-march=native/-march=x86-64-v3}"
-  local _cxxflags="${CXXFLAGS//-march=native/-march=x86-64-v3}"
   cmake -S "${_pkgsrc}" -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr \
-    -DCMAKE_C_FLAGS="${_cflags}" \
-    -DCMAKE_CXX_FLAGS="${_cxxflags}" \
     -DWHISPER_COMMON_FFMPEG=ON \
     -DWHISPER_SDL2=ON \
     -DWHISPER_BUILD_EXAMPLES=ON \
