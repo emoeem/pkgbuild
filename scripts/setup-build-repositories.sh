@@ -3,7 +3,12 @@
 set -Eeuo pipefail
 
 readonly pacman_config="/etc/pacman.conf"
-readonly chaotic_mirrorlist_url="https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst"
+# Chaotic-AUR 的 CDN 会整体返回 503（2026-09-14 的维护任务就因此失败），
+# 所以这里保留多个镜像地址，逐个回退。
+readonly chaotic_mirrorlist_urls=(
+    "https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst"
+    "https://geo-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst"
+)
 
 if (( EUID != 0 )); then
     printf 'setup-build-repositories.sh must run as root.\n' >&2
@@ -75,6 +80,26 @@ set_pacman_setting() {
     fi
 }
 
+# 依次尝试给定的镜像地址，每个地址内部还会自行重试。上游 CDN 偶尔会
+# 整体不可用，只试一个地址时重试到超时就会让整个 workflow 失败。
+download_first_available() {
+    local output="$1"
+    shift
+
+    local url
+    for url in "$@"; do
+        if curl -fsSL --retry 10 --retry-all-errors --retry-delay 6 \
+            --connect-timeout 30 --max-time 900 -o "$output" "$url"; then
+            return 0
+        fi
+        printf 'Download failed for %s; trying the next mirror.\n' \
+            "$url" >&2
+    done
+
+    printf 'Unable to download %s from any mirror.\n' "$output" >&2
+    return 1
+}
+
 sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 5/' "$pacman_config"
 # Keep Arch Linux repository package and database signature checks enabled.
 # The third-party repositories below are explicitly unsigned and scoped
@@ -109,10 +134,13 @@ printf 'Enabling CachyOS binary repositories ahead of the Arch Linux ones...\n'
 # (Architecture = auto) only allows x86_64 and would silently ignore every
 # v3 package even with correct repository order.
 set_pacman_setting "Architecture" "x86_64 x86_64_v3"
-readonly cachyos_mirrorlist_url="https://raw.githubusercontent.com/CachyOS/CachyOS-PKGBUILDS/master/cachyos-mirrorlist/cachyos-mirrorlist"
-curl -fsSL --retry 10 --retry-all-errors --retry-delay 5 --connect-timeout 30 \
-    -o /etc/pacman.d/cachyos-mirrorlist \
-    "$cachyos_mirrorlist_url"
+readonly cachyos_mirrorlist_urls=(
+    "https://raw.githubusercontent.com/CachyOS/CachyOS-PKGBUILDS/master/cachyos-mirrorlist/cachyos-mirrorlist"
+    "https://cdn.jsdelivr.net/gh/CachyOS/CachyOS-PKGBUILDS@master/cachyos-mirrorlist/cachyos-mirrorlist"
+)
+download_first_available \
+    /etc/pacman.d/cachyos-mirrorlist \
+    "${cachyos_mirrorlist_urls[@]}"
 sed '/^Server = /s/\$arch/\$arch_v3/' /etc/pacman.d/cachyos-mirrorlist \
     > /etc/pacman.d/cachyos-v3-mirrorlist
 
@@ -144,9 +172,9 @@ append_repository \
 # Download to the cache first: pacman -U from a URL verifies the file with
 # RemoteFileSigLevel, and the chaotic signing key is not present in build
 # containers. A local-file install skips that check (LocalFileSigLevel).
-curl -fsSL --retry 10 --retry-all-errors --retry-delay 5 --connect-timeout 30 \
-    -o /var/cache/pacman/pkg/chaotic-mirrorlist.pkg.tar.zst \
-    "$chaotic_mirrorlist_url"
+download_first_available \
+    /var/cache/pacman/pkg/chaotic-mirrorlist.pkg.tar.zst \
+    "${chaotic_mirrorlist_urls[@]}"
 pacman -U --noconfirm \
     /var/cache/pacman/pkg/chaotic-mirrorlist.pkg.tar.zst
 append_repository \
