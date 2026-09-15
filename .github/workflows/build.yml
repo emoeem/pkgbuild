@@ -133,14 +133,7 @@ jobs:
             --env "MAKE_JOBS=$MAKE_JOBS" \
             --env "PACKAGE_NAME=$PACKAGE_NAME" \
             docker.io/library/archlinux:base-devel \
-            bash -c '
-              set -Eeuo pipefail
-              if [[ -f /repo-state/emoeem.db ]]; then
-                printf "\n[emoeem]\nSigLevel = Never\nServer = file:///repo-state\n" \
-                  >> /etc/pacman.conf
-              fi
-              bash /workspace/scripts/build-in-arch.sh
-            '
+            bash /workspace/scripts/build-in-arch.sh
 
       - name: Verify package artifact
         shell: bash
