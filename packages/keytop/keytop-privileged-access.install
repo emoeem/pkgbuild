@@ -1,0 +1,4 @@
+# Removal runs while the helper still exists. Existing processes may retain access.
+pre_remove() {
+    /usr/lib/keytop/privileged-access disable
+}

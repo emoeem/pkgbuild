@@ -1,0 +1,37 @@
+pkgbase = key-cli
+	pkgdesc = Clavis command interface, clipboard backend and keyboard events
+	pkgver = 2026.9.12
+	pkgrel = 1
+	url = https://github.com/StatIndet/key-cli
+	arch = any
+	license = GPL-3.0-or-later
+	checkdepends = python-pytest
+	checkdepends = python-evdev
+	checkdepends = python-pyudev
+	checkdepends = git
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	options = !debug
+	source = key-cli-2026.9.12.tar.gz::https://github.com/StatIndet/key-cli/releases/download/v2026.9.12/key-cli-2026.9.12.tar.gz
+	sha256sums = 260d5b0ef8a61e75844d91ac0d4006f7b2cb9cc784985fcee2c4668492abf1af
+
+pkgname = key-cli
+	depends = python>=3.10
+	depends = python-evdev>=1.7
+	depends = python-pyudev>=0.24
+	depends = cliphist
+	depends = wl-clipboard
+	optdepends = key-cli-keyboard-access: Whole keyboard event device access
+	optdepends = quickshell: Shell lifecycle and IPC
+	optdepends = gpu-screen-recorder: Screen recording
+	optdepends = ffmpeg: Audio recording and GIF conversion
+	optdepends = libpulse: pactl audio source discovery
+	optdepends = slurp: Region selection
+	optdepends = xdg-utils: Open files and query defaults
+	optdepends = xdg-terminal-exec: Terminal file managers
+
+pkgname = key-cli-keyboard-access
+	pkgdesc = Optional whole evdev keyboard device access for active local users
+	depends = systemd

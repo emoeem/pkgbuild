@@ -1,0 +1,32 @@
+pkgbase = keytop
+	pkgdesc = Linux system metrics as JSON/JSONL and a terminal monitor
+	pkgver = 2026.9.12
+	pkgrel = 1
+	url = https://github.com/StatIndet/keytop
+	arch = x86_64
+	license = GPL-3.0-or-later
+	checkdepends = python
+	checkdepends = git
+	makedepends = cmake
+	makedepends = ninja
+	makedepends = pkgconf
+	makedepends = qt6-base
+	makedepends = ncurses
+	source = keytop-2026.9.12.tar.gz::https://github.com/StatIndet/keytop/releases/download/v2026.9.12/keytop-2026.9.12.tar.gz
+	sha256sums = d26157b37d66821fed6b0a69a2afef8ac17561ed0336d00a6c12a0c71c28b6c9
+
+pkgname = keytop
+	depends = qt6-base
+	depends = ncurses
+	optdepends = keytop-privileged-access: CAP_PERFMON and CAP_DAC_READ_SEARCH access
+	optdepends = nvidia-utils: NVML for installed NVIDIA drivers; do not install on other hardware
+
+pkgname = keytop-privileged-access
+	pkgdesc = Optional CAP_PERFMON and CAP_DAC_READ_SEARCH authorization for keytop
+	install = keytop-privileged-access.install
+	arch = any
+	depends = keytop
+	depends = libcap
+	depends = bash
+	depends = coreutils
+	depends = pacman
