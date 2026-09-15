@@ -108,18 +108,39 @@ jobs:
       - name: Build in Arch Linux
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           PACKAGE_NAME: ${{ matrix.package }}
         run: |
           set -Eeuo pipefail
-          mkdir -p dist
+          mkdir -p dist repo-state
+          # First-party packages depend on each other, so the build container
+          # needs the repository state published so far. A missing release
+          # simply leaves the private repository disabled.
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir repo-state \
+              --clobber
+          else
+            printf 'Release %s does not exist yet; continuing without it.\n' \
+              "$RELEASE_TAG"
+          fi
           docker run --rm \
             --shm-size 2g \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/dist:/out" \
+            --volume "$GITHUB_WORKSPACE/repo-state:/repo-state:ro" \
             --env "MAKE_JOBS=$MAKE_JOBS" \
             --env "PACKAGE_NAME=$PACKAGE_NAME" \
             docker.io/library/archlinux:base-devel \
-            bash /workspace/scripts/build-in-arch.sh
+            bash -c '
+              set -Eeuo pipefail
+              if [[ -f /repo-state/emoeem.db ]]; then
+                printf "\n[emoeem]\nSigLevel = Never\nServer = file:///repo-state\n" \
+                  >> /etc/pacman.conf
+              fi
+              bash /workspace/scripts/build-in-arch.sh
+            '
 
       - name: Verify package artifact
         shell: bash
