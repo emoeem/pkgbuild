@@ -180,16 +180,3 @@ pacman -U --noconfirm \
 append_repository \
     "chaotic-aur" \
     $'SigLevel = Never\nInclude = /etc/pacman.d/chaotic-mirrorlist'
-
-# 第一方软件包（key-cli、keytop、clavis-shell）互相依赖，构建容器必须能解析
-# 已经发布的私有仓库快照。workflow 把 release 资产挂载到 /repo-state；首次
-# 发布、快照尚不存在时跳过。段落在 SigLevel 归一化之后追加，否则上面的
-# set_pacman_setting 会把它改回签名校验。
-private_repository_dir="${EMOEEM_REPO_DIR:-/repo-state}"
-if [[ -f "${private_repository_dir}/emoeem.db" ]]; then
-    printf 'Enabling the private repository from %s...\n' \
-        "$private_repository_dir"
-    append_repository \
-        "emoeem" \
-        $'SigLevel = Never\nServer = file://'"${private_repository_dir}"
-fi
