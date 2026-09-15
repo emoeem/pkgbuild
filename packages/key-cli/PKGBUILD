@@ -25,7 +25,9 @@ build() {
 
 check() {
     cd "key-cli-${pkgver}" || return
-    PYTHONPATH=src python -m pytest
+    # Build containers have no user session, and the recording tests need a
+    # runtime directory. Provide a disposable one for the test run.
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$(mktemp -d)}" PYTHONPATH=src python -m pytest
     python scripts/check-wheel.py dist/*.whl
 }
 
