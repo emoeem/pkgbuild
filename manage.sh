@@ -400,6 +400,10 @@ check_local_packages() {
     "${repo_root}/scripts/check-package.sh" "${packages[@]}"
 }
 
+audit_all_packages() {
+    "${repo_root}/scripts/audit-packages.sh"
+}
+
 update_local_repository() {
     sudo pacman -Sy
     pacman -Sl "$pacman_repository"
@@ -804,6 +808,9 @@ while true; do
             ;;
         '检查本地 PKGBUILD')
             check_local_packages || action_status=$?
+            ;;
+        '审计全部软件包')
+            audit_all_packages || action_status=$?
             ;;
         '检查本地软件包更新')
             check_local_updates || action_status=$?

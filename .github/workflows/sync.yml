@@ -34,13 +34,17 @@ jobs:
         run: |
           set -Eeuo pipefail
           selection="${REQUESTED_PACKAGES:-all}"
-          if [[ "$selection" == "all" ]]; then
-            ./scripts/sync-aur-packages.sh
-          else
+          args=()
+          if [[ "$selection" != "all" ]]; then
             selection="${selection// /}"
             IFS=',' read -ra packages <<< "$selection"
-            ./scripts/sync-aur-packages.sh "${packages[@]}"
+            args=("${packages[@]}")
           fi
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
+            bash /workspace/scripts/sync-aur-packages.sh "${args[@]}"
 
       - name: Detect changed packages
         id: changes

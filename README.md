@@ -251,3 +251,25 @@ Docker 的 Linux 自托管 runner。
 `ffmpeg-full` 的许可标识是
 `LicenseRef-nonfree-and-unredistributable`。仓库必须保持私有，产物仅供
 最终用户本人构建和使用，不要公开发布或用于商业用途。
+
+
+## 维护工程化状态
+
+当前仓库已完成一轮五阶段维护优化：
+
+1. **AUR / Overlay**：AUR 同步改为事务式 staging，先验证上游、overlay、PKGBUILD 和 `.SRCINFO`，再替换工作区，避免失败同步破坏现有包。
+2. **PKGBUILD 审计**：`scripts/audit-packages.sh` 对 14 个有效 package base 做元数据、架构、AUR 元数据以及 provider / dependency 一致性审计。
+3. **构建缓存**：CI 复用 pacman、VCS source 和 Cargo 缓存，并让 builder / build 脚本变化自动失效对应缓存。
+4. **Repository 完整性**：发布前运行 `scripts/verify-repository.sh`，校验数据库引用、软件包资产、SHA256 和仓库配置。
+5. **管理与文档**：TUI 增加「审计全部软件包」，构建流水线文档同步记录实际维护流程。
+
+推荐的本地维护检查：
+
+```bash
+./scripts/audit-packages.sh
+bash tests/test-package-audit.sh
+bash tests/test-build-regressions.sh
+python3 tests/test_select_packages.py
+bash tests/test_repository.sh
+bash -n manage.sh scripts/*.sh client/*.sh tests/*.sh
+```

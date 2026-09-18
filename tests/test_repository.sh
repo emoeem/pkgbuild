@@ -20,6 +20,7 @@ url = https://example.invalid/${name}
 builddate = 0
 packager = integration test
 size = 1
+filename = epoch-demo-1.2.0-1-x86_64.pkg.tar.zst
 arch = x86_64
 license = MIT
 EOF
@@ -42,6 +43,12 @@ REPOSITORY_SERVER="file:///tmp/emoeem-test/x86_64" \
 [[ -f "$temp/repository/emoeem.files" ]]
 [[ -f "$temp/repository/emoeem.conf" ]]
 [[ -f "$temp/repository/SHA256SUMS" ]]
+[[ -f "$temp/repository/emoeem.conf" ]]
+grep -Fxq '[emoeem]' "$temp/repository/emoeem.conf"
+grep -Fxq 'SigLevel = Never' "$temp/repository/emoeem.conf"
+( cd "$temp/repository" && sha256sum --check SHA256SUMS )
+"$root/scripts/verify-repository.sh" "$temp/repository"
+bsdtar -tf "$temp/repository/emoeem.db" | grep -Fq 'epoch-demo-1:2.0/desc'
 
 bsdtar -xOf "$temp/repository/emoeem.db" 'epoch-demo-1:2.0/desc' |
     grep -Fxq 'epoch-demo-1.2.0-1-x86_64.pkg.tar.zst'

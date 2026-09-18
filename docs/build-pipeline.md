@@ -111,3 +111,32 @@ CI 根据 package 名称选择 CUDA builder；`ffmpeg-full`、`mpv-emo`、`mpv-e
 ### 下载加速
 
 Builder 通过 `/etc/makepkg.conf.d/pkgbuild-aria2.conf` 为 HTTP/HTTPS/FTP source 使用 aria2 多连接下载，同时保留 VCS source 的 Git 路径。pacman 本身不使用 XferCommand，避免 pacman 的 sandbox 与外部 downloader 进程产生额外的容器权限问题。
+
+
+## Phase 1–5 完成状态
+
+### Phase 1：AUR / Overlay 自动维护
+
+`sync-aur-packages.sh` 现在采用事务式同步：先在临时目录克隆 AUR、写入提交指纹、应用 overlay、重新生成 `.SRCINFO` 并通过 Bash 语法检查；全部通过后才替换工作区中的 package 目录。这样上游更新或 overlay 失败不会破坏现有可用 PKGBUILD。
+
+`.aur-url` 与 `.aur-commit` 继续记录上游身份和同步点。mpv-Emo 使用独立的 Stable / Development track，不被普通 AUR 同步覆盖。
+
+### Phase 2：全量 PKGBUILD 审计
+
+新增 `scripts/audit-packages.sh`，对当前 14 个有效 PKGBUILD 做全量元数据、`.SRCINFO`、架构、AUR 元数据和内部 provider / dependency 检查。对于 Stable / Git、CUDA、mpv 等有意提供同一虚拟包的替代包，只有存在明确冲突关系时才允许共享 provider。
+
+新增 `tests/test-package-audit.sh` 回归测试，并把全量审计加入 `check.yml` 的 integration job。管理 TUI 也新增「审计全部软件包」入口。
+
+### Phase 3：构建缓存与 CI 性能
+
+Actions cache 现在同时覆盖 pacman package cache、按 package 隔离的 VCS source cache，以及共享 Cargo registry / Git cache。构建脚本通过 `CARGO_HOME=/cache/cargo` 复用 Rust 依赖；builder 定义和构建脚本变化会自动使缓存失效，避免旧环境污染新构建。
+
+### Phase 4：Repository / Release 完整性
+
+新增 `scripts/verify-repository.sh`。发布前验证数据库、软件包资产、`.PKGINFO`、SHA256 manifest 和 repository config；发现数据库引用不存在的资产会阻止发布。`tests/test_repository.sh` 同时覆盖 checksum、数据库生成、epoch 文件名和完整性验证。
+
+Release 发布脚本继续采用「先包、后数据库」的上传顺序，并只管理本项目明确生成的资产；数据库和软件包不再因为单个失败构建而被错误地清空。
+
+### Phase 5：文档与管理工具收尾
+
+`manage.sh` 增加全量 package audit 入口，现有状态总览、构建跟踪、失败排查、同步、构建和本地仓库操作保持不变。文档以当前实际脚本和 CI 行为为准，后续新增维护逻辑应同时更新本文件和 README。

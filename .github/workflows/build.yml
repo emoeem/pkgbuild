@@ -131,7 +131,7 @@ jobs:
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: .cache/pkgbuild
-          key: cachyos-v3-${{ runner.os }}-${{ steps.cache-flavor.outputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile') }}
+          key: cachyos-v3-${{ runner.os }}-${{ steps.cache-flavor.outputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'scripts/build-in-arch.sh') }}
           restore-keys: |
             cachyos-v3-${{ runner.os }}-${{ steps.cache-flavor.outputs.flavor }}-
 
@@ -312,6 +312,16 @@ jobs:
             --env "REPOSITORY_KEY_PASSPHRASE=$REPOSITORY_KEY_PASSPHRASE" \
             docker.io/library/archlinux:base-devel \
             bash /workspace/scripts/create-repository.sh
+
+      - name: Verify repository integrity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/published/x86_64:/repository:ro" \
+            --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
+            docker.io/library/archlinux:base-devel \
+            bash -c 'bash /workspace/scripts/verify-repository.sh /repository'
 
       - name: Publish repository release
         shell: bash
