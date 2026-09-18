@@ -33,6 +33,10 @@ def parse_srcinfo(path: Path) -> tuple[set[str], set[str], set[str]]:
             provides.add(line.removeprefix("\tprovides = "))
         elif current_pkg and line.startswith("\tdepends = "):
             depends.add(line.removeprefix("\tdepends = "))
+        elif current_pkg and line.startswith("	makedepends = "):
+            depends.add(line.removeprefix("	makedepends = "))
+        elif current_pkg and line.startswith("	checkdepends = "):
+            depends.add(line.removeprefix("	checkdepends = "))
     return packages, provides, depends
 
 

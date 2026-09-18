@@ -7,6 +7,9 @@ readonly workspace_dir="${WORKSPACE_DIR:-/workspace}"
 readonly output_dir="${OUTPUT_DIR:-/out}"
 readonly build_root="${BUILD_ROOT:-/build}"
 readonly builder_home="/home/builder"
+readonly cache_dir="${CACHE_DIR:-/cache}"
+readonly pacman_cache_dir="${cache_dir}/pacman"
+readonly source_cache_dir="${cache_dir}/sources"
 readonly prepared_image="${PKGBUILD_BUILDER_IMAGE:-0}"
 
 if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
@@ -30,6 +33,12 @@ if [[ ! -f "${source_dir}/PKGBUILD" ]]; then
 fi
 
 printf 'Building %s with %s parallel job(s).\n' "$package_name" "$make_jobs"
+if [[ "$prepared_image" == "1" ]]; then
+mkdir -p "$pacman_cache_dir" "$source_cache_dir"
+sed -i "/^CacheDir = /d" /etc/pacman.conf
+sed -i "/^\[options\]$/a CacheDir = $pacman_cache_dir" /etc/pacman.conf
+chown builder:builder "$source_cache_dir"
+fi
 
 if [[ "$prepared_image" != "1" ]]; then
     if ! grep -q '^ID=cachyos$' /etc/os-release; then
@@ -68,6 +77,10 @@ as_builder() {
         "MAKEFLAGS=-j${make_jobs}"
     )
 
+    if [[ "$prepared_image" == "1" ]]; then
+        environment+=("SRCDEST=${source_cache_dir}")
+    fi
+
     if [[ "$package_name" == "ffmpeg-full" ]]; then
         environment+=(
             "CUDA_PATH=/opt/cuda"
@@ -96,7 +109,7 @@ as_builder bash -c \
     "cd '$package_dir' && makepkg --printsrcinfo > /tmp/SRCINFO.generated"
 diff -u "${package_dir}/.SRCINFO" /tmp/SRCINFO.generated
 printf 'Running namcap on PKGBUILD...\n'
-as_builder namcap "${package_dir}/PKGBUILD"
+bash "${workspace_dir}/scripts/run-namcap.sh" "${package_dir}/PKGBUILD"
 
 if [[ "$package_name" == "ffmpeg-full" ]]; then
     readonly ffmpeg_signing_key="FCF986EA15E6E293A5644F10B4322F04D67658D8"
@@ -190,7 +203,7 @@ fi
 for package_file in "${package_files[@]}"; do
     filename="$(basename "$package_file")"
     printf 'Running namcap on %s...\n' "$filename"
-    as_builder namcap "$package_file"
+    bash "${workspace_dir}/scripts/run-namcap.sh" "$package_file"
     cp "$package_file" "$output_dir/"
     bsdtar -xOf "$package_file" .PKGINFO > "${output_dir}/${filename}.PKGINFO"
     bsdtar -xOf "$package_file" .BUILDINFO > "${output_dir}/${filename}.BUILDINFO"

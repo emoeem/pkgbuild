@@ -88,6 +88,7 @@ jobs:
             docker.io/cachyos/cachyos-v3:latest \
             bash -s -- /workspace/published <<'CONTAINER'
           set -Eeuo pipefail
+          sed -i "/^\[options\]$/a DisableSandboxNetwork" /etc/pacman.conf
           published="$1"
 
           # Use the same CachyOS-v3 repositories as the build container.

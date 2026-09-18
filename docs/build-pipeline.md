@@ -35,6 +35,7 @@
 
 - `provides` 虚拟依赖传播
 - 多级依赖传播
+- `makedepends` / `checkdepends` 依赖传播
 - overlay 精确触发
 - 无关文档不触发构建
 - build infrastructure 触发全量重建
@@ -62,7 +63,47 @@
 ```bash
 python3 tests/test_select_packages.py
 bash tests/test_repository.sh
+bash tests/test-cachyos-environment.sh base
 bash -n scripts/*.sh client/install.sh manage.sh tests/*.sh
 python3 -m py_compile scripts/select-packages.py tests/test_select_packages.py
 ./scripts/check-package.sh
 ```
+
+
+## 5. P1：CachyOS-native 构建增强
+
+### 容器 post-transaction hook
+
+CachyOS/pacman 在 Podman 容器中执行 `ldconfig` 和 systemd hook 时会尝试建立网络隔离，而容器默认能力不足会产生 `Operation not permitted`。Builder image 在 `[options]` 中启用 `DisableSandboxNetwork`，只关闭这类 hook 的网络隔离要求，不使用 `--privileged`，因此不会放宽整个容器的权限边界。
+
+`namcap` 当前使用的 pyalpm 配置解析器不认识该 CachyOS pacman 选项，因此 `scripts/run-namcap.sh` 会在运行 namcap 时临时隐藏该配置项，并通过 trap 恢复原配置。
+
+### 依赖图
+
+`scripts/select-packages.py` 现在同时把 `depends`、`makedepends` 和 `checkdepends` 纳入 provider → consumer 图。修改一个库、编译工具或测试依赖时，相关下游 package 都会被选择重建。
+
+### 构建缓存
+
+`build-in-arch.sh` 支持 `CACHE_DIR`，缓存两类不会改变构建正确性的内容：
+
+- `/cache/pacman`：pacman 软件包缓存。
+- `/cache/sources`：makepkg `SRCDEST`，尤其用于 VCS source。
+
+GitHub Actions 使用 `actions/cache` 恢复 `.cache/pkgbuild`，缓存 key 按 CachyOS-v3、standard/CUDA builder 和 builder 定义区分。缓存失效只会增加下载时间，不会跳过依赖解析或 checksum 验证。
+
+### CUDA Builder
+
+`.github/builder/Dockerfile` 支持 `CUDA_BUILDER=1`，发布两个 GHCR builder：
+
+- `pkgbuild-builder:latest`：标准 CachyOS-v3 builder。
+- `pkgbuild-builder:cuda`：额外安装官方仓库 CUDA toolkit，用于 CUDA/ffmpeg-full 构建。
+
+CI 根据 package 名称选择 CUDA builder；`ffmpeg-full` 和名称包含 `cuda` 的 package 使用 CUDA builder。CUDA builder 的本地验证要求 `nvcc` 和 `cuda` package 可用。
+
+### 环境一致性测试
+
+`tests/test-cachyos-environment.sh` 检查 CachyOS、`cachyos-v3`、x86_64、makepkg、aria2、namcap，以及 builder 模式下的 yay 和 sandbox 配置。CI builder 发布流程会在推送镜像前后验证标准/CUDA 环境；本地也可以直接在 builder image 中运行。
+
+### 下载加速
+
+Builder 通过 `/etc/makepkg.conf.d/pkgbuild-aria2.conf` 为 HTTP/HTTPS/FTP source 使用 aria2 多连接下载，同时保留 VCS source 的 Git 路径。pacman 本身不使用 XferCommand，避免 pacman 的 sandbox 与外部 downloader 进程产生额外的容器权限问题。

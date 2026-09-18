@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
       - name: Run dependency graph tests
         run: python tests/test_select_packages.py
-      - name: Run repository integration tests in Arch
+      - name: Run repository integration tests in CachyOS-v3
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -72,7 +72,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-      - name: Run Arch package checks
+      - name: Run CachyOS package checks
         shell: bash
         env:
           PACKAGE_NAME: ${{ matrix.package }}
@@ -84,8 +84,11 @@ jobs:
             docker.io/cachyos/cachyos-v3:latest \
             bash -c '
               set -Eeuo pipefail
+              sed -i "/^\[options\]$/a DisableSandboxNetwork" /etc/pacman.conf
               pacman -Syu --needed --noconfirm shellcheck namcap
+              bash /workspace/tests/test-cachyos-environment.sh base
               useradd --create-home checker
+              sed -i '/^DisableSandboxNetwork$/d' /etc/pacman.conf
               runuser -u checker -- env HOME=/home/checker PACKAGE_NAME="$PACKAGE_NAME" \
                 bash -c "
                   set -Eeuo pipefail

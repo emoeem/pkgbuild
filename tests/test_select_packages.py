@@ -23,12 +23,14 @@ class SelectPackagesTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def add_package(self, name, provides=(), depends=()):
+    def add_package(self, name, provides=(), depends=(), makedepends=(), checkdepends=()):
         directory = self.root / "packages" / name
         directory.mkdir()
         lines = [f"pkgbase = {name}", f"\tpkgdesc = test {name}", "\tarch = x86_64", "", f"pkgname = {name}"]
         lines += [f"\tprovides = {value}" for value in provides]
         lines += [f"\tdepends = {value}" for value in depends]
+        lines += [f"\tmakedepends = {value}" for value in makedepends]
+        lines += [f"\tcheckdepends = {value}" for value in checkdepends]
         (directory / ".SRCINFO").write_text("\n".join(lines) + "\n", encoding="utf-8")
         (directory / "PKGBUILD").write_text("pkgname=test\n", encoding="utf-8")
 
@@ -56,6 +58,15 @@ class SelectPackagesTests(unittest.TestCase):
         (self.root / "packages/lib-a/PKGBUILD").write_text("changed\n", encoding="utf-8")
         after = self.commit("change lib-a")
         self.assertEqual(self.select(before, after), ["app", "lib-a", "lib-b"])
+
+    def test_build_and_check_dependencies_propagate(self):
+        self.add_package("toolchain", provides=["virtual-tool"])
+        self.add_package("consumer-make", makedepends=["virtual-tool"])
+        self.add_package("consumer-check", checkdepends=["virtual-tool"])
+        before = self.commit("base")
+        (self.root / "packages/toolchain/PKGBUILD").write_text("changed\n", encoding="utf-8")
+        after = self.commit("change toolchain")
+        self.assertEqual(self.select(before, after), ["consumer-check", "consumer-make", "toolchain"])
 
     def test_overlay_selects_matching_package(self):
         self.add_package("ffmpeg-full")
