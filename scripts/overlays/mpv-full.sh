@@ -19,7 +19,7 @@ fail() {
 
 # Distinguish the private rebuild from the AUR package while retaining the
 # upstream package version and all upstream build logic.
-sed -i -E 's/^pkgrel=([0-9]+)(\.[0-9]+)?$/pkgrel=\1.1/' "$pkgbuild"
+sed -i -E 's/^pkgrel=([0-9]+)(\.[0-9]+)?$/pkgrel=\1.5/' "$pkgbuild"
 
 # Explicitly require the Linux/native feature set used by mpv-Emo.
 for flag in \
