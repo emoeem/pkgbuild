@@ -81,21 +81,18 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --env "PACKAGE_NAME=$PACKAGE_NAME" \
-            docker.io/cachyos/cachyos-v3:latest \
+            ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
             bash -c '
               set -Eeuo pipefail
-              sed -i "/^\[options\]$/a DisableSandboxNetwork" /etc/pacman.conf
-              pacman -Syu --needed --noconfirm shellcheck namcap
-              bash /workspace/tests/test-cachyos-environment.sh base
+              bash /workspace/tests/test-cachyos-environment.sh builder
               useradd --create-home checker
-              sed -i '/^DisableSandboxNetwork$/d' /etc/pacman.conf
               runuser -u checker -- env HOME=/home/checker PACKAGE_NAME="$PACKAGE_NAME" \
                 bash -c "
                   set -Eeuo pipefail
                   cd /workspace
                   ./scripts/check-package.sh \"\$PACKAGE_NAME\"
                   shellcheck --severity=warning manage.sh scripts/*.sh client/*.sh tests/*.sh
-                  python -m py_compile scripts/select-packages.py tests/test_select_packages.py
+                  PYTHONPYCACHEPREFIX=/tmp/pycache python -m py_compile scripts/select-packages.py tests/test_select_packages.py
                   namcap \"packages/\$PACKAGE_NAME/PKGBUILD\"
                 "
             '
