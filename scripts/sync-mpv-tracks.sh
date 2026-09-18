@@ -2,7 +2,6 @@
 set -Eeuo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 mpv_repo='https://github.com/mpv-player/mpv.git'
-omni_repo='https://github.com/mgth/mpv-omniphony.git'
 track="${1:-all}"
 [[ "$track" =~ ^(stable|development|all)$ ]] || { echo 'Usage: sync-mpv-tracks.sh [stable|development|all]' >&2; exit 2; }
 
