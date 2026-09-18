@@ -32,8 +32,15 @@ fi
 printf 'Building %s with %s parallel job(s).\n' "$package_name" "$make_jobs"
 
 if [[ "$prepared_image" != "1" ]]; then
-    printf 'Bootstrapping build container repositories and tools...\n'
-    "${workspace_dir}/scripts/setup-build-repositories.sh"
+    if ! grep -q '^ID=cachyos$' /etc/os-release; then
+        printf 'Local builds must run on CachyOS; use the CachyOS-v3 builder image for other hosts.\n' >&2
+        exit 2
+    fi
+    if ! pacman-conf --repo-list | grep -Fxq cachyos-v3; then
+        printf 'CachyOS v3 repository is not enabled on this host.\n' >&2
+        exit 2
+    fi
+    printf 'Using native CachyOS build environment.\n'
     pacman -Syu --needed --noconfirm aria2 base-devel git gnupg sudo curl jq namcap
 fi
 

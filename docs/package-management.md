@@ -55,7 +55,7 @@ PKGBUILD_DEFAULT_MAKE_JOBS=2
 
 - `PKGBUILD_GITHUB_REPOSITORY`：GitHub 的 `owner/repository`。
 - `PKGBUILD_PACMAN_REPOSITORY`：`pacman.conf` 中的仓库名称。
-- `PKGBUILD_DEFAULT_MAKE_JOBS`：构建菜单默认显示的并行编译数。
+- `PKGBUILD_DEFAULT_MAKE_JOBS`：构建菜单默认显示的并行编译数。你的 8C/16T CachyOS 主机可以手动设为 4；CI 通过 workflow input 单独覆盖。
 
 ## 删除软件包
 

@@ -57,7 +57,7 @@ jobs:
           set -Eeuo pipefail
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
-            docker.io/library/archlinux:base-devel \
+            docker.io/cachyos/cachyos-v3:latest \
             bash -c 'cd /workspace && bash tests/test_repository.sh'
 
   check:
@@ -81,7 +81,7 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --env "PACKAGE_NAME=$PACKAGE_NAME" \
-            docker.io/library/archlinux:base-devel \
+            docker.io/cachyos/cachyos-v3:latest \
             bash -c '
               set -Eeuo pipefail
               pacman -Syu --needed --noconfirm shellcheck namcap

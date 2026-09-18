@@ -11,23 +11,23 @@
 - `depends` 中的版本约束会先归一化为依赖名。
 - Split package 的多个 `pkgname` 也被视为同一个 package base 的 provider。
 - `scripts/overlays/<package>.sh` 变化只触发对应 package。
-- `scripts/build-in-arch.sh`、repository bootstrap 和 `config/` 变化仍会触发完整重建。
+- `scripts/build-in-arch.sh` 和 `config/` 变化仍会触发完整重建。
 - `--root` 参数允许在隔离的 Git fixture 中测试选择逻辑。
 
 因此普通文档修改不会触发 package build，而影响依赖 ABI/API 的包会向下游传播。
 
 ## 2. CI Builder Optimization
 
-`.github/builder/Dockerfile` 提供可复用的 Arch 构建镜像，预装：
+`.github/builder/Dockerfile` 直接基于官方 CachyOS x86-64-v3 构建镜像，预装：
 
-- CachyOS / Arch / 第三方仓库配置
+- CachyOS x86-64-v3 / 官方仓库
 - git、gnupg、curl、jq、namcap、sudo
 - builder 用户
 - yay-bin
 
 `builder.yml` 在构建器定义变化时发布 `pkgbuild-builder:latest` 到 GHCR。普通 package build 会优先拉取该镜像；镜像暂不可用时自动在 runner 上构建 fallback，因此不会因为首次发布构建器而阻塞主构建流水线。
 
-使用预构建镜像后，package job 不再重复执行 pacman repository bootstrap 和 yay bootstrap。`build-in-arch.sh` 仍保留 fallback 路径，方便本地或旧环境使用。
+使用预构建镜像后，package job 不再重复执行 CachyOS repository bootstrap 和 yay bootstrap。`build-in-arch.sh` 的本地路径要求宿主机本身是 CachyOS 且启用 `cachyos-v3`，不会再在 Arch 容器里临时拼装 CachyOS 仓库。
 
 ## 3. Repository Integration Tests
 

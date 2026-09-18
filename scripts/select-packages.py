@@ -94,8 +94,6 @@ def affected_packages(root: Path, paths: list[str], available: set[str]) -> set[
         parts = path.split("/")
         if path.startswith("config/") or path == "scripts/build-in-arch.sh":
             infrastructure = True
-        if path.startswith("scripts/setup-build-repositories.sh"):
-            infrastructure = True
         if len(parts) >= 3 and parts[0] == "packages" and parts[1] in available:
             selected.add(parts[1])
         if len(parts) == 3 and parts[0:2] == ["scripts", "overlays"]:

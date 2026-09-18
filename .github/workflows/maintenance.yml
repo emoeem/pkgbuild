@@ -85,14 +85,12 @@ jobs:
           docker run --rm -i \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/maintenance-out:/out" \
-            docker.io/library/archlinux:base-devel \
+            docker.io/cachyos/cachyos-v3:latest \
             bash -s -- /workspace/published <<'CONTAINER'
           set -Eeuo pipefail
           published="$1"
 
-          # Use the same third-party repositories as the build containers so
-          # soname resolution matches what packages were linked against.
-          /workspace/scripts/setup-build-repositories.sh
+          # Use the same CachyOS-v3 repositories as the build container.
           printf '\n[emoeem]\nSigLevel = Never\nServer = file://%s/x86_64\n' \
             "$published" >> /etc/pacman.conf
 
