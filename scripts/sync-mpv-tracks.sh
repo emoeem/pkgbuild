@@ -1,121 +1,94 @@
 #!/usr/bin/env bash
-
 set -Eeuo pipefail
-
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly root
-readonly mpv_repo='https://github.com/mpv-player/mpv.git'
-
-usage() { printf 'Usage: %s [stable|development|optional|all]\n' "$(basename "$0")"; }
+mpv_repo='https://github.com/mpv-player/mpv.git'
+omni_repo='https://github.com/mgth/mpv-omniphony.git'
 track="${1:-all}"
-[[ "$track" =~ ^(stable|development|optional|all)$ ]] || { usage >&2; exit 2; }
+[[ "$track" =~ ^(stable|development|all)$ ]] || { echo 'Usage: sync-mpv-tracks.sh [stable|development|all]' >&2; exit 2; }
 
 regen_srcinfo() {
-    local package_dir="$1"
-    if command -v makepkg >/dev/null 2>&1; then
-        (cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO)
-        return
-    fi
-    command -v docker >/dev/null 2>&1 || {
-        echo 'makepkg or docker is required to regenerate .SRCINFO' >&2
-        exit 1
-    }
-    docker run --rm \
-        --volume "$root:/workspace" \
-        docker.io/library/archlinux:base-devel \
-        bash -c "cd /workspace && cd '${package_dir#"$root/"}' && makepkg --printsrcinfo > .SRCINFO"
+    local dir="$1"
+    (cd "$dir" && makepkg --printsrcinfo > .SRCINFO)
 }
 
-fetch_sha256() {
-    local url="$1" output="$2"
+fetch() {
+    local url="$1" out="$2"
     if command -v aria2c >/dev/null 2>&1; then
-        aria2c -q -x 4 -s 4 --file-allocation=none --allow-overwrite=true \
-            --max-tries=10 --retry-wait=3 -o "$(basename "$output")" \
-            -d "$(dirname "$output")" "$url"
+        aria2c -q -x 4 -s 4 --file-allocation=none --max-tries=8 --retry-wait=3 -o "$(basename "$out")" -d "$(dirname "$out")" "$url"
     else
-        curl -fL --retry 10 --retry-all-errors --retry-delay 3 \
-            --connect-timeout 30 -o "$output" "$url"
+        curl -fsSL --retry 8 --retry-all-errors --retry-delay 3 -o "$out" "$url"
     fi
-    sha256sum "$output" | awk '{print $1}'
+}
+
+latest_omniphony_release() {
+    curl -fsSL --retry 8 --retry-all-errors --retry-delay 3 \
+        https://api.github.com/repos/mgth/mpv-omniphony/releases/latest |
+        python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])'
+}
+
+sync_patch_sources() {
+    local tag="$1" work="$2" d="$3"
+    fetch "https://github.com/mgth/mpv-omniphony/archive/refs/tags/${tag}.tar.gz" "$work/omniphony.tar.gz"
+    tar -xzf "$work/omniphony.tar.gz" -C "$work"
+    d="$work/mpv-omniphony-${tag#v}"
+    test -d "$d/patches" && test -d "$d/patches-master"
+    rm -f "$root"/packages/mpv-emo/src/patches/*.patch
+    rm -f "$root"/packages/mpv-emo-git/src/patches/*.patch
+    cp "$d"/patches/*.patch "$root"/packages/mpv-emo/src/patches/
+    cp "$d"/patches-master/*.patch "$root"/packages/mpv-emo-git/src/patches/
+}
+
+verify_patches() {
+    local src="$1" patch_dir="$2"; shift 2
+    cd "$src"
+    for p in "$patch_dir"/*.patch; do
+        patch -Np1 < "$p" >/dev/null || return 1
+    done
 }
 
 sync_stable() {
-    local latest tag archive checksum pkg
-    latest="$(git ls-remote --tags --refs "$mpv_repo" 'refs/tags/v*' |
-        awk -F/ '$NF ~ /^v[0-9]+\.[0-9]+(\.[0-9]+)?$/ {print $NF}' |
-        sort -V | tail -n1)"
-    [[ -n "$latest" ]] || { echo 'Unable to determine latest mpv release' >&2; exit 1; }
-    tag="$latest"
+    local tag pkg work checksum
+    tag="$(git ls-remote --tags --refs "$mpv_repo" 'refs/tags/v*' | awk -F/ '$NF ~ /^v[0-9]+\.[0-9]+(\.[0-9]+)?$/ {print $NF}' | sort -V | tail -n1)"
     pkg="${tag#v}"
-    if grep -Fxq "MPV_STABLE_TAG=${tag}" "$root/tracks/mpv/stable.env" 2>/dev/null; then
-        echo "Stable: ${tag} already synchronized"
+    work="$(mktemp -d)"
+    fetch "https://github.com/mpv-player/mpv/archive/refs/tags/${tag}.tar.gz" "$work/mpv.tar.gz"
+    checksum="$(sha256sum "$work/mpv.tar.gz" | awk '{print $1}')"
+    local omni_tag omni_mpv
+    omni_tag="$(latest_omniphony_release)"
+    omni_mpv="$(curl -fsSL --retry 8 --retry-all-errors --retry-delay 3 \
+        "https://raw.githubusercontent.com/mgth/mpv-omniphony/${omni_tag}/packaging/PKGBUILD" |
+        sed -nE 's/^_mpvver=([^[:space:]]+).*/\1/p' | head -n1)"
+    if [[ "$omni_mpv" != "$pkg" ]]; then
+        echo "Stable: Omniphony ${omni_tag} targets mpv ${omni_mpv}, not ${pkg}; keep current Stable." >&2
         return 0
     fi
-    archive="$(mktemp --suffix=.tar.gz)"
-    checksum="$(fetch_sha256 "https://github.com/mpv-player/mpv/archive/refs/tags/${tag}.tar.gz" "$archive")"
-    rm -f "$archive"
-
+    sync_patch_sources "$omni_tag" "$work" ''
     sed -i -E "s/^pkgver=.*/pkgver=${pkg}/" "$root/packages/mpv-emo/PKGBUILD"
-    sed -i -E "s/^sha256sums=\('.*'\)/sha256sums=('${checksum}')/" "$root/packages/mpv-emo/PKGBUILD"
-    printf 'MPV_STABLE_TAG=%s\nMPV_STABLE_SHA256=%s\n' "$tag" "$checksum" > "$root/tracks/mpv/stable.env"
+    sed -i -E "s/^sha256sums=\(.*/sha256sums=('${checksum}' $(for _ in patches\/*.patch; do printf 'SKIP '; done))/" "$root/packages/mpv-emo/PKGBUILD"
+    printf 'MPV_STABLE_TAG=%s\nMPV_STABLE_SHA256=%s\nOMNIPHONY_PATCH_TAG=%s\n' "$tag" "$checksum" "$omni_tag" > "$root/tracks/mpv/stable.env"
     regen_srcinfo "$root/packages/mpv-emo"
-    echo "Stable: ${tag} (${checksum})"
+    echo "Stable: ${tag}; core patches: ${omni_tag}"
 }
 
 sync_development() {
-    local commit short
+    local commit short work
     commit="$(git ls-remote "$mpv_repo" refs/heads/master | awk '{print $1}')"
-    [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo 'Unable to resolve mpv master' >&2; exit 1; }
     short="${commit:0:9}"
-    if grep -Fxq "MPV_DEVELOPMENT_FULL_COMMIT=${commit}" "$root/tracks/mpv/development.env" 2>/dev/null; then
-        echo "Development: ${commit} already synchronized"
+    work="$(mktemp -d)"
+    git clone -q --depth 1 "$mpv_repo" "$work/mpv"
+    if ! verify_patches "$work/mpv" "$root/packages/mpv-emo-git/src/patches"; then
+        echo "Development: current mpv master ${commit} is not compatible with the tracked core Patch series; skip publication." >&2
         return 0
     fi
     sed -i -E "s/#commit=[0-9a-f]+\x27\)/#commit=${commit}')/" "$root/packages/mpv-emo-git/PKGBUILD"
     sed -i -E "s/^pkgver=.*/pkgver=0.0.0.r0.g${short}/" "$root/packages/mpv-emo-git/PKGBUILD"
     printf 'MPV_DEVELOPMENT_COMMIT=%s\nMPV_DEVELOPMENT_FULL_COMMIT=%s\n' "$short" "$commit" > "$root/tracks/mpv/development.env"
     regen_srcinfo "$root/packages/mpv-emo-git"
-    echo "Development: master ${commit}"
-}
-
-sync_optional() {
-    local tag version mpvver archive mpv_archive checksum1 checksum2 metadata
-    tag="$(curl -fsSL --retry 8 --retry-all-errors --retry-delay 3 \
-        --connect-timeout 30 "https://api.github.com/repos/mgth/mpv-omniphony/releases/latest" |
-        python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
-    [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-        echo "Unable to determine latest Omniphony release: $tag" >&2
-        exit 1
-    }
-    if grep -Fxq "OMNIPHONY_TAG=${tag}" "$root/tracks/mpv/optional.env" 2>/dev/null; then
-        echo "Optional: Omniphony ${tag} already synchronized"
-        return 0
-    fi
-    version="${tag#v}"
-    metadata="$(curl -fsSL --retry 8 --retry-all-errors --retry-delay 3 \
-        "https://raw.githubusercontent.com/mgth/mpv-omniphony/${tag}/packaging/PKGBUILD")"
-    mpvver="$(sed -nE 's/^_mpvver=([^[:space:]]+).*/\1/p' <<< "$metadata" | head -n1)"
-    [[ -n "$mpvver" ]] || { echo "Omniphony ${tag} does not declare _mpvver" >&2; exit 1; }
-
-    archive="$(mktemp --suffix=.tar.gz)"
-    mpv_archive="$(mktemp --suffix=.tar.gz)"
-    checksum1="$(fetch_sha256 "https://github.com/mpv-player/mpv/archive/refs/tags/v${mpvver}.tar.gz" "$mpv_archive")"
-    checksum2="$(fetch_sha256 "https://github.com/mgth/mpv-omniphony/archive/refs/tags/${tag}.tar.gz" "$archive")"
-    rm -f "$archive" "$mpv_archive"
-
-    sed -i -E "s/^pkgver=.*/pkgver=${version}/" "$root/packages/mpv-emo-omniphony/PKGBUILD"
-    sed -i -E "s/^_mpvver=.*/_mpvver=${mpvver}/" "$root/packages/mpv-emo-omniphony/PKGBUILD"
-    sed -i -E "s/^_omniphony_tag=.*/_omniphony_tag=${tag}/" "$root/packages/mpv-emo-omniphony/PKGBUILD"
-    sed -i -E "s/^sha256sums=.*/sha256sums=('${checksum1}'/" "$root/packages/mpv-emo-omniphony/PKGBUILD"
-    sed -i -E "0,/^[[:space:]]+'[0-9a-f]{64}')$/s//            '${checksum2}')/" "$root/packages/mpv-emo-omniphony/PKGBUILD"
-    regen_srcinfo "$root/packages/mpv-emo-omniphony"
-    printf 'OMNIPHONY_TAG=%s\nOMNIPHONY_MPV=%s\n' "$tag" "$mpvver" > "$root/tracks/mpv/optional.env"
-    echo "Optional: Omniphony ${tag} on mpv ${mpvver}"
+    echo "Development: master ${commit}; core patches compatible"
 }
 
 case "$track" in
     stable) sync_stable ;;
     development) sync_development ;;
-    optional) sync_optional ;;
-    all) sync_stable; sync_development; sync_optional ;;
+    all) sync_stable; sync_development ;;
 esac

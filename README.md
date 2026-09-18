@@ -3,7 +3,7 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前维护 15 个 package base，其中 mpv-Emo 独立维护 Stable / Development / Optional Patch 三条轨道，构建环境按以下优先级使用依赖：
+当前维护 15 个 package base，其中 mpv-Emo 维护 Stable / Development 两条构建轨道；核心 Patch（当前为 Omniphony mpv-side integration）直接进入 mpv-Emo 核心构建。
 
 ## Features
 
@@ -17,9 +17,9 @@
 | Package | Arch | 说明 |
 | --- | --- | --- |
 | `ffmpeg-full` | `x86_64` | 启用大量编解码器、CUDA 和 Whisper 支持的 FFmpeg |
-| `mpv-emo` | `x86_64` | Stable：跟随 mpv 正式 release，Linux 原生 Vulkan、Wayland、CUDA、VapourSynth、PipeWire |
-| `mpv-emo-git` | `x86_64` | Development：跟随 upstream master，固定到具体 commit |
-| `mpv-emo-omniphony` | `x86_64` | Optional Patch：独立 Omniphony spatial-audio 集成，不污染 Stable |
+| `mpv-emo` | `x86_64` | Stable：mpv-full 级 Linux 全功能构建 + 已验证核心 Patch（当前含 Omniphony mpv-side integration） |
+| `mpv-emo-git` | `x86_64` | Development：upstream master + 对应核心 Patch series，固定具体 commit |
+| `orender` | `x86_64` | Omniphony 空间音频运行时；仅在需要 `ad_orender` 时安装 |
 | `ggml-cuda-git` | `x86_64`, `aarch64` | CUDA 优化的 GGML |
 | `linuxqq-clipsync-git` | `x86_64` | Linux QQ Wayland 剪贴板同步 |
 | `llama.cpp-cuda` | `x86_64` | CUDA 优化的 llama.cpp stable 构建 |
@@ -68,22 +68,22 @@ PKGBUILD 重新构建，不会直接安装同名预编译包。
 
 mpv-Emo 不再依赖 AUR 同步来决定 mpv 的版本，而是由独立的轨道控制器维护：
 
-1. **Stable**：发现新的 mpv 正式 release，下载源码计算 SHA256，更新
-   `packages/mpv-emo` 和 `tracks/mpv/stable.env`。
+1. **Stable**：发现新的 mpv 正式 release，更新 `packages/mpv-emo`，并保持
+   当前经过验证的核心 Patch series。
 2. **Development**：读取 upstream `master` 的最新 commit，更新
-   `packages/mpv-emo-git`，始终记录精确 commit。
-3. **Optional Patch**：跟踪 Omniphony 的独立 release，并记录它要求的
-   mpv 基线；不会把补丁写入 Stable。
-4. 每次更新先重新生成 `.SRCINFO` 并运行 package checks。
+   `packages/mpv-emo-git`；只有对应 Patch series 能完整应用时才允许发布。
+3. **Core Patch**：Omniphony 等真正修改 mpv 核心的扩展进入 `src/patches/`，
+   不再作为第二个 mpv 软件包安装。
+4. 每次更新先验证 Patch 顺序、重新生成 `.SRCINFO` 并运行 package checks。
 5. CI 构建成功后才更新 `repo` Release；任何补丁冲突或构建失败都会阻止
    对应轨道发布。
 
-`Sync mpv-Emo tracks` 工作流每天 `02:47 UTC` 检查三条轨道，也可以在
-Actions 页面手动选择 Stable、Development 或 Optional Patch。
+`Sync mpv-Emo tracks` 工作流每天 `02:47 UTC` 检查 Stable / Development，
+也可以在 Actions 页面手动选择轨道。
 
 原有 **Sync AUR package sources** 继续负责其他 AUR-managed 软件包；它
-不会覆盖 mpv-Emo 三个轨道。**Maintenance** 工作流继续负责 Artifact 清理
-和 soname 依赖检查。
+不会覆盖 mpv-Emo 的核心 Patch。**Maintenance** 工作流继续负责 Artifact
+清理和 soname 依赖检查。
 
 ## 添加 AUR 软件包
 

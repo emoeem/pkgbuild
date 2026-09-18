@@ -14,7 +14,6 @@ on:
           - all
           - stable
           - development
-          - optional
 
 permissions:
   contents: write
@@ -48,20 +47,19 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          ./scripts/check-package.sh mpv-emo mpv-emo-git mpv-emo-omniphony
+          ./scripts/check-package.sh mpv-emo mpv-emo-git
           git diff --check
 
       - name: Commit mpv track updates
         shell: bash
         run: |
           set -Eeuo pipefail
-          if git diff --quiet -- packages/mpv-emo packages/mpv-emo-git \
-              packages/mpv-emo-omniphony tracks/mpv; then
+          if git diff --quiet -- packages/mpv-emo packages/mpv-emo-git tracks/mpv; then
             echo 'No mpv track updates.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add packages/mpv-emo packages/mpv-emo-git packages/mpv-emo-omniphony tracks/mpv
+          git add packages/mpv-emo packages/mpv-emo-git tracks/mpv
           git commit -m 'chore: sync mpv-Emo tracks'
           git push

@@ -1,25 +1,26 @@
 # mpv-Emo tracks
 
-mpv is maintained as three independent tracks. Package names are deliberately
-separate so a broken development build or optional patch can never silently
-replace Stable.
+`mpv-Emo` is a real mpv-full-style core build: upstream mpv is the base, and
+curated core patches are applied before compilation.
 
-| Track | Package | Upstream | Update policy |
+| Track | Package | Upstream | Patch policy |
 | --- | --- | --- | --- |
-| Stable | `mpv-emo` | mpv release tags | automatic daily check |
-| Development | `mpv-emo-git` | mpv `master` | automatic daily check, exact commit pin |
-| Optional Patch | `mpv-emo-omniphony` | Omniphony release + matching mpv | independent check; build is gated by patch compatibility |
+| Stable | `mpv-emo` | mpv release tags | stable patch series is part of the core build |
+| Development | `mpv-emo-git` | mpv `master` | matching master patch series; drift blocks publication |
 
 ## Rules
 
 1. Stable never consumes mpv `master`.
-2. Development never blocks Stable.
-3. Optional patches never modify the Stable package in place.
-4. Every source update changes a tracked pin in Git before CI builds it.
-5. Patch application is a hard gate: a failed patch means no publication.
-6. A successful build is required before the `repo` release is updated.
-7. Linux-native mpv features belong in the common build policy; Windows-only
-   Yaozhi functionality does not enter these packages.
+2. Development pins an exact upstream commit.
+3. Core patches live under `packages/mpv-emo/src/patches/` and the corresponding
+   development series under `packages/mpv-emo-git/src/patches/`.
+4. Omniphony is a core Patch layer, not a second mpv package.
+5. `orender` is runtime-only and is not linked at mpv build time.
+6. Patch application is a hard gate: any failed patch means no publication.
+7. A successful build and test are required before the private pacman repo updates.
+8. When a feature lands upstream, its private Patch is removed instead of being
+   maintained forever.
 
-The current Stable release is `v0.41.0`; mpv also publishes a separate
-master development build, so the two tracks are intentionally kept distinct.
+The current Stable baseline is mpv `v0.41.0` with the Omniphony v0.4.2 mpv-side
+series. Upstream mpv currently publishes a separate development build for
+master, so Stable and Development remain separate tracks.

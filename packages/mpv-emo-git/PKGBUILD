@@ -1,30 +1,69 @@
-# mpv-Emo Development — upstream master track.
-# The updater pins an exact upstream commit; the package remains reproducible.
+# mpv-Emo Development — upstream master plus the curated core patch set.
+# The updater pins an exact upstream commit and the corresponding patch series.
 
 pkgname=mpv-emo-git
 pkgver=0.41.0.r1049.g0b7ed670f
 pkgrel=1
-pkgdesc='mpv-Emo development: upstream mpv master with Linux features'
+pkgdesc='mpv-Emo development: upstream mpv master with curated core patches'
 arch=('x86_64')
 license=('GPL-2.0-or-later')
 url='https://github.com/mpv-player/mpv'
 depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'lua' 'pipewire' 'vapoursynth'
          'vulkan-icd-loader' 'wayland' 'zimg')
+optdepends=('orender: enable the bundled Omniphony spatial-audio decoder at runtime')
 makedepends=('git' 'meson' 'vulkan-headers' 'wayland-protocols' 'ffnvcodec-headers')
 provides=('mpv' 'libmpv.so=2-64')
-conflicts=('mpv' 'mpv-full' 'mpv-emo' 'mpv-emo-omniphony')
-source=('mpv::git+https://github.com/mpv-player/mpv.git#commit=0b7ed670f7c353dd3dd4f8ae0fc788a181a15aa6')
-sha256sums=('SKIP')
+conflicts=('mpv' 'mpv-full' 'mpv-emo')
+source=('mpv::git+https://github.com/mpv-player/mpv.git#commit=0b7ed670f7c353dd3dd4f8ae0fc788a181a15aa6'
+        patches/0001-audio-add-ad_orender-spatial-audio-decoder-via-libor.patch
+        patches/0002-ao-asio-add-Steinberg-ASIO-audio-output-driver.patch
+        patches/0003-ci-add-Windows-ASIO-build-workflow.patch
+        patches/0004-ao-asio-fix-asio-option-prefix-in-error-message-and-.patch
+        patches/0005-ao-asio-advertise-waveext-any-chmap-so-7.1.4-9.1.6-o.patch
+        patches/0006-ao-wasapi-advertise-5.1.4-7.1.4-9.1.6-in-the-exclusi.patch
+        patches/0007-ao-wasapi-also-probe-discrete-N-17.MP_NUM_CHANNELS-f.patch
+        patches/0008-ad_orender-renegotiate-the-chmap-on-output-channel-c.patch
+        patches/0009-player-built-in-spatial-overlay-client-replaces-omni.patch
+        patches/0010-ad_orender-use-the-per-OS-config-path-in-the-bridge_.patch
+        patches/0011-ad_orender-ProgramData-config-path-in-the-Windows-br.patch
+        patches/0012-ad_orender-host-channel-mode-fallback-to-the-native-.patch
+        patches/0013-ad_orender-route-DTS-to-orender-too.patch
+        patches/0014-ad_orender-render-AC-3-through-orender-fix-channel-m.patch
+        patches/0015-feat-ad_orender-keep-the-engine-alive-in-host-mode-l.patch
+        patches/0016-feat-ad_orender-hide-the-spatial-overlay-in-host-mod.patch
+        patches/0017-feat-ad_orender-show-Atmos-profile-bed-objects-and-D.patch
+        patches/0018-fix-ad_orender-label-track-profile-from-decoded-obje.patch
+        patches/0019-feat-ad_orender-honor-renderer-output-channel-mappin.patch
+        patches/0020-fix-ad_orender-anchor-codec_profile-buffer-to-codec-.patch
+        patches/0021-ad_orender-load-liborender-at-runtime-with-an-ABI-ha.patch
+        patches/0022-fix-ad-keep-object-content-on-spatial-renderer.patch
+        patches/0023-ad_orender-prefer-orender_has_objects-ABI-minor-6.patch
+        patches/0024-fix-ad_orender-DTS-X-silence-in-host-mode-classify-f.patch
+        patches/9001-f_swresample-force-identity-mapping-for-unknown-posi.patch)
+sha256sums=('SKIP'
+           'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+           'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+           'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+           'SKIP')
 
 pkgver() {
     cd mpv
     git describe --long --tags --always | sed -E 's/^v//; s/([^-]+)-([0-9]+)-g/\1.r\2.g/; s/-/./g'
 }
 
+prepare() {
+    cd "${srcdir}/mpv"
+    local patch_file
+    for patch_file in "${srcdir}"/patches/*.patch; do
+        [[ -f "$patch_file" ]] || continue
+        patch -Np1 < "$patch_file"
+    done
+}
+
 build() {
-    arch-meson mpv build \
+    arch-meson build \
         -Dgpl=true -Dcplayer=true -Dlibmpv=true -Dbuild-date=false \
-        -Dtests=true -Dvulkan=enabled -Dwayland=enabled \
+        -Dtests=true -Dorender=enabled -Dvulkan=enabled -Dwayland=enabled \
         -Dcuda-hwaccel=enabled -Dcuda-interop=enabled \
         -Dvapoursynth=enabled -Dzimg=enabled -Dpipewire=enabled \
         -Dpulse=enabled -Dalsa=enabled -Djack=enabled \
@@ -33,7 +72,6 @@ build() {
         -Dlibarchive=enabled -Dx11=enabled -Dvaapi=enabled
     meson compile -C build
 }
-
 check() {
     meson test -C build --print-errorlogs
 }
