@@ -28,6 +28,7 @@ prepare() {
     done
 }
 build() {
+    cd "${srcdir}/mpv-${pkgver}"
     arch-meson build \
         -Dgpl=true -Dcplayer=true -Dlibmpv=true -Dbuild-date=false \
         -Dtests=true -Dorender=enabled -Dvulkan=enabled -Dwayland=enabled \

@@ -515,20 +515,3 @@ index 8e25dc3a2d..61f2a15364 100644
 -#endif
          return;
      }
- 
-diff --git a/filters/f_decoder_wrapper.h b/filters/f_decoder_wrapper.h
-index 538a307efd..53f336d85c 100644
---- a/filters/f_decoder_wrapper.h
-+++ b/filters/f_decoder_wrapper.h
-@@ -75,11 +75,6 @@ enum dec_ctrl {
-     // framedrop mode: 0=none, 1=standard, 2=hrseek
-     VDCTRL_SET_FRAMEDROP,
-     VDCTRL_CHECK_FORCED_EOF,
--    // Audio: decoder asks the wrapper to fall back to the native decoder (e.g.
--    // ad_orender on a non-object stream with channel-mode=host, or when the
--    // renderer cannot produce an output layout). Returns CONTROL_TRUE when a
--    // fallback is requested.
--    ADCTRL_CHECK_FALLBACK,
- };
- 
- int mp_decoder_wrapper_control(struct mp_decoder_wrapper *d,
