@@ -32,10 +32,10 @@ sync_patch_sources() {
     tar -xzf "$work/omniphony.tar.gz" -C "$work"
     d="$work/mpv-omniphony-${tag#v}"
     test -d "$d/patches" && test -d "$d/patches-master"
-    rm -f "$root"/packages/mpv-emo/src/patches/*.patch
-    rm -f "$root"/packages/mpv-emo-git/src/patches/*.patch
-    cp "$d"/patches/*.patch "$root"/packages/mpv-emo/src/patches/
-    cp "$d"/patches-master/*.patch "$root"/packages/mpv-emo-git/src/patches/
+    rm -f "$root"/packages/mpv-emo/patches/*.patch
+    rm -f "$root"/packages/mpv-emo-git/patches/*.patch
+    cp "$d"/patches/*.patch "$root"/packages/mpv-emo/patches/
+    cp "$d"/patches-master/*.patch "$root"/packages/mpv-emo-git/patches/
 }
 
 verify_patches() {
@@ -64,7 +64,7 @@ sync_stable() {
     fi
     sync_patch_sources "$omni_tag" "$work" ''
     sed -i -E "s/^pkgver=.*/pkgver=${pkg}/" "$root/packages/mpv-emo/PKGBUILD"
-    sed -i -E "s/^sha256sums=\(.*/sha256sums=('${checksum}' $(for _ in patches\/*.patch; do printf 'SKIP '; done))/" "$root/packages/mpv-emo/PKGBUILD"
+    sed -i -E "s/^sha256sums=.*/sha256sums=('${checksum}')/" "$root/packages/mpv-emo/PKGBUILD"
     printf 'MPV_STABLE_TAG=%s\nMPV_STABLE_SHA256=%s\nOMNIPHONY_PATCH_TAG=%s\n' "$tag" "$checksum" "$omni_tag" > "$root/tracks/mpv/stable.env"
     regen_srcinfo "$root/packages/mpv-emo"
     echo "Stable: ${tag}; core patches: ${omni_tag}"
@@ -76,7 +76,7 @@ sync_development() {
     short="${commit:0:9}"
     work="$(mktemp -d)"
     git clone -q --depth 1 "$mpv_repo" "$work/mpv"
-    if ! verify_patches "$work/mpv" "$root/packages/mpv-emo-git/src/patches"; then
+    if ! verify_patches "$work/mpv" "$root/packages/mpv-emo-git/patches"; then
         echo "Development: current mpv master ${commit} is not compatible with the tracked core Patch series; skip publication." >&2
         return 0
     fi

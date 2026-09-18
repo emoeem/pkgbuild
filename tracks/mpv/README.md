@@ -12,8 +12,8 @@ curated core patches are applied before compilation.
 
 1. Stable never consumes mpv `master`.
 2. Development pins an exact upstream commit.
-3. Core patches live under `packages/mpv-emo/src/patches/` and the corresponding
-   development series under `packages/mpv-emo-git/src/patches/`.
+3. Core patches live under `packages/mpv-emo/patches/` and the corresponding
+   development series under `packages/mpv-emo-git/patches/`.
 4. Omniphony is a core Patch layer, not a second mpv package.
 5. `orender` is runtime-only and is not linked at mpv build time.
 6. Patch application is a hard gate: any failed patch means no publication.
