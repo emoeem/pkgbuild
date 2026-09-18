@@ -10,8 +10,8 @@ pkgdesc='Full Linux mpv build with curated core patches'
 arch=('x86_64')
 license=('GPL-2.0-or-later')
 url='https://mpv.io/'
-depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'luajit' 'pipewire' 'vapoursynth'
-         'vulkan-icd-loader' 'wayland' 'zimg' 'alsa-lib' 'jack2' 'libpulse'
+depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'luajit' 'pipewire' 'vapoursynth' 'libxkbcommon' 'libxss' 'libxext' 'libxpresent' 'libxrandr' 'libxv'
+         'vulkan-icd-loader' 'wayland' 'wayland-protocols' 'zimg' 'alsa-lib' 'jack2' 'libpulse' 'libpipewire' 'sndio' 'libjpeg-turbo' 'libvdpau' 'libxfixes' 'libglvnd' 'libdrm' 'hicolor-icon-theme' 'zlib-ng-compat' 'ffnvcodec-headers'
          'libva' 'libx11' 'lcms2' 'libarchive' 'libdvdnav' 'rubberband' 'uchardet')
 optdepends=('orender: enable the bundled Omniphony spatial-audio decoder at runtime')
 makedepends=('meson' 'vulkan-headers' 'wayland-protocols' 'ffnvcodec-headers')
@@ -19,33 +19,32 @@ provides=('mpv' 'libmpv.so=2-64')
 conflicts=('mpv' 'mpv-full' 'mpv-emo-git')
 source=("mpv-${pkgver}.tar.gz::https://github.com/mpv-player/mpv/archive/v${pkgver}.tar.gz" *.patch)
 
-sha256sums=(
-    'ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209'
-    'ee7cf272c9450962667f02c717d8fa7da7249ecc75661d18cf2518da0491e633'
-    '04e03781c0c027020943fd024ff031f315a0120dc8562a0b37e84c19f66c1820'
-    'c62efc643dc525a3fcc21503f27144776dcecaf7638603c501b4c364b9bb84d4'
-    '577a53cee16c40c112a95b26e33d371be0488cbc9d19f82275c5920765277483'
-    '394c6319c3d22562b048495fd43ae3e94ee787debbb8e52341b045c0fac3a980'
-    'a2d7c5ffb869e825801f643d28c4aab743c719a4fd404ec70c388b7c269fa330'
-    '2d2849475445cb8e33ebc97d22ec7e1e14ff366c4bd95144055a66fd61a6336f'
-    '5867eba0647e06cb036e9d647ca2ed41c36dd43f7628b88c6bf535f1632304ac'
-    'b04d263d13c6c01871a85b1cd79803b222bd07e7e4a63c10b100d5fa5fedb9c2'
-    '10326f9c954946f509f6133499b322b362fe6827c727ab55db5957af1995c13e'
-    '710b9bd194e1094287333fe4b69312615c08386959e92992c78ba1179f41a090'
-    '2048f3e4c8fda86452bc2759b01353565727be7b51a6d5ad3d79909d0297e400'
-    'f021005d0c35157750d096486a561df6ab839edbeefc4b7ef0762945bd092e2a'
-    'd49cf728448a09e59d269e049fca92626c16b1be8d223260493545b3f0993413'
-    '775d7fe87717a4b5a4c5490ceafb3d56e287f28b864a5735cab118fe3620b36a'
-    '5c95d88158b449cc473156772a40ba4d8f9fc2e3b0d947c482c94494a2235fc7'
-    '07dc06d9ba7a988bb1337e0de28c3863c53c1fa6f1cf1940ef1e7f7cda7a3f3f'
-    'bb8632c9a10972896e880bbc6be6dce6bb233882a11c78a074ecc4018fc0172f'
-    '743d2c1a2ee917302d89dfb2cd038a43f7f5ef6b68c938b986f55abc6815232c'
-    '7733a485dc928181120a631b80fbbf29ef93d8f8e65a781984cbe8eef78c2e33'
-    'cfa4f65db5f15d697eddc21f9374ac4b66b5be8919e8d75cef2bb34345cccef6'
-    '4c64f0584efd3cb09614ad1bdd655b9d698fbcd8b5e0f040da7b56278f26963e'
-    '51498a88470ccde6b635559c658dc2d17416fadfe99de47b44f23cee79df23e2'
-    '71bb8cf0b4b26b5e24f52abbdf7448cc7c813f4bfa697e85dc97279c036e325a'
-)
+sha256sums=('ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209'
+            'ee7cf272c9450962667f02c717d8fa7da7249ecc75661d18cf2518da0491e633'
+            'c1ab2bde9f727c58768dbbe5c662220352bee2e9e523dd79bbccf66727010b87'
+            '04e03781c0c027020943fd024ff031f315a0120dc8562a0b37e84c19f66c1820'
+            'c62efc643dc525a3fcc21503f27144776dcecaf7638603c501b4c364b9bb84d4'
+            '577a53cee16c40c112a95b26e33d371be0488cbc9d19f82275c5920765277483'
+            '394c6319c3d22562b048495fd43ae3e94ee787debbb8e52341b045c0fac3a980'
+            'a2d7c5ffb869e825801f643d28c4aab743c719a4fd404ec70c388b7c269fa330'
+            '2d2849475445cb8e33ebc97d22ec7e1e14ff366c4bd95144055a66fd61a6336f'
+            '5867eba0647e06cb036e9d647ca2ed41c36dd43f7628b88c6bf535f1632304ac'
+            'b04d263d13c6c01871a85b1cd79803b222bd07e7e4a63c10b100d5fa5fedb9c2'
+            '10326f9c954946f509f6133499b322b362fe6827c727ab55db5957af1995c13e'
+            '710b9bd194e1094287333fe4b69312615c08386959e92992c78ba1179f41a090'
+            '2048f3e4c8fda86452bc2759b01353565727be7b51a6d5ad3d79909d0297e400'
+            'f021005d0c35157750d096486a561df6ab839edbeefc4b7ef0762945bd092e2a'
+            'd49cf728448a09e59d269e049fca92626c16b1be8d223260493545b3f0993413'
+            '775d7fe87717a4b5a4c5490ceafb3d56e287f28b864a5735cab118fe3620b36a'
+            '5c95d88158b449cc473156772a40ba4d8f9fc2e3b0d947c482c94494a2235fc7'
+            '07dc06d9ba7a988bb1337e0de28c3863c53c1fa6f1cf1940ef1e7f7cda7a3f3f'
+            'bb8632c9a10972896e880bbc6be6dce6bb233882a11c78a074ecc4018fc0172f'
+            '743d2c1a2ee917302d89dfb2cd038a43f7f5ef6b68c938b986f55abc6815232c'
+            '7733a485dc928181120a631b80fbbf29ef93d8f8e65a781984cbe8eef78c2e33'
+            'cfa4f65db5f15d697eddc21f9374ac4b66b5be8919e8d75cef2bb34345cccef6'
+            '4c64f0584efd3cb09614ad1bdd655b9d698fbcd8b5e0f040da7b56278f26963e'
+            '51498a88470ccde6b635559c658dc2d17416fadfe99de47b44f23cee79df23e2'
+            '71bb8cf0b4b26b5e24f52abbdf7448cc7c813f4bfa697e85dc97279c036e325a')
 
 prepare() {
     cd "${srcdir}/mpv-${pkgver}"
@@ -72,9 +71,11 @@ build() {
 }
 
 check() {
+    cd "${srcdir}/mpv-${pkgver}"
     meson test -C build --print-errorlogs
 }
 
 package() {
+    cd "${srcdir}/mpv-${pkgver}"
     meson install -C build --destdir "$pkgdir"
 }

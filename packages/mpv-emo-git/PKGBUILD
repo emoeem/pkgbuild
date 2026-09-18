@@ -9,8 +9,8 @@ pkgdesc='Upstream mpv master with curated core patches'
 arch=('x86_64')
 license=('GPL-2.0-or-later')
 url='https://github.com/mpv-player/mpv'
-depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'luajit' 'pipewire' 'vapoursynth'
-         'vulkan-icd-loader' 'wayland' 'zimg' 'alsa-lib' 'jack2' 'libpulse'
+depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'luajit' 'pipewire' 'vapoursynth' 'libxkbcommon' 'libxss' 'libxext' 'libxpresent' 'libxrandr' 'libxv'
+         'vulkan-icd-loader' 'wayland' 'wayland-protocols' 'zimg' 'alsa-lib' 'jack2' 'libpulse' 'libpipewire' 'sndio' 'libjpeg-turbo' 'libvdpau' 'libxfixes' 'libglvnd' 'libdrm' 'hicolor-icon-theme' 'zlib-ng-compat' 'ffnvcodec-headers'
          'libva' 'libx11' 'lcms2' 'libarchive' 'libdvdnav' 'rubberband' 'uchardet')
 optdepends=('orender: enable the bundled Omniphony spatial-audio decoder at runtime')
 makedepends=('git' 'meson' 'vulkan-headers' 'wayland-protocols' 'ffnvcodec-headers')
@@ -76,9 +76,11 @@ build() {
     meson compile -C build
 }
 check() {
+    cd "${srcdir}/mpv"
     meson test -C build --print-errorlogs
 }
 
 package() {
+    cd "${srcdir}/mpv"
     meson install -C build --destdir "$pkgdir"
 }
