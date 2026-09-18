@@ -69,7 +69,7 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
-            bash -c 'cd /workspace && ./scripts/audit-packages.sh && ./tests/test-package-audit.sh'
+            bash -c 'set -Eeuo pipefail; useradd --create-home checker; runuser -u checker -- env HOME=/home/checker AUDIT_ROOT=/workspace bash -c "cd /workspace && ./scripts/audit-packages.sh && ./tests/test-package-audit.sh"'
       - name: Run repository integration tests in CachyOS-v3
         shell: bash
         run: |
