@@ -37,7 +37,8 @@ jobs:
       - name: Build and push builder image
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
-          context: .          file: .github/builder/Dockerfile
+          context: .
+          file: .github/builder/Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest
           cache-from: type=gha,scope=pkgbuild-builder
