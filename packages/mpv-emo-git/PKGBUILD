@@ -1,23 +1,51 @@
+# Maintainer: Emo <emoeem@users.noreply.github.com>
 # mpv-Emo Development — upstream master plus the curated core patch set.
 # The updater pins an exact upstream commit and the corresponding patch series.
 
 pkgname=mpv-emo-git
 pkgver=0.41.0.r1049.g0b7ed670f
 pkgrel=1
-pkgdesc='mpv-Emo development: upstream mpv master with curated core patches'
+pkgdesc='Upstream mpv master with curated core patches'
 arch=('x86_64')
 license=('GPL-2.0-or-later')
 url='https://github.com/mpv-player/mpv'
-depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'lua' 'pipewire' 'vapoursynth'
+depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'luajit' 'pipewire' 'vapoursynth'
          'vulkan-icd-loader' 'wayland' 'zimg' 'alsa-lib' 'jack2' 'libpulse'
          'libva' 'libx11' 'lcms2' 'libarchive' 'libdvdnav' 'rubberband' 'uchardet')
 optdepends=('orender: enable the bundled Omniphony spatial-audio decoder at runtime')
 makedepends=('git' 'meson' 'vulkan-headers' 'wayland-protocols' 'ffnvcodec-headers')
 provides=('mpv' 'libmpv.so=2-64')
 conflicts=('mpv' 'mpv-full' 'mpv-emo')
-source=('mpv::git+https://github.com/mpv-player/mpv.git#commit=0b7ed670f7c353dd3dd4f8ae0fc788a181a15aa6')
+source=('mpv::git+https://github.com/mpv-player/mpv.git#commit=0b7ed670f7c353dd3dd4f8ae0fc788a181a15aa6' patches/*.patch)
 
-sha256sums=('SKIP')
+sha256sums=(
+    'SKIP'
+    '7e042aec17109c06472bdd795a048dcc945cfe35ab4976c377003a2be0cf420a'
+    'ca500cd4d0798e009c672fa85b1d38fad9bd2682a494e12b741b9f50d01f06a8'
+    'c62efc643dc525a3fcc21503f27144776dcecaf7638603c501b4c364b9bb84d4'
+    '577a53cee16c40c112a95b26e33d371be0488cbc9d19f82275c5920765277483'
+    '394c6319c3d22562b048495fd43ae3e94ee787debbb8e52341b045c0fac3a980'
+    '776da59613998bbe48bc4d46c8c573c7d6de43c18c211dd0ee1f59f740d00af8'
+    '14da85e11225a39f46ac20af3923206c04b6e5f31d76a71321e1baa6706e38d0'
+    '5867eba0647e06cb036e9d647ca2ed41c36dd43f7628b88c6bf535f1632304ac'
+    '0815746e12fe3924d6d302b2b15df51fec85f2f5a203c17de6496ff40d8612df'
+    '10326f9c954946f509f6133499b322b362fe6827c727ab55db5957af1995c13e'
+    '710b9bd194e1094287333fe4b69312615c08386959e92992c78ba1179f41a090'
+    'a78a54cbbdaa0e9874afaae174b83a0a9e8d2bcd613643dce172aa8e6becb6ea'
+    '93c13a979fe191bc473661cc28cdc238303a68a8308b24aac7d6a4e4593ac223'
+    'd49cf728448a09e59d269e049fca92626c16b1be8d223260493545b3f0993413'
+    '49d4b79cfd153564ff239f3bb977f66f13bdd0f299144d30a544587d6648e5ac'
+    '5c95d88158b449cc473156772a40ba4d8f9fc2e3b0d947c482c94494a2235fc7'
+    '07dc06d9ba7a988bb1337e0de28c3863c53c1fa6f1cf1940ef1e7f7cda7a3f3f'
+    'bb8632c9a10972896e880bbc6be6dce6bb233882a11c78a074ecc4018fc0172f'
+    '743d2c1a2ee917302d89dfb2cd038a43f7f5ef6b68c938b986f55abc6815232c'
+    '7733a485dc928181120a631b80fbbf29ef93d8f8e65a781984cbe8eef78c2e33'
+    'b8deaacf45a4e1bfd6d93afce5938e41f9883a9f614c59f9dbb2e380e8f358fa'
+    '4c64f0584efd3cb09614ad1bdd655b9d698fbcd8b5e0f040da7b56278f26963e'
+    '51498a88470ccde6b635559c658dc2d17416fadfe99de47b44f23cee79df23e2'
+    '71bb8cf0b4b26b5e24f52abbdf7448cc7c813f4bfa697e85dc97279c036e325a'
+    '99f401d59b412cfda04904eeca72b0815c65d46e77094ccaba69f97d56669e21'
+)
 
 pkgver() {
     cd mpv
@@ -27,7 +55,7 @@ pkgver() {
 prepare() {
     cd "${srcdir}/mpv"
     local patch_file
-    for patch_file in "${startdir}"/patches/*.patch; do
+    for patch_file in "${srcdir}"/patches/*.patch; do
         [[ -f "$patch_file" ]] || continue
         patch -Np1 < "$patch_file"
     done
