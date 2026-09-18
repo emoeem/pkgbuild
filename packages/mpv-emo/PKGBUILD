@@ -10,7 +10,8 @@ arch=('x86_64')
 license=('GPL-2.0-or-later')
 url='https://mpv.io/'
 depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'lua' 'pipewire' 'vapoursynth'
-         'vulkan-icd-loader' 'wayland' 'zimg')
+         'vulkan-icd-loader' 'wayland' 'zimg' 'alsa-lib' 'jack2' 'libpulse'
+         'libva' 'libx11' 'lcms2' 'libarchive' 'libdvdnav' 'rubberband' 'uchardet')
 optdepends=('orender: enable the bundled Omniphony spatial-audio decoder at runtime')
 makedepends=('meson' 'vulkan-headers' 'wayland-protocols' 'ffnvcodec-headers')
 provides=('mpv' 'libmpv.so=2-64')

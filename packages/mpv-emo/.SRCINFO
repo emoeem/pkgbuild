@@ -19,6 +19,16 @@ pkgbase = mpv-emo
 	depends = vulkan-icd-loader
 	depends = wayland
 	depends = zimg
+	depends = alsa-lib
+	depends = jack2
+	depends = libpulse
+	depends = libva
+	depends = libx11
+	depends = lcms2
+	depends = libarchive
+	depends = libdvdnav
+	depends = rubberband
+	depends = uchardet
 	optdepends = orender: enable the bundled Omniphony spatial-audio decoder at runtime
 	provides = mpv
 	provides = libmpv.so=2-64
