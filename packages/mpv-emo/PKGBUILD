@@ -17,7 +17,7 @@ optdepends=('orender: enable the bundled Omniphony spatial-audio decoder at runt
 makedepends=('meson' 'vulkan-headers' 'wayland-protocols' 'ffnvcodec-headers')
 provides=('mpv' 'libmpv.so=2-64')
 conflicts=('mpv' 'mpv-full' 'mpv-emo-git')
-source=("mpv-${pkgver}.tar.gz::https://github.com/mpv-player/mpv/archive/v${pkgver}.tar.gz" patches/*.patch)
+source=("mpv-${pkgver}.tar.gz::https://github.com/mpv-player/mpv/archive/v${pkgver}.tar.gz" *.patch)
 
 sha256sums=(
     'ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209'
