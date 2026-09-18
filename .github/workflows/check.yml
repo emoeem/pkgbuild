@@ -8,6 +8,8 @@ on:
     paths:
       - "packages/**"
       - "scripts/**"
+      - "tests/**"
+      - ".github/builder/**"
       - ".github/workflows/check.yml"
 
 permissions:
@@ -41,6 +43,23 @@ jobs:
           packages="$(python scripts/select-packages.py --selection changed --before "$before" --after "$AFTER_SHA")"
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
 
+  integration:
+    name: Repository and build-graph integration tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Run dependency graph tests
+        run: python tests/test_select_packages.py
+      - name: Run repository integration tests in Arch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            docker.io/library/archlinux:base-devel \
+            bash -c 'cd /workspace && bash tests/test_repository.sh'
+
   check:
     name: Validate ${{ matrix.package }}
     needs: select
@@ -72,7 +91,8 @@ jobs:
                   set -Eeuo pipefail
                   cd /workspace
                   ./scripts/check-package.sh \"\$PACKAGE_NAME\"
-                  shellcheck --severity=warning manage.sh scripts/*.sh client/*.sh
+                  shellcheck --severity=warning manage.sh scripts/*.sh client/*.sh tests/*.sh
+                  python -m py_compile scripts/select-packages.py tests/test_select_packages.py
                   namcap \"packages/\$PACKAGE_NAME/PKGBUILD\"
                 "
             '

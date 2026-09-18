@@ -63,7 +63,8 @@ insert_repository_before_section() {
 
     rm -f "$block_file"
 
-    install -m 0644 "$temporary_config" "$pacman_config"
+    cat "$temporary_config" > "$pacman_config"
+    chmod 0644 "$pacman_config"
     rm -f "$temporary_config"
 }
 

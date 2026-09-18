@@ -1,0 +1,42 @@
+name: Publish CI builder image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/builder/**"
+      - "scripts/setup-build-repositories.sh"
+      - ".github/workflows/builder.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: pkgbuild-builder
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@184bdaa072107e7a8a1b8e8f2d7b8f5d9c2e5c3d # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .github/builder/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest
+          cache-from: type=gha,scope=pkgbuild-builder
+          cache-to: type=gha,mode=max,scope=pkgbuild-builder

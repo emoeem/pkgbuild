@@ -708,6 +708,38 @@ show_recent_actions() {
     gh run view "$run_id" --repo "$github_repository"
 }
 
+show_dashboard() {
+    local branch package_count aur_count dirty mpv_stable mpv_development
+    local recent="-" running="-" failed="-"
+
+    branch="$(git -C "$repo_root" branch --show-current)"
+    package_count="$(managed_packages | wc -l)"
+    aur_count="$(aur_package_records | wc -l)"
+    if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then dirty='有未提交修改'; else dirty='工作区干净'; fi
+    mpv_stable="$(awk -F= '/^MPV_STABLE_TAG=/{print $2}' "$repo_root/tracks/mpv/stable.env" 2>/dev/null || true)"
+    mpv_development="$(awk -F= '/^MPV_DEVELOPMENT_FULL_COMMIT=/{print substr($2,1,9)}' "$repo_root/tracks/mpv/development.env" 2>/dev/null || true)"
+
+    if command -v gh >/dev/null 2>&1 && gh auth token >/dev/null 2>&1; then
+        recent="$(gh run list --repo "$github_repository" --limit 1 --json status,conclusion --jq '.[0] | (.conclusion // .status)' 2>/dev/null || echo '-')"
+        running="$(gh run list --repo "$github_repository" --limit 30 --json status --jq '[.[] | select(.status != "completed")] | length' 2>/dev/null || echo '-')"
+        failed="$(gh run list --repo "$github_repository" --limit 30 --json conclusion --jq '[.[] | select(.conclusion == "failure")] | length' 2>/dev/null || echo '-')"
+    fi
+
+    printf '\n'
+    printf '╭────────────────────────── 仓库状态 ──────────────────────────╮\n'
+    printf '│ GitHub       %-46s │\n' "$github_repository"
+    printf '│ 分支         %-46s │\n' "${branch:-游离状态}"
+    printf '│ 工作区       %-46s │\n' "$dirty"
+    printf '│ 软件包       %-46s │\n' "$package_count"
+    printf '│ AUR 管理     %-46s │\n' "$aur_count"
+    printf '│ mpv Stable   %-46s │\n' "${mpv_stable:--}"
+    printf '│ mpv Dev      %-46s │\n' "${mpv_development:--}"
+    printf '│ 最近 Actions %-46s │\n' "$recent"
+    printf '│ 运行中       %-46s │\n' "$running"
+    printf '│ 最近失败     %-46s │\n' "$failed"
+    printf '╰──────────────────────────────────────────────────────────────╯\n'
+}
+
 while true; do
     branch="$(git -C "$repo_root" branch --show-current)"
     package_count="$(managed_packages | wc -l)"
@@ -726,6 +758,7 @@ while true; do
     action="$(
         select_one \
             "${github_repository} | 分支 ${branch:-游离状态} | ${package_count} 个软件包 | ${repository_state} | 自动推送 ${push_label}" \
+            '仓库状态总览' \
             '添加 AUR 软件包' \
             '从自定义 Git 添加软件包' \
             '从仓库删除软件包' \
@@ -745,6 +778,9 @@ while true; do
 
     action_status=0
     case "$action" in
+        '仓库状态总览')
+            show_dashboard || action_status=$?
+            ;;
         '添加 AUR 软件包')
             add_aur_package || action_status=$?
             ;;

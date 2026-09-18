@@ -3,13 +3,16 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前维护 15 个 package base，其中 mpv-Emo 维护 Stable / Development 两条构建轨道；核心 Patch（当前为 Omniphony mpv-side integration）直接进入 mpv-Emo 核心构建。
+当前维护 14 个 package base，其中 mpv-Emo 维护 Stable / Development 两条构建轨道；核心 Patch（当前为 Omniphony mpv-side integration）直接进入 mpv-Emo 核心构建。
 
 ## Features
 
 - 使用真实 Arch Linux `base-devel` 容器运行 `makepkg`。
 - Pull Request 和 Push 自动执行 Bash 语法、`.SRCINFO`、ShellCheck 与 namcap 检查。
-- 只构建发生变化的包；被变化包直接依赖的包也会自动重建。
+- 只构建发生变化的包；依赖通过 `.SRCINFO` 的 `pkgname` / `provides` 图递归传播。
+- `scripts/overlays/<package>.sh` 变化只触发对应包；构建基础设施变化触发全量重建。
+- CI 使用可复用 Arch builder image，预装仓库配置、namcap 和 yay，减少重复 bootstrap。
+- Repository integration tests 在真实 Arch 容器中验证 `repo-add`、删除和 epoch 文件名处理。
 - 成功产物通过 `repo-add` 更新 `repo` 分支中的 pacman 仓库。
 
 ## Packages
@@ -19,7 +22,6 @@
 | `ffmpeg-full` | `x86_64` | 启用大量编解码器、CUDA 和 Whisper 支持的 FFmpeg |
 | `mpv-emo` | `x86_64` | Stable：mpv-full 级 Linux 全功能构建 + 已验证核心 Patch（当前含 Omniphony mpv-side integration） |
 | `mpv-emo-git` | `x86_64` | Development：upstream master + 对应核心 Patch series，固定具体 commit |
-| `orender` | `x86_64` | Omniphony 空间音频运行时；仅在需要 `ad_orender` 时安装 |
 | `ggml-cuda-git` | `x86_64`, `aarch64` | CUDA 优化的 GGML |
 | `linuxqq-clipsync-git` | `x86_64` | Linux QQ Wayland 剪贴板同步 |
 | `llama.cpp-cuda` | `x86_64` | CUDA 优化的 llama.cpp stable 构建 |
@@ -37,7 +39,8 @@
 ## Build and CI
 
 `check.yml` 在 Arch 容器中运行 `makepkg --printsrcinfo`、ShellCheck 和
-namcap；`build.yml` 独立负责只构建变更包及其直接/间接依赖，并将包作为
+namcap，同时运行 build-graph 与 repository integration tests；`build.yml`
+独立负责只构建变更包及其递归依赖，并优先使用 GHCR 中的可复用 builder image。
 Artifact 保存。构建成功后发布为滚动 GitHub Release（固定 tag `repo`），
 pacman 直接从 Release 资产下载仓库数据库和软件包。AUR 同步只提交源
 文件，提交本身会触发一次构建，不会重复 dispatch 同一个构建。
@@ -152,6 +155,8 @@ sudo pacman -S fzf github-cli
 ```
 
 多选软件包时使用 `Tab`。完整说明见 `docs/package-management.md`。
+
+构建依赖图、CI builder 和 repository integration tests 的设计见 `docs/build-pipeline.md`。
 
 ## 构建产物
 

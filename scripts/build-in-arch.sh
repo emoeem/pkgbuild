@@ -7,6 +7,7 @@ readonly workspace_dir="${WORKSPACE_DIR:-/workspace}"
 readonly output_dir="${OUTPUT_DIR:-/out}"
 readonly build_root="${BUILD_ROOT:-/build}"
 readonly builder_home="/home/builder"
+readonly prepared_image="${PKGBUILD_BUILDER_IMAGE:-0}"
 
 if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
     printf 'PACKAGE_NAME is missing or invalid: %s\n' "$package_name" >&2
@@ -30,18 +31,23 @@ fi
 
 printf 'Building %s with %s parallel job(s).\n' "$package_name" "$make_jobs"
 
-"${workspace_dir}/scripts/setup-build-repositories.sh"
-pacman -Syu --needed --noconfirm git gnupg sudo curl jq namcap
+if [[ "$prepared_image" != "1" ]]; then
+    printf 'Bootstrapping build container repositories and tools...\n'
+    "${workspace_dir}/scripts/setup-build-repositories.sh"
+    pacman -Syu --needed --noconfirm git gnupg sudo curl jq namcap
+fi
 
-useradd --create-home --shell /bin/bash builder
-printf 'builder ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/builder
-chmod 0440 /etc/sudoers.d/builder
+if ! id builder >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash builder
+    printf 'builder ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/builder
+    chmod 0440 /etc/sudoers.d/builder
+fi
 
 install -d -o builder -g builder "$build_root" "$output_dir"
+rm -rf "$package_dir" "$package_remote"
 cp -a "$source_dir" "$package_dir"
 chown -R builder:builder "$package_dir"
 
-# Debug subpackages substantially increase build time and repository storage.
 sed -Ei \
     's/(^OPTIONS=.*[[:space:]])debug([[:space:]\)])/\1!debug\2/' \
     /etc/makepkg.conf
@@ -109,16 +115,19 @@ if [[ "$package_name" == "ffmpeg-full" ]]; then
         "cd '$package_dir' && makepkg --verifysource --noconfirm"
 fi
 
-printf 'Bootstrapping yay-bin...\n'
-git clone --depth 1 https://aur.archlinux.org/yay-bin.git \
-    "${build_root}/yay-bin"
-chown -R builder:builder "${build_root}/yay-bin"
-as_builder bash -c \
-    "cd '${build_root}/yay-bin' && makepkg --noconfirm --cleanbuild --clean"
-pacman -U --noconfirm "${build_root}"/yay-bin/yay-bin-*.pkg.tar.zst
+if [[ "$prepared_image" != "1" ]]; then
+    printf 'Bootstrapping yay-bin...\n'
+    git clone --depth 1 https://aur.archlinux.org/yay-bin.git \
+        "${build_root}/yay-bin"
+    chown -R builder:builder "${build_root}/yay-bin"
+    as_builder bash -c \
+        "cd '${build_root}/yay-bin' && makepkg --noconfirm --cleanbuild --clean"
+    bsdtar -xf "${build_root}"/yay-bin/yay-bin-*.pkg.tar.zst -C /
+fi
+
+yay --version
 
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
-    yay --version
     printf 'Container bootstrap validation completed.\n'
     exit 0
 fi
