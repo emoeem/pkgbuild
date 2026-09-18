@@ -55,7 +55,7 @@ pkgver() {
 prepare() {
     cd "${srcdir}/mpv"
     local patch_file
-    for patch_file in "${srcdir}"/patches/*.patch; do
+    for patch_file in "${srcdir}"/*.patch; do
         [[ -f "$patch_file" ]] || continue
         patch -Np1 < "$patch_file"
     done
