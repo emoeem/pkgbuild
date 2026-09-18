@@ -62,6 +62,7 @@
 
 ```bash
 python3 tests/test_select_packages.py
+./tests/test-build-regressions.sh
 bash tests/test_repository.sh
 bash tests/test-cachyos-environment.sh base
 bash -n scripts/*.sh client/install.sh manage.sh tests/*.sh
@@ -87,7 +88,8 @@ CachyOS/pacman 在 Podman 容器中执行 `ldconfig` 和 systemd hook 时会尝�
 `build-in-arch.sh` 支持 `CACHE_DIR`，缓存两类不会改变构建正确性的内容：
 
 - `/cache/pacman`：pacman 软件包缓存。
-- `/cache/sources`：makepkg `SRCDEST`，尤其用于 VCS source。
+- `/cache/sources/<package>`：按目标 package 隔离的 makepkg `SRCDEST`，尤其用于 VCS source。
+- VCS source 使用独立的 URL 身份校验；发现同名但不同远程仓库的缓存会在构建前自动清除，避免 `xclip` 一类 basename 冲突。
 
 GitHub Actions 使用 `actions/cache` 恢复 `.cache/pkgbuild`，缓存 key 按 CachyOS-v3、standard/CUDA builder 和 builder 定义区分。缓存失效只会增加下载时间，不会跳过依赖解析或 checksum 验证。
 
@@ -98,7 +100,9 @@ GitHub Actions 使用 `actions/cache` 恢复 `.cache/pkgbuild`，缓存 key 按 
 - `pkgbuild-builder:latest`：标准 CachyOS-v3 builder。
 - `pkgbuild-builder:cuda`：额外安装官方仓库 CUDA toolkit，用于 CUDA/ffmpeg-full 构建。
 
-CI 根据 package 名称选择 CUDA builder；`ffmpeg-full` 和名称包含 `cuda` 的 package 使用 CUDA builder。CUDA builder 的本地验证要求 `nvcc` 和 `cuda` package 可用。
+Builder 同时启用官方 Chaotic-AUR 二进制仓库作为 AUR 依赖的预编译补充来源。这样 `ffmpeg-full` 等大型包不需要重复编译所有 AUR 依赖；本次验证中原先会进入 AUR 构建队列的 24 个依赖收敛到仅 4 个仍需从 AUR 构建。Chaotic-AUR 仅作为依赖来源，不替代 CachyOS-v3 基线，也不替代目标 package 自身构建。
+
+CI 根据 package 名称选择 CUDA builder；`ffmpeg-full`、`mpv-emo`、`mpv-emo-git` 和名称包含 `cuda` 的 package 使用 CUDA builder。CUDA builder 同时安装 `gcc15`，因为当前 CUDA 13.4 的 `nvcc` 会选择 GCC 15 作为 host compiler；本地验证要求 `nvcc`、`g++-15` 和 `cuda` package 可用。
 
 ### 环境一致性测试
 

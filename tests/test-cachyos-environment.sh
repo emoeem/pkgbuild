@@ -5,10 +5,12 @@ if [[ ! -f /etc/os-release ]] || ! grep -q "^ID=cachyos$" /etc/os-release; then
     echo "CachyOS environment required." >&2; exit 1
 fi
 pacman-conf --repo-list | grep -Fxq cachyos-v3
+pacman-conf --repo-list | grep -Fxq chaotic-aur
+pacman -Qi chaotic-keyring >/dev/null
 command -v pacman >/dev/null
 command -v makepkg >/dev/null
 command -v aria2c >/dev/null
-command -v namcap >/dev/null
+if [[ "$mode" == builder ]]; then command -v namcap >/dev/null; fi
 [[ "$(uname -m)" == x86_64 ]]
 if [[ "$mode" == builder ]]; then
     command -v yay >/dev/null
@@ -17,6 +19,7 @@ if [[ "$mode" == builder ]]; then
 fi
 if [[ "$mode" == cuda ]]; then
     command -v nvcc >/dev/null
+    command -v g++-15 >/dev/null
     [[ -x /opt/cuda/bin/nvcc || -x /usr/bin/nvcc ]]
     pacman -Q cuda >/dev/null
 fi

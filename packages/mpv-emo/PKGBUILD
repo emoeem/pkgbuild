@@ -29,9 +29,11 @@ prepare() {
 }
 build() {
     cd "${srcdir}/mpv-${pkgver}"
-    arch-meson build \
+    meson setup build \
+        --prefix /usr --libexecdir lib --sbindir bin --buildtype plain \
+        --auto-features=auto --wrap-mode nodownload -D b_pie=true -D python.bytecompile=1 \
         -Dgpl=true -Dcplayer=true -Dlibmpv=true -Dbuild-date=false \
-        -Dtests=true -Dorender=enabled -Dvulkan=enabled -Dwayland=enabled \
+        -Dtests=true -Dwin32-threads=disabled -Dorender=enabled -Dvulkan=enabled -Dwayland=enabled \
         -Dcuda-hwaccel=enabled -Dcuda-interop=enabled \
         -Dvapoursynth=enabled -Dzimg=enabled -Dpipewire=enabled \
         -Dpulse=enabled -Dalsa=enabled -Djack=enabled \

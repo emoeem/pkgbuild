@@ -466,10 +466,11 @@ diff --git a/filters/f_decoder_wrapper.h b/filters/f_decoder_wrapper.h
 index a352dc0c4d..53f336d85c 100644
 --- a/filters/f_decoder_wrapper.h
 +++ b/filters/f_decoder_wrapper.h
-@@ -106,6 +106,9 @@ struct mp_decoder_fns {
+@@ -106,7 +106,10 @@ struct mp_decoder_fns {
  extern const struct mp_decoder_fns vd_lavc;
  extern const struct mp_decoder_fns ad_lavc;
  extern const struct mp_decoder_fns ad_spdif;
+ extern const struct mp_decoder_fns ad_dsd;
 +#if HAVE_ORENDER
 +extern const struct mp_decoder_fns ad_orender;
 +#endif

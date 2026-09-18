@@ -9,7 +9,7 @@ readonly build_root="${BUILD_ROOT:-/build}"
 readonly builder_home="/home/builder"
 readonly cache_dir="${CACHE_DIR:-/cache}"
 readonly pacman_cache_dir="${cache_dir}/pacman"
-readonly source_cache_dir="${cache_dir}/sources"
+readonly source_cache_dir="${cache_dir}/sources/${package_name}"
 readonly prepared_image="${PKGBUILD_BUILDER_IMAGE:-0}"
 
 if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
@@ -110,6 +110,9 @@ as_builder bash -c \
 diff -u "${package_dir}/.SRCINFO" /tmp/SRCINFO.generated
 printf 'Running namcap on PKGBUILD...\n'
 bash "${workspace_dir}/scripts/run-namcap.sh" "${package_dir}/PKGBUILD"
+
+printf 'Validating Git source cache entries...\n'
+bash "${workspace_dir}/scripts/validate-source-cache.sh" "${package_dir}" "${source_cache_dir}"
 
 if [[ "$package_name" == "ffmpeg-full" ]]; then
     readonly ffmpeg_signing_key="FCF986EA15E6E293A5644F10B4322F04D67658D8"
