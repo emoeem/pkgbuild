@@ -85,7 +85,7 @@ readonly -a fzf_options=(
 readonly -a fzf_package_options=(
     "${fzf_options[@]}"
     --delimiter=$'\t'
-    --with-nth=2..
+    --with-nth=1..
     --preview="sed -n '1,220p' '${repo_root}/packages/{1}/PKGBUILD'"
     --preview-window='right:55%:wrap'
     --bind='ctrl-/:toggle-preview'
@@ -179,7 +179,7 @@ select_managed_package() {
     selected="$(
         package_records |
             fzf "${fzf_package_options[@]}" --prompt='软件包> ' \
-                --header='版本 | 架构 | 描述（预览 PKGBUILD）'
+                --header='包名 | 版本 | 架构 | 描述（预览 PKGBUILD）'
     )" || return
     printf '%s\n' "${selected%%$'\t'*}"
 }
@@ -193,7 +193,7 @@ select_managed_packages() {
             "${fzf_package_options[@]}" \
             --multi \
             --bind='ctrl-a:select-all,ctrl-d:deselect-all' \
-            --header='版本 | 架构 | 描述；Tab：选择  Ctrl-A：全选  Ctrl-D：取消全选' \
+            --header='包名 | 版本 | 架构 | 描述；Tab：选择  Ctrl-A：全选  Ctrl-D：取消全选' \
             --prompt='软件包> '
     )" || return
     while IFS=$'\t' read -r package_name _; do
@@ -213,7 +213,7 @@ select_aur_packages() {
             "${fzf_package_options[@]}" \
             --multi \
             --bind='ctrl-a:select-all,ctrl-d:deselect-all' \
-            --header='选择“全部 AUR 软件包”，或使用 Tab 多选' \
+            --header='包名 | 版本 | 架构 | 描述；选择“全部 AUR 软件包”，或使用 Tab 多选' \
             --prompt='同步 AUR> '
     )" || return
     while IFS=$'\t' read -r package_name _; do
@@ -233,7 +233,7 @@ select_build_packages() {
             "${fzf_package_options[@]}" \
             --multi \
             --bind='ctrl-a:select-all,ctrl-d:deselect-all' \
-            --header='选择“全部软件包”，或使用 Tab 多选' \
+            --header='包名 | 版本 | 架构 | 描述；选择“全部软件包”，或使用 Tab 多选' \
             --prompt='构建软件包> '
     )" || return
     while IFS=$'\t' read -r package_name _; do
