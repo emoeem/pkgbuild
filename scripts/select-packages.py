@@ -81,8 +81,21 @@ def available_packages(root: Path) -> list[str]:
 def changed_paths(root: Path, before: str, after: str) -> list[str]:
     if not before or set(before) == {"0"}:
         return ["scripts/"]
+    exists = subprocess.run(
+        ["git", "cat-file", "-e", f"{before}^{{commit}}"],
+        cwd=root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode == 0
+    if exists:
+        diff_args = ["git", "diff", "--name-only", before, after]
+    else:
+        # Force-pushed histories can make github.event.before unavailable in
+        # a fresh checkout. Fall back to the new commit's tree rather than
+        # failing package selection altogether.
+        diff_args = ["git", "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", after]
     result = subprocess.run(
-        ["git", "diff", "--name-only", before, after],
+        diff_args,
         cwd=root,
         check=True,
         capture_output=True,
