@@ -80,7 +80,7 @@ as_builder() {
     )
 
     if [[ "$prepared_image" == "1" ]]; then
-        environment+=("SRCDEST=${source_cache_dir}" "CARGO_HOME=${cargo_cache_dir}")
+        environment+=("XDG_CACHE_HOME=${cache_dir}/yay/${package_name}" "CARGO_HOME=${cargo_cache_dir}")
     fi
 
     if [[ "$package_name" == "ffmpeg-full" ]]; then
@@ -136,7 +136,7 @@ if [[ "$package_name" == "ffmpeg-full" ]]; then
     as_builder gpg --batch --import /tmp/ffmpeg-devel.asc
 
     printf 'Downloading and verifying FFmpeg sources...\n'
-    as_builder bash -c \
+    as_builder env SRCDEST="$source_cache_dir" bash -c \
         "cd '$package_dir' && makepkg --verifysource --noconfirm"
 fi
 
@@ -159,7 +159,7 @@ fi
 
 if [[ "$package_name" == mpv-emo* ]]; then
     printf 'Running mpv-Emo source/patch compatibility gate...\n'
-    as_builder bash -c \
+    as_builder env SRCDEST="$source_cache_dir" bash -c \
         "cd '$package_dir' && makepkg --nobuild --nodeps --cleanbuild --clean --noconfirm"
 fi
 
