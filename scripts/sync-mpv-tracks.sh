@@ -10,6 +10,22 @@ usage() { printf 'Usage: %s [stable|development|optional|all]\n' "$(basename "$0
 track="${1:-all}"
 [[ "$track" =~ ^(stable|development|optional|all)$ ]] || { usage >&2; exit 2; }
 
+regen_srcinfo() {
+    local package_dir="$1"
+    if command -v makepkg >/dev/null 2>&1; then
+        (cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO)
+        return
+    fi
+    command -v docker >/dev/null 2>&1 || {
+        echo 'makepkg or docker is required to regenerate .SRCINFO' >&2
+        exit 1
+    }
+    docker run --rm \
+        --volume "$root:/workspace" \
+        docker.io/library/archlinux:base-devel \
+        bash -c "cd /workspace && cd '${package_dir#"$root/"}' && makepkg --printsrcinfo > .SRCINFO"
+}
+
 fetch_sha256() {
     local url="$1" output="$2"
     if command -v aria2c >/dev/null 2>&1; then
@@ -42,7 +58,7 @@ sync_stable() {
     sed -i -E "s/^pkgver=.*/pkgver=${pkg}/" "$root/packages/mpv-emo/PKGBUILD"
     sed -i -E "s/^sha256sums=\('.*'\)/sha256sums=('${checksum}')/" "$root/packages/mpv-emo/PKGBUILD"
     printf 'MPV_STABLE_TAG=%s\nMPV_STABLE_SHA256=%s\n' "$tag" "$checksum" > "$root/tracks/mpv/stable.env"
-    (cd "$root/packages/mpv-emo" && makepkg --printsrcinfo > .SRCINFO)
+    regen_srcinfo "$root/packages/mpv-emo"
     echo "Stable: ${tag} (${checksum})"
 }
 
@@ -58,7 +74,7 @@ sync_development() {
     sed -i -E "s/#commit=[0-9a-f]+\x27\)/#commit=${commit}')/" "$root/packages/mpv-emo-git/PKGBUILD"
     sed -i -E "s/^pkgver=.*/pkgver=0.0.0.r0.g${short}/" "$root/packages/mpv-emo-git/PKGBUILD"
     printf 'MPV_DEVELOPMENT_COMMIT=%s\nMPV_DEVELOPMENT_FULL_COMMIT=%s\n' "$short" "$commit" > "$root/tracks/mpv/development.env"
-    (cd "$root/packages/mpv-emo-git" && makepkg --printsrcinfo > .SRCINFO)
+    regen_srcinfo "$root/packages/mpv-emo-git"
     echo "Development: master ${commit}"
 }
 
@@ -92,7 +108,7 @@ sync_optional() {
     sed -i -E "s/^_omniphony_tag=.*/_omniphony_tag=${tag}/" "$root/packages/mpv-emo-omniphony/PKGBUILD"
     sed -i -E "s/^sha256sums=.*/sha256sums=('${checksum1}'/" "$root/packages/mpv-emo-omniphony/PKGBUILD"
     sed -i -E "0,/^[[:space:]]+'[0-9a-f]{64}')$/s//            '${checksum2}')/" "$root/packages/mpv-emo-omniphony/PKGBUILD"
-    (cd "$root/packages/mpv-emo-omniphony" && makepkg --printsrcinfo > .SRCINFO)
+    regen_srcinfo "$root/packages/mpv-emo-omniphony"
     printf 'OMNIPHONY_TAG=%s\nOMNIPHONY_MPV=%s\n' "$tag" "$mpvver" > "$root/tracks/mpv/optional.env"
     echo "Optional: Omniphony ${tag} on mpv ${mpvver}"
 }
