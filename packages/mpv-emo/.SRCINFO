@@ -1,7 +1,7 @@
 pkgbase = mpv-emo
 	pkgdesc = Full Linux mpv build with curated core patches
 	pkgver = 0.41.0
-	pkgrel = 1
+	pkgrel = 2
 	url = https://mpv.io/
 	arch = x86_64
 	license = GPL-2.0-or-later
@@ -41,6 +41,7 @@ pkgbase = mpv-emo
 	depends = ffnvcodec-headers
 	depends = libva
 	depends = libx11
+	depends = mujs
 	depends = lcms2
 	depends = libarchive
 	depends = libdvdnav

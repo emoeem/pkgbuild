@@ -1,7 +1,7 @@
 pkgbase = mpv-emo-git
 	pkgdesc = Upstream mpv master with curated core patches
 	pkgver = 0.41.0.r1049.g0b7ed670f
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/mpv-player/mpv
 	arch = x86_64
 	license = GPL-2.0-or-later
@@ -42,6 +42,7 @@ pkgbase = mpv-emo-git
 	depends = ffnvcodec-headers
 	depends = libva
 	depends = libx11
+	depends = mujs
 	depends = lcms2
 	depends = libarchive
 	depends = libdvdnav
