@@ -17,6 +17,7 @@
 | Package | Arch | 说明 |
 | --- | --- | --- |
 | `ffmpeg-full` | `x86_64` | 启用大量编解码器、CUDA 和 Whisper 支持的 FFmpeg |
+| `mpv-full` | `x86_64` | Linux 原生特性完整构建的 mpv-Emo 核心，启用 Vulkan、Wayland、CUDA、VapourSynth 和 PipeWire |
 | `ggml-cuda-git` | `x86_64`, `aarch64` | CUDA 优化的 GGML |
 | `linuxqq-clipsync-git` | `x86_64` | Linux QQ Wayland 剪贴板同步 |
 | `mpeghdec` | `x86_64` | Fraunhofer MPEG-H 解码器 |
