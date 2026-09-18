@@ -1,0 +1,39 @@
+# mpv-Emo Stable — upstream release track.
+# This package is intentionally independent from AUR mpv-full so the update
+# controller can pin official mpv releases and keep our Linux build policy.
+
+pkgname=mpv-emo
+pkgver=0.41.0
+pkgrel=1
+pkgdesc='mpv-Emo stable: upstream mpv with the full Linux feature set'
+arch=('x86_64')
+license=('GPL-2.0-or-later')
+url='https://mpv.io/'
+depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'lua' 'pipewire' 'vapoursynth'
+         'vulkan-icd-loader' 'wayland' 'zimg')
+makedepends=('meson' 'vulkan-headers' 'wayland-protocols' 'ffnvcodec-headers')
+provides=('mpv' 'libmpv.so=2-64')
+conflicts=('mpv' 'mpv-full' 'mpv-emo-git' 'mpv-emo-omniphony')
+source=("mpv-${pkgver}.tar.gz::https://github.com/mpv-player/mpv/archive/v${pkgver}.tar.gz")
+sha256sums=('ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209')
+
+build() {
+    arch-meson "mpv-${pkgver}" build \
+        -Dgpl=true -Dcplayer=true -Dlibmpv=true -Dbuild-date=false \
+        -Dtests=true -Dvulkan=enabled -Dwayland=enabled \
+        -Dcuda-hwaccel=enabled -Dcuda-interop=enabled \
+        -Dvapoursynth=enabled -Dzimg=enabled -Dpipewire=enabled \
+        -Dpulse=enabled -Dalsa=enabled -Djack=enabled \
+        -Ddvdnav=enabled -Dlibbluray=enabled -Dlibavdevice=enabled \
+        -Dlcms2=enabled -Drubberband=enabled -Duchardet=enabled \
+        -Dlibarchive=enabled -Dx11=enabled -Dvaapi=enabled
+    meson compile -C build
+}
+
+check() {
+    meson test -C build --print-errorlogs
+}
+
+package() {
+    meson install -C build --destdir "$pkgdir"
+}

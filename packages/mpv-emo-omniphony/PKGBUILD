@@ -1,0 +1,56 @@
+# mpv-Emo Optional Patch — Omniphony integration.
+# This is deliberately a separate package: it replaces the normal mpv binary
+# and adds the optional ad_orender decoder. The engine is loaded at runtime.
+
+pkgname=mpv-emo-omniphony
+pkgver=0.4.2
+pkgrel=1
+_mpvver=0.41.0
+_omniphony_tag=v0.4.2
+pkgdesc='mpv-Emo with optional Omniphony spatial audio decoder'
+arch=('x86_64')
+license=('GPL-3.0-or-later')
+url='https://github.com/mgth/mpv-omniphony'
+depends=('orender' 'ffmpeg' 'libass' 'libbluray' 'libplacebo' 'lua' 'pipewire'
+         'vapoursynth' 'vulkan-icd-loader' 'wayland' 'zimg')
+makedepends=('meson' 'vulkan-headers' 'wayland-protocols' 'ffnvcodec-headers')
+optdepends=('harletty-bridge: decode compressed/object-audio formats via the orender bridge')
+provides=('mpv' 'libmpv.so=2-64')
+conflicts=('mpv' 'mpv-full' 'mpv-emo' 'mpv-emo-git')
+source=("mpv-${_mpvver}.tar.gz::https://github.com/mpv-player/mpv/archive/v${_mpvver}.tar.gz"
+        "mpv-omniphony-${_omniphony_tag}.tar.gz::https://github.com/mgth/mpv-omniphony/archive/refs/tags/${_omniphony_tag}.tar.gz")
+sha256sums=('ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209'
+            '1b3656c910da7ff6eeb64dc90501acfe45810d6ec218d9fb75f0aff10adf44c4')
+
+prepare() {
+    cd "${srcdir}/mpv-${_mpvver}"
+    shopt -s nullglob
+    local patches=("${srcdir}/mpv-omniphony-${_omniphony_tag#v}"/patches/*.patch)
+    (( ${#patches[@]} > 0 )) || { echo 'Omniphony patch set is empty' >&2; return 1; }
+    for patch_file in "${patches[@]}"; do
+        patch -Np1 < "$patch_file"
+    done
+}
+
+build() {
+    cd "${srcdir}/mpv-${_mpvver}"
+    arch-meson build --auto-features=auto \
+        -Dorender=enabled -Dgpl=true -Dcplayer=true -Dlibmpv=true \
+        -Dbuild-date=false -Dtests=true -Dvulkan=enabled -Dwayland=enabled \
+        -Dcuda-hwaccel=enabled -Dcuda-interop=enabled -Dvapoursynth=enabled \
+        -Dzimg=enabled -Dpipewire=enabled -Dpulse=enabled -Dalsa=enabled
+    meson compile -C build
+}
+
+check() {
+    meson test -C "${srcdir}/mpv-${_mpvver}/build" --print-errorlogs
+}
+
+package() {
+    cd "${srcdir}/mpv-${_mpvver}"
+    meson install -C build --destdir="$pkgdir"
+    install -Dm644 "${srcdir}/mpv-omniphony-${_omniphony_tag#v}/COPYING" \
+        "$pkgdir/usr/share/licenses/$pkgname/COPYING"
+    install -Dm644 "${srcdir}/mpv-omniphony-${_omniphony_tag#v}/THIRD-PARTY-NOTICES.md" \
+        "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY-NOTICES.md"
+}

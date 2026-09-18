@@ -123,6 +123,12 @@ if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
     exit 0
 fi
 
+if [[ "$package_name" == mpv-emo* ]]; then
+    printf 'Running mpv-Emo source/patch compatibility gate...\n'
+    as_builder bash -c \
+        "cd '$package_dir' && makepkg --nobuild --nodeps --cleanbuild --clean --noconfirm"
+fi
+
 printf 'Resolving dependencies, building and installing %s...\n' "$package_name"
 yay_status=0
 as_builder yay -Bi "$package_dir" \

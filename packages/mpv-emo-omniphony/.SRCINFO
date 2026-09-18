@@ -1,0 +1,35 @@
+pkgbase = mpv-emo-omniphony
+	pkgdesc = mpv-Emo with optional Omniphony spatial audio decoder
+	pkgver = 0.4.2
+	pkgrel = 1
+	url = https://github.com/mgth/mpv-omniphony
+	arch = x86_64
+	license = GPL-3.0-or-later
+	makedepends = meson
+	makedepends = vulkan-headers
+	makedepends = wayland-protocols
+	makedepends = ffnvcodec-headers
+	depends = orender
+	depends = ffmpeg
+	depends = libass
+	depends = libbluray
+	depends = libplacebo
+	depends = lua
+	depends = pipewire
+	depends = vapoursynth
+	depends = vulkan-icd-loader
+	depends = wayland
+	depends = zimg
+	optdepends = harletty-bridge: decode compressed/object-audio formats via the orender bridge
+	provides = mpv
+	provides = libmpv.so=2-64
+	conflicts = mpv
+	conflicts = mpv-full
+	conflicts = mpv-emo
+	conflicts = mpv-emo-git
+	source = mpv-0.41.0.tar.gz::https://github.com/mpv-player/mpv/archive/v0.41.0.tar.gz
+	source = mpv-omniphony-v0.4.2.tar.gz::https://github.com/mgth/mpv-omniphony/archive/refs/tags/v0.4.2.tar.gz
+	sha256sums = ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
+	sha256sums = 1b3656c910da7ff6eeb64dc90501acfe45810d6ec218d9fb75f0aff10adf44c4
+
+pkgname = mpv-emo-omniphony

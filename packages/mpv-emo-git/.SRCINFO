@@ -1,0 +1,32 @@
+pkgbase = mpv-emo-git
+	pkgdesc = mpv-Emo development: upstream mpv master with Linux features
+	pkgver = 0.41.0.r1049.g0b7ed670f
+	pkgrel = 1
+	url = https://github.com/mpv-player/mpv
+	arch = x86_64
+	license = GPL-2.0-or-later
+	makedepends = git
+	makedepends = meson
+	makedepends = vulkan-headers
+	makedepends = wayland-protocols
+	makedepends = ffnvcodec-headers
+	depends = ffmpeg
+	depends = libass
+	depends = libbluray
+	depends = libplacebo
+	depends = lua
+	depends = pipewire
+	depends = vapoursynth
+	depends = vulkan-icd-loader
+	depends = wayland
+	depends = zimg
+	provides = mpv
+	provides = libmpv.so=2-64
+	conflicts = mpv
+	conflicts = mpv-full
+	conflicts = mpv-emo
+	conflicts = mpv-emo-omniphony
+	source = mpv::git+https://github.com/mpv-player/mpv.git#commit=0b7ed670f7c353dd3dd4f8ae0fc788a181a15aa6
+	sha256sums = SKIP
+
+pkgname = mpv-emo-git
