@@ -2,6 +2,11 @@ name: Check Arch packages
 
 on:
   workflow_dispatch:
+    inputs:
+      packages:
+        description: "Comma-separated package names to validate"
+        required: true
+        type: string
   pull_request:
   push:
     branches:
@@ -36,12 +41,17 @@ jobs:
           AFTER_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            before="${{ github.event.pull_request.base.sha }}"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            selection="${{ inputs.packages }}"
+            packages="$(python scripts/select-packages.py --selection "$selection")"
           else
-            before="$BEFORE_SHA"
+            if [[ "$EVENT_NAME" == "pull_request" ]]; then
+              before="${{ github.event.pull_request.base.sha }}"
+            else
+              before="$BEFORE_SHA"
+            fi
+            packages="$(python scripts/select-packages.py --selection changed --before "$before" --after "$AFTER_SHA")"
           fi
-          packages="$(python scripts/select-packages.py --selection changed --before "$before" --after "$AFTER_SHA")"
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
 
   integration:
