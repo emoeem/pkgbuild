@@ -18,7 +18,7 @@ readonly source_dir="${workspace_dir}/packages/${package_name}"
 readonly package_dir="${build_root}/${package_name}"
 readonly package_remote="${build_root}/${package_name}-origin.git"
 
-make_jobs="${MAKE_JOBS:-2}"
+make_jobs="${MAKE_JOBS:-$(nproc)}"
 if [[ ! "$make_jobs" =~ ^[1-9][0-9]*$ ]]; then
     printf 'MAKE_JOBS must be a positive integer, got: %s\n' "$make_jobs" >&2
     exit 2
@@ -34,7 +34,7 @@ printf 'Building %s with %s parallel job(s).\n' "$package_name" "$make_jobs"
 if [[ "$prepared_image" != "1" ]]; then
     printf 'Bootstrapping build container repositories and tools...\n'
     "${workspace_dir}/scripts/setup-build-repositories.sh"
-    pacman -Syu --needed --noconfirm git gnupg sudo curl jq namcap
+    pacman -Syu --needed --noconfirm aria2 base-devel git gnupg sudo curl jq namcap
 fi
 
 if ! id builder >/dev/null 2>&1; then
