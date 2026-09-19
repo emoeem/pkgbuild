@@ -3,7 +3,7 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前维护 14 个 package base，其中 mpv-Emo 维护 Stable / Development 两条构建轨道；核心 Patch（当前为 Omniphony mpv-side integration）直接进入 mpv-Emo 核心构建。
+当前维护 12 个 package base。
 
 ## Features
 
@@ -20,8 +20,6 @@
 | Package | Arch | 说明 |
 | --- | --- | --- |
 | `ffmpeg-full` | `x86_64` | 启用大量编解码器、CUDA 和 Whisper 支持的 FFmpeg |
-| `mpv-emo` | `x86_64` | Stable：mpv-full 级 Linux 全功能构建 + 已验证核心 Patch（当前含 Omniphony mpv-side integration） |
-| `mpv-emo-git` | `x86_64` | Development：upstream master + 对应核心 Patch series，固定具体 commit |
 | `ggml-cuda-git` | `x86_64`, `aarch64` | CUDA 优化的 GGML |
 | `linuxqq-clipsync-git` | `x86_64` | Linux QQ Wayland 剪贴板同步 |
 | `llama.cpp-cuda` | `x86_64` | CUDA 优化的 llama.cpp stable 构建 |
@@ -69,24 +67,13 @@ PKGBUILD 重新构建，不会直接安装同名预编译包。
 
 ## 自动更新
 
-mpv-Emo 不再依赖 AUR 同步来决定 mpv 的版本，而是由独立的轨道控制器维护：
+**Sync AUR package sources** 工作流每天 `03:17 UTC` 检查一次所有带
+`.aur-url` 的包目录。AUR 脚本发生变化时，它会更新对应的 PKGBUILD、
+`.SRCINFO`、补丁和其他源文件，提交变化到 `main`，并触发对应软件包构建。
 
-1. **Stable**：发现新的 mpv 正式 release，更新 `packages/mpv-emo`，并保持
-   当前经过验证的核心 Patch series。
-2. **Development**：读取 upstream `master` 的最新 commit，更新
-   `packages/mpv-emo-git`；只有对应 Patch series 能完整应用时才允许发布。
-3. **Core Patch**：Omniphony 等真正修改 mpv 核心的扩展进入 `src/patches/`，
-   不再作为第二个 mpv 软件包安装。
-4. 每次更新先验证 Patch 顺序、重新生成 `.SRCINFO` 并运行 package checks。
-5. CI 构建成功后才更新 `repo` Release；任何补丁冲突或构建失败都会阻止
-   对应轨道发布。
-
-`Sync mpv-Emo tracks` 工作流每天 `02:47 UTC` 检查 Stable / Development，
-也可以在 Actions 页面手动选择轨道。
-
-原有 **Sync AUR package sources** 继续负责其他 AUR-managed 软件包；它
-不会覆盖 mpv-Emo 的核心 Patch。**Maintenance** 工作流继续负责 Artifact
-清理和 soname 依赖检查。
+**Maintenance** 工作流每天 `16:17 UTC` 运行：清理过期 Artifact，并把已
+发布软件包记录的 soname 依赖与当前各仓库比对，发现依赖过时就自动触发
+对应软件包重建。
 
 ## 添加 AUR 软件包
 
@@ -258,7 +245,7 @@ Docker 的 Linux 自托管 runner。
 当前仓库已完成一轮五阶段维护优化：
 
 1. **AUR / Overlay**：AUR 同步改为事务式 staging，先验证上游、overlay、PKGBUILD 和 `.SRCINFO`，再替换工作区，避免失败同步破坏现有包。
-2. **PKGBUILD 审计**：`scripts/audit-packages.sh` 对 14 个有效 package base 做元数据、架构、AUR 元数据以及 provider / dependency 一致性审计。
+2. **PKGBUILD 审计**：`scripts/audit-packages.sh` 对 12 个有效 package base 做元数据、架构、AUR 元数据以及 provider / dependency 一致性审计。
 3. **构建缓存**：CI 复用 pacman、VCS source 和 Cargo 缓存，并让 builder / build 脚本变化自动失效对应缓存。
 4. **Repository 完整性**：发布前运行 `scripts/verify-repository.sh`，校验数据库引用、软件包资产、SHA256 和仓库配置。
 5. **管理与文档**：TUI 增加「审计全部软件包」，构建流水线文档同步记录实际维护流程。

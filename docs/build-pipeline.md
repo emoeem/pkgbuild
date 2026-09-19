@@ -49,7 +49,6 @@
 - GitHub 仓库与当前分支
 - 工作区状态
 - 托管 package 数量与 AUR package 数量
-- mpv Stable tag 与 Development commit
 - 最近一次 Actions 状态
 - 当前运行中的 Actions 数量
 - 最近失败的 Actions 数量
@@ -102,7 +101,7 @@ GitHub Actions 使用 `actions/cache` 恢复 `.cache/pkgbuild`，缓存 key 按 
 
 Builder 同时启用官方 Chaotic-AUR 二进制仓库作为 AUR 依赖的预编译补充来源。这样 `ffmpeg-full` 等大型包不需要重复编译所有 AUR 依赖；本次验证中原先会进入 AUR 构建队列的 24 个依赖收敛到仅 4 个仍需从 AUR 构建。Chaotic-AUR 仅作为依赖来源，不替代 CachyOS-v3 基线，也不替代目标 package 自身构建。
 
-CI 根据 package 名称选择 CUDA builder；`ffmpeg-full`、`mpv-emo`、`mpv-emo-git` 和名称包含 `cuda` 的 package 使用 CUDA builder。CUDA builder 同时安装 `gcc15`，因为当前 CUDA 13.4 的 `nvcc` 会选择 GCC 15 作为 host compiler；本地验证要求 `nvcc`、`g++-15` 和 `cuda` package 可用。
+CI 根据 package 名称选择 CUDA builder；`ffmpeg-full` 和名称包含 `cuda` 的 package 使用 CUDA builder。CUDA builder 同时安装 `gcc15`，因为当前 CUDA 13.4 的 `nvcc` 会选择 GCC 15 作为 host compiler；本地验证要求 `nvcc`、`g++-15` 和 `cuda` package 可用。
 
 ### 环境一致性测试
 
@@ -119,11 +118,11 @@ Builder 通过 `/etc/makepkg.conf.d/pkgbuild-aria2.conf` 为 HTTP/HTTPS/FTP sour
 
 `sync-aur-packages.sh` 现在采用事务式同步：先在临时目录克隆 AUR、写入提交指纹、应用 overlay、重新生成 `.SRCINFO` 并通过 Bash 语法检查；全部通过后才替换工作区中的 package 目录。这样上游更新或 overlay 失败不会破坏现有可用 PKGBUILD。
 
-`.aur-url` 与 `.aur-commit` 继续记录上游身份和同步点。mpv-Emo 使用独立的 Stable / Development track，不被普通 AUR 同步覆盖。
+`.aur-url` 与 `.aur-commit` 继续记录上游身份和同步点。
 
 ### Phase 2：全量 PKGBUILD 审计
 
-新增 `scripts/audit-packages.sh`，对当前 14 个有效 PKGBUILD 做全量元数据、`.SRCINFO`、架构、AUR 元数据和内部 provider / dependency 检查。对于 Stable / Git、CUDA、mpv 等有意提供同一虚拟包的替代包，只有存在明确冲突关系时才允许共享 provider。
+新增 `scripts/audit-packages.sh`，对当前 12 个有效 PKGBUILD 做全量元数据、`.SRCINFO`、架构、AUR 元数据和内部 provider / dependency 检查。对于 Stable / Git、CUDA 等有意提供同一虚拟包的替代包，只有存在明确冲突关系时才允许共享 provider。
 
 新增 `tests/test-package-audit.sh` 回归测试，并把全量审计加入 `check.yml` 的 integration job。管理 TUI 也新增「审计全部软件包」入口。
 

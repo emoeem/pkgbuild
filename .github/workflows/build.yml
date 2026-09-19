@@ -111,7 +111,7 @@ jobs:
           PACKAGE_NAME: ${{ matrix.package }}
         run: |
           set -Eeuo pipefail
-          if [[ "$PACKAGE_NAME" == *cuda* || "$PACKAGE_NAME" == "ffmpeg-full" || "$PACKAGE_NAME" == "mpv-emo" || "$PACKAGE_NAME" == "mpv-emo-git" ]]; then
+          if [[ "$PACKAGE_NAME" == *cuda* || "$PACKAGE_NAME" == "ffmpeg-full" ]]; then
             echo "flavor=cuda" >> "$GITHUB_OUTPUT"
           else
             echo "flavor=standard" >> "$GITHUB_OUTPUT"
@@ -132,7 +132,7 @@ jobs:
           PACKAGE_NAME: ${{ matrix.package }}
         run: |
           set -Eeuo pipefail
-          if [[ "$PACKAGE_NAME" == *cuda* || "$PACKAGE_NAME" == "ffmpeg-full" || "$PACKAGE_NAME" == "mpv-emo" || "$PACKAGE_NAME" == "mpv-emo-git" ]]; then
+          if [[ "$PACKAGE_NAME" == *cuda* || "$PACKAGE_NAME" == "ffmpeg-full" ]]; then
             BUILDER_IMAGE="ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:cuda"
             build_arg=1
           else

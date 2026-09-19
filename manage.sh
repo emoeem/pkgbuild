@@ -713,16 +713,13 @@ show_recent_actions() {
 }
 
 show_dashboard() {
-    local branch package_count aur_count dirty mpv_stable mpv_development
+    local branch package_count aur_count dirty
     local recent="-" running="-" failed="-"
 
     branch="$(git -C "$repo_root" branch --show-current)"
     package_count="$(managed_packages | wc -l)"
     aur_count="$(aur_package_records | wc -l)"
     if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then dirty='有未提交修改'; else dirty='工作区干净'; fi
-    mpv_stable="$(awk -F= '/^MPV_STABLE_TAG=/{print $2}' "$repo_root/tracks/mpv/stable.env" 2>/dev/null || true)"
-    mpv_development="$(awk -F= '/^MPV_DEVELOPMENT_FULL_COMMIT=/{print substr($2,1,9)}' "$repo_root/tracks/mpv/development.env" 2>/dev/null || true)"
-
     if command -v gh >/dev/null 2>&1 && gh auth token >/dev/null 2>&1; then
         recent="$(gh run list --repo "$github_repository" --limit 1 --json status,conclusion --jq '.[0] | (.conclusion // .status)' 2>/dev/null || echo '-')"
         running="$(gh run list --repo "$github_repository" --limit 30 --json status --jq '[.[] | select(.status != "completed")] | length' 2>/dev/null || echo '-')"
@@ -736,8 +733,6 @@ show_dashboard() {
     printf '│ 工作区       %-46s │\n' "$dirty"
     printf '│ 软件包       %-46s │\n' "$package_count"
     printf '│ AUR 管理     %-46s │\n' "$aur_count"
-    printf '│ mpv Stable   %-46s │\n' "${mpv_stable:--}"
-    printf '│ mpv Dev      %-46s │\n' "${mpv_development:--}"
     printf '│ 最近 Actions %-46s │\n' "$recent"
     printf '│ 运行中       %-46s │\n' "$running"
     printf '│ 最近失败     %-46s │\n' "$failed"
