@@ -7,7 +7,7 @@ import urllib.request
 from pathlib import Path
 
 AUR_URL = "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=mpv-full"
-UPSTREAM_URL = "https://raw.githubusercontent.com/mpv-player/mpv/master/meson.options"
+UPSTREAM_URL = "https://raw.githubusercontent.com/mpv-player/mpv/v{ref}/meson.options"
 PROVIDER_EQUIVALENTS = {"jack": {"jack", "pipewire-jack"}}
 # Current upstream options intentionally outside the Linux mpv-full baseline.
 # CI fails when a new upstream option appears outside this reviewed set.
@@ -20,6 +20,12 @@ def fetch(url):
     req = urllib.request.Request(url, headers={"User-Agent": "pkgbuild-mpv-full-audit/1.0"})
     with urllib.request.urlopen(req, timeout=20) as response:
         return response.read().decode()
+
+def aur_pkgver(text):
+    match = re.search(r"^pkgver=([^\n]+)", text, re.M)
+    if not match:
+        raise ValueError("Unable to determine mpv-full pkgver")
+    return match.group(1).strip()
 
 def parse_deps(text):
     match = re.search(r"^depends=\((.*?)\)", text, re.M | re.S)
@@ -44,7 +50,7 @@ def main():
 
     local_text = Path(args.package).read_text()
     aur_text = Path(args.aur_pkgbuild).read_text() if args.aur_pkgbuild else fetch(AUR_URL)
-    upstream_text = Path(args.upstream_options).read_text() if args.upstream_options else fetch(UPSTREAM_URL)
+    upstream_text = Path(args.upstream_options).read_text() if args.upstream_options else fetch(UPSTREAM_URL.format(ref=aur_pkgver(aur_text)))
 
     local_deps, aur_deps = parse_deps(local_text), parse_deps(aur_text)
     local_opts, aur_opts = parse_d_options(local_text), parse_d_options(aur_text)
@@ -81,6 +87,7 @@ def main():
         for dep in extras:
             print(f"EXTRA    {dep}")
 
+    # An option is represented when either baseline explicitly mentions it, including an intentional disabled value such as mpv-fulls subrandr=disabled.
     unseen = sorted((upstream_opts - set(aur_opts) - set(local_opts)) - KNOWN_UNREPRESENTED_UPSTREAM)
     if unseen:
         print()

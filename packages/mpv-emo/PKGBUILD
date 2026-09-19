@@ -74,7 +74,7 @@ build() {
         -Dtests=true -Dfuzzers=false -Dwin32-threads=disabled -Dlua=auto \
         -Dcdda=enabled -Dcplugins=enabled -Ddvbin=enabled -Ddvdnav=enabled -Diconv=enabled \
         -Djavascript=enabled -Dlcms2=enabled -Dlibarchive=enabled -Dlibavdevice=enabled -Dlibbluray=enabled \
-        -Dpthread-debug=disabled -Drubberband=enabled -Dsdl2-gamepad=enabled -Dsubrandr=disabled \
+        -Dpthread-debug=disabled -Drubberband=enabled -Dsdl2-gamepad=enabled \
         -Duchardet=enabled -Duwp=disabled -Dvapoursynth=enabled -Dvector=enabled -Dx11-clipboard=enabled \
         -Dzimg=enabled -Dzlib=enabled \
         -Dalsa=enabled -Daudiounit=disabled -Dcoreaudio=disabled -Davfoundation=disabled \
