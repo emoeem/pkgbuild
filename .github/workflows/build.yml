@@ -149,7 +149,7 @@ jobs:
             BUILDER_IMAGE="ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest"
             build_arg=0
           fi
-          if docker pull "$BUILDER_IMAGE"; then
+          if timeout --signal=TERM --kill-after=30s 8m docker pull "$BUILDER_IMAGE"; then
             echo "image=$BUILDER_IMAGE" >> "$GITHUB_OUTPUT"
             exit 0
           fi
