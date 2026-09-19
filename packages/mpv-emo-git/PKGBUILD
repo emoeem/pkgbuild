@@ -10,10 +10,10 @@ arch=('x86_64')
 license=('GPL-2.0-or-later')
 url='https://github.com/mpv-player/mpv'
 depends=(
-    "ffmpeg" "gcc-libs" "glibc" "hicolor-icon-theme" "desktop-file-utils" "alsa-lib" "jack" "lcms2" "libarchive" "libass" "libbluray"
+    "ffmpeg" "gcc-libs" "glibc" "hicolor-icon-theme" "desktop-file-utils" "alsa-lib" "pipewire-jack" "lcms2" "libarchive" "libass" "libbluray"
     "libcaca" "libcdio" "libcdio-paranoia" "libdisplay-info" "libdrm" "libdvdnav" "libdvdread" "libegl" "libgl" "libglvnd"
     "libjpeg-turbo" "libpipewire" "libplacebo" "libpulse" "libsixel" "libva" "libvdpau" "libx11" "libxext"
-    "libxfixes" "libxkbcommon" "libxpresent" "libxrandr" "libxss" "libxv" "luajit" "mesa" "mujs" "openal"
+    "libxfixes" "libxkbcommon" "libxpresent" "libxrandr" "libxss" "libxv" "lua52" "mesa" "mujs" "openal"
     "rubberband" "sdl2" "sh" "sndio" "uchardet" "vapoursynth" "vulkan-icd-loader" "wayland" "zimg" "zlib"
 )
 optdepends=(
