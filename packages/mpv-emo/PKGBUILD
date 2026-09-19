@@ -5,16 +5,27 @@
 
 pkgname=mpv-emo
 pkgver=0.41.0
-pkgrel=2
+pkgrel=3
 pkgdesc='Full Linux mpv build with curated core patches'
 arch=('x86_64')
 license=('GPL-2.0-or-later')
 url='https://mpv.io/'
-depends=('ffmpeg' 'libass' 'libbluray' 'libplacebo' 'luajit' 'pipewire' 'vapoursynth' 'libxkbcommon' 'libxss' 'libxext' 'libxpresent' 'libxrandr' 'libxv'
-         'vulkan-icd-loader' 'wayland' 'wayland-protocols' 'zimg' 'alsa-lib' 'jack2' 'libpulse' 'libpipewire' 'sndio' 'libjpeg-turbo' 'libvdpau' 'libxfixes' 'libglvnd' 'libdrm' 'hicolor-icon-theme' 'zlib-ng-compat' 'ffnvcodec-headers'
-         'libva' 'libx11' 'mujs' 'lcms2' 'libarchive' 'libdvdnav' 'rubberband' 'uchardet')
-optdepends=('orender: enable the bundled Omniphony spatial-audio decoder at runtime')
-makedepends=('meson' 'vulkan-headers' 'wayland-protocols' 'ffnvcodec-headers')
+depends=(
+    "ffmpeg" "gcc-libs" "glibc" "hicolor-icon-theme" "desktop-file-utils" "alsa-lib" "jack" "lcms2" "libarchive" "libass" "libbluray"
+    "libcaca" "libcdio" "libcdio-paranoia" "libdisplay-info" "libdrm" "libdvdnav" "libdvdread" "libegl" "libgl" "libglvnd"
+    "libjpeg-turbo" "libpipewire" "libplacebo" "libpulse" "libsixel" "libva" "libvdpau" "libx11" "libxext"
+    "libxfixes" "libxkbcommon" "libxpresent" "libxrandr" "libxss" "libxv" "luajit" "mesa" "mujs" "openal"
+    "rubberband" "sdl2" "sh" "sndio" "uchardet" "vapoursynth" "vulkan-icd-loader" "wayland" "zimg" "zlib"
+)
+optdepends=(
+    'orender: enable the bundled Omniphony spatial-audio decoder at runtime'
+    'nvidia-utils: hardware accelerated video decoding with CUDA'
+    'python: stats-conv and umpv scripts'
+    'python-pyqt6: stats-conv script'
+    'python-pyqtgraph: stats-conv script'
+    'yt-dlp: video-sharing websites playback'
+)
+makedepends=("meson" "python-docutils" "vulkan-headers" "wayland-protocols" "ffnvcodec-headers" "ladspa")
 provides=('mpv' 'libmpv.so=2-64')
 conflicts=('mpv' 'mpv-full' 'mpv-emo-git')
 source=("mpv-${pkgver}.tar.gz::https://github.com/mpv-player/mpv/archive/v${pkgver}.tar.gz" *.patch)
@@ -60,13 +71,25 @@ build() {
         --prefix /usr --libexecdir lib --sbindir bin --buildtype plain \
         --auto-features=auto --wrap-mode nodownload -D b_pie=true -D python.bytecompile=1 \
         -Dgpl=true -Dcplayer=true -Dlibmpv=true -Dbuild-date=false \
-        -Dtests=true -Dwin32-threads=disabled -Dlua=luajit -Dorender=enabled -Dvulkan=enabled -Dwayland=enabled \
-        -Dcuda-hwaccel=enabled -Dcuda-interop=enabled -Djavascript=enabled \
-        -Dvapoursynth=enabled -Dzimg=enabled -Dpipewire=enabled \
-        -Dpulse=enabled -Dalsa=enabled -Djack=enabled \
-        -Ddvdnav=enabled -Dlibbluray=enabled -Dlibavdevice=enabled \
-        -Dlcms2=enabled -Drubberband=enabled -Duchardet=enabled \
-        -Dlibarchive=enabled -Dx11=enabled -Dvaapi=enabled
+        -Dtests=true -Dfuzzers=false -Dwin32-threads=disabled -Dlua=auto \
+        -Dcdda=enabled -Dcplugins=enabled -Ddvbin=enabled -Ddvdnav=enabled -Diconv=enabled \
+        -Djavascript=enabled -Dlcms2=enabled -Dlibarchive=enabled -Dlibavdevice=enabled -Dlibbluray=enabled \
+        -Dpthread-debug=disabled -Drubberband=enabled -Dsdl2-gamepad=enabled -Dsubrandr=disabled \
+        -Duchardet=enabled -Duwp=disabled -Dvapoursynth=enabled -Dvector=enabled -Dx11-clipboard=enabled \
+        -Dzimg=enabled -Dzlib=enabled \
+        -Dalsa=enabled -Daudiounit=disabled -Dcoreaudio=disabled -Davfoundation=disabled \
+        -Djack=enabled -Dopenal=enabled -Daudiotrack=disabled -Daaudio=disabled -Dopensles=disabled \
+        -Doss-audio=disabled -Dpipewire=enabled -Dpulse=enabled -Dsdl2-audio=enabled -Dsndio=enabled -Dwasapi=disabled \
+        -Damf=disabled -Dcaca=enabled -Dcocoa=disabled -Dd3d11=disabled -Ddirect3d=disabled \
+        -Ddmabuf-wayland=enabled -Ddrm=enabled -Degl=enabled -Degl-android=disabled -Degl-angle=disabled \
+        -Degl-angle-lib=disabled -Degl-angle-win32=disabled -Degl-drm=enabled -Degl-wayland=enabled -Degl-x11=enabled \
+        -Dgbm=enabled -Dgl=enabled -Dgl-cocoa=disabled -Dgl-dxinterop=disabled -Dgl-win32=disabled -Dgl-x11=enabled \
+        -Djpeg=enabled -Dsdl2-video=enabled -Dshaderc=disabled -Dsixel=enabled -Dspirv-cross=disabled -Dplain-gl=enabled \
+        -Dvdpau=enabled -Dvdpau-gl-x11=enabled -Dvaapi=enabled -Dvaapi-drm=enabled -Dvaapi-wayland=enabled \
+        -Dvaapi-win32=disabled -Dvaapi-x11=enabled -Dvulkan=enabled -Dwayland=enabled -Dx11=enabled -Dxv=enabled \
+        -Dandroid-media-ndk=disabled -Dcuda-hwaccel=enabled -Dcuda-interop=enabled -Dd3d-hwaccel=disabled \
+        -Dd3d9-hwaccel=disabled -Dgl-dxinterop-d3d9=disabled -Dios-gl=disabled -Dvideotoolbox-gl=disabled -Dvideotoolbox-pl=disabled \
+        -Dhtml-build=disabled -Dmanpage-build=enabled -Dpdf-build=disabled
     meson compile -C build
 }
 
@@ -78,4 +101,7 @@ check() {
 package() {
     cd "${srcdir}/mpv-${pkgver}"
     meson install -C build --destdir "$pkgdir"
+    install -D -m644 mpv/DOCS/{encoding.rst,tech-overview.txt} "${pkgdir}/usr/share/doc/mpv"
+    install -D -m644 mpv/TOOLS/{umpv,mpv_identify.sh,stats-conv.py,idet.sh,lua/*} -t "${pkgdir}/usr/share/mpv/scripts"
+    sed -i -e '/Requires.private/d' -e '/Libs.private/d' "${pkgdir}/usr/lib/pkgconfig/mpv.pc"
 }
