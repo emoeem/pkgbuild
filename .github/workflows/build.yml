@@ -92,20 +92,10 @@ jobs:
       - name: Validate package files
         run: ./scripts/check-package.sh "${{ matrix.package }}"
 
-      - name: Reclaim runner disk space
+      - name: Check runner disk space
         if: runner.environment == 'github-hosted'
         shell: bash
-        run: |
-          set -Eeuo pipefail
-          df -h /
-          sudo rm -rf \
-            /opt/ghc \
-            /opt/hostedtoolcache \
-            /usr/local/lib/android \
-            /usr/local/share/boost \
-            /usr/share/dotnet
-          docker system prune --all --force
-          df -h /
+        run: df -h /
 
       - name: Authenticate to GHCR
         uses: docker/login-action@v3
