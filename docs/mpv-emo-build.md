@@ -67,7 +67,6 @@ Linux 构建目标禁用。JavaScript/MuJS、VapourSynth、CUDA、VA-API、Vulka
 Wayland、X11、Sixel、CACA、SDL2、OpenAL、sndio、PipeWire、PulseAudio 等
 功能均显式管理，避免依赖环境变化导致功能静默缺失。
 
-JACK 是唯一的特殊依赖策略：`mpv-Emo` 编译时启用 `-Djack=enabled`，运行时声明
-虚拟依赖 `jack`，不直接依赖 `jack2` 或 `pipewire-jack`。在当前 CachyOS
-系统中，`pipewire-jack` 提供 `jack`/`libjack` 接口，因此 pacman 会继续使用
-现有的 PipeWire JACK 实现，而不会为了安装 `mpv-Emo` 把它替换成 JACK2。
+JACK 是唯一的特殊依赖策略：`mpv-Emo` 编译时启用 `-Djack=enabled`，运行时直接声明
+`pipewire-jack`，不引入 JACK2。Arch 的 `pipewire-jack` 提供 `jack`、`libjack.so`
+等兼容接口，因此仍满足 mpv 的 JACK 构建需求，同时明确保持 PipeWire 音频栈。

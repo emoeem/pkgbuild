@@ -1,0 +1,21 @@
+name: Audit mpv-full baseline
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Compare mpv-emo with current AUR mpv-full
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Audit mpv-full feature and dependency baseline
+        run: python scripts/audit-mpv-full-baseline.py
+      - name: Run baseline regression test
+        run: python tests/test-mpv-full-baseline.py
