@@ -58,3 +58,16 @@ Patch application 是硬门槛：任意一个 Patch 无法应用，构建直接�
 Stable `v0.41.0` 的 24 个 Omniphony Patch 已在干净 mpv `v0.41.0` 源码树中
 按顺序全部应用成功。Development 的 master Patch series 必须以其对应的
 upstream 基线重新生成；当前若发生 drift，CI 应保持失败而不是强行发布。
+
+## mpv-full 基线与 PipeWire JACK 策略
+
+`mpv-Emo` 的功能策略以当前 AUR `mpv-full` 为基线：尽量开启 Linux 可用的
+mpv 功能，再叠加 Emo Patch；平台专属的 macOS/Windows/Android 路径继续按
+Linux 构建目标禁用。JavaScript/MuJS、VapourSynth、CUDA、VA-API、Vulkan、
+Wayland、X11、Sixel、CACA、SDL2、OpenAL、sndio、PipeWire、PulseAudio 等
+功能均显式管理，避免依赖环境变化导致功能静默缺失。
+
+JACK 是唯一的特殊依赖策略：`mpv-Emo` 编译时启用 `-Djack=enabled`，但运行时
+依赖固定为 `pipewire-jack`，不依赖 `jack2`。PipeWire 官方 JACK 兼容层提供
+`jack`/`libjack` 接口，因此 mpv 的 JACK 输出能力仍然保留，同时不会为了安装
+`mpv-Emo` 把用户现有的 PipeWire JACK 实现替换成 JACK2。
