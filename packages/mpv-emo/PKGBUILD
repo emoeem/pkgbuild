@@ -80,7 +80,7 @@ build() {
         -Dalsa=enabled -Daudiounit=disabled -Dcoreaudio=disabled -Davfoundation=disabled \
         -Djack=enabled -Dopenal=enabled -Daudiotrack=disabled -Daaudio=disabled -Dopensles=disabled \
         -Doss-audio=disabled -Dpipewire=enabled -Dpulse=enabled -Dsdl2-audio=enabled -Dsndio=enabled -Dwasapi=disabled \
-        -Damf=disabled -Dcaca=enabled -Dcocoa=disabled -Dd3d11=disabled -Ddirect3d=disabled \
+        -Dcaca=enabled -Dcocoa=disabled -Dd3d11=disabled -Ddirect3d=disabled \
         -Ddmabuf-wayland=enabled -Ddrm=enabled -Degl=enabled -Degl-android=disabled -Degl-angle=disabled \
         -Degl-angle-lib=disabled -Degl-angle-win32=disabled -Degl-drm=enabled -Degl-wayland=enabled -Degl-x11=enabled \
         -Dgbm=enabled -Dgl=enabled -Dgl-cocoa=disabled -Dgl-dxinterop=disabled -Dgl-win32=disabled -Dgl-x11=enabled \
