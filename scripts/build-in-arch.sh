@@ -35,8 +35,8 @@ fi
 
 printf 'Building %s with %s parallel job(s).\n' "$package_name" "$make_jobs"
 if [[ "$prepared_image" == "1" ]]; then
-mkdir -p "$pacman_cache_dir" "$source_cache_dir" "$cargo_cache_dir/registry" "$cargo_cache_dir/git" "$cargo_cache_dir/bin"
-chown -R builder:builder "$cargo_cache_dir"
+mkdir -p "$pacman_cache_dir" "$source_cache_dir" "$cargo_cache_dir/registry" "$cargo_cache_dir/git" "$cargo_cache_dir/bin" "$cache_dir/yay"
+chown -R builder:builder "$cargo_cache_dir" "$cache_dir/yay"
 sed -i "/^CacheDir = /d" /etc/pacman.conf
 sed -i "/^\[options\]$/a CacheDir = $pacman_cache_dir" /etc/pacman.conf
 chown builder:builder "$source_cache_dir"
