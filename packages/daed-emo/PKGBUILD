@@ -1,5 +1,5 @@
 # Maintainer: emoeem
-pkgname=daed-avx2-bin
+pkgname=daed-emo
 pkgver=1.27.0.r0.gunknown
 pkgrel=1
 pkgdesc='Modern web dashboard for dae (current upstream, x86-64-v3/AVX2 build)'

@@ -1,4 +1,4 @@
-pkgbase = daed-avx2-bin
+pkgbase = daed-emo
 	pkgdesc = Modern web dashboard for dae (current upstream, x86-64-v3/AVX2 build)
 	pkgver = 1.27.0.r0.gunknown
 	pkgrel = 1
@@ -20,4 +20,4 @@ pkgbase = daed-avx2-bin
 	source = git+https://github.com/daeuniverse/daed.git
 	sha256sums = SKIP
 
-pkgname = daed-avx2-bin
+pkgname = daed-emo
