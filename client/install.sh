@@ -8,7 +8,7 @@
 #   PKGBUILD_GITHUB_REPOSITORY  GitHub owner/name，默认 emoeem/pkgbuild
 #   PACMAN_REPOSITORY           pacman 仓库名，默认 emoeem
 #   RELEASE_TAG                 滚动发布 tag，默认 repo
-#   GITHUB_PROXY                GitHub 加速通道前缀，默认 https://gh-proxy.com；
+#   GITHUB_PROXY                GitHub 加速通道前缀；默认为空（直连 GitHub），
 #                               设为空字符串可跳过加速通道（直连 GitHub）
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ if [[ ! "$github_repository" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
     exit 2
 fi
 
-github_proxy="${GITHUB_PROXY:-https://gh-proxy.com}"
+github_proxy="${GITHUB_PROXY:-}"
 github_proxy="${github_proxy%/}"
 server_url="https://github.com/${github_repository}/releases/download/${release_tag}"
 server_url_proxy=""
