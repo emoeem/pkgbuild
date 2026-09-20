@@ -17,6 +17,8 @@ pkgbase = daed-emo
 	provides = daed
 	conflicts = daed
 	conflicts = daed-git
+	conflicts = daed-avx2-bin
+	replaces = daed-avx2-bin
 	source = git+https://github.com/daeuniverse/daed.git
 	sha256sums = SKIP
 
