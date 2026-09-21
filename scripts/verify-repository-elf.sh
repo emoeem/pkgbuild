@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-repository_dir="\${1:?usage: verify-repository-elf.sh <repository-dir>}"
+repository_dir="${1:?usage: verify-repository-elf.sh <repository-dir>}"
 [[ -d "$repository_dir" ]] || exit 2
 
 failures=0
@@ -17,7 +17,7 @@ mapfile -t package_files < <(
   find "$repository_dir" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print | sort
 )
 
-for package_file in "\${package_files[@]}"; do
+for package_file in "${package_files[@]}"; do
   pkgname="$(bsdtar -xOf "$package_file" .PKGINFO |
     awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
   [[ -n "$pkgname" ]] || { fail "missing pkgname: $package_file"; continue; }
@@ -27,9 +27,9 @@ for package_file in "\${package_files[@]}"; do
   while IFS= read -r -d '' elf; do
     while IFS= read -r soname; do
       [[ -n "$soname" ]] || continue
-      if [[ -n "\${soname_owner[$soname]:-}" &&
-            "\${soname_owner[$soname]}" != "$pkgname" ]]; then
-        fail "duplicate SONAME $soname: \${soname_owner[$soname]} and $pkgname"
+      if [[ -n "${soname_owner[$soname]:-}" &&
+            "${soname_owner[$soname]}" != "$pkgname" ]]; then
+        fail "duplicate SONAME $soname: ${soname_owner[$soname]} and $pkgname"
       else
         soname_owner["$soname"]="$pkgname"
         private_sonames["$soname"]=1
@@ -50,7 +50,7 @@ done
 # Re-scan NEEDED entries and only enforce providers that are part of this
 # private repository. External Arch/CachyOS/AUR providers are intentionally
 # outside this script's trust boundary and are checked by maintenance.yml.
-for package_file in "\${package_files[@]}"; do
+for package_file in "${package_files[@]}"; do
   pkgname="$(bsdtar -xOf "$package_file" .PKGINFO |
     awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
   tmpdir="$(mktemp -d)"
@@ -58,8 +58,8 @@ for package_file in "\${package_files[@]}"; do
   while IFS= read -r -d '' elf; do
     while IFS= read -r needed; do
       [[ -n "$needed" ]] || continue
-      if [[ -n "\${private_sonames[$needed]:-}" &&
-            -z "\${soname_owner[$needed]:-}" ]]; then
+      if [[ -n "${private_sonames[$needed]:-}" &&
+            -z "${soname_owner[$needed]:-}" ]]; then
         fail "$pkgname needs private SONAME $needed but no owner exists"
       fi
     done < <(
@@ -76,7 +76,7 @@ for package_file in "\${package_files[@]}"; do
   rm -rf "$tmpdir"
 done
 
-printf 'Verified ELF ABI metadata for %d package asset(s).\n' "\${#package_files[@]}"
+printf 'Verified ELF ABI metadata for %d package asset(s).\n' "${#package_files[@]}"
 if (( failures > 0 )); then
   printf 'ELF repository verification found %d failure(s).\n' "$failures" >&2
   exit 1
