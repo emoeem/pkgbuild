@@ -21,10 +21,11 @@ else
     fi
 fi
 
-march="$(gcc -march=native -Q --help=target 2>/dev/null | awk '$1 == "-march=" {print $2}')"
-[[ "$march" == "znver3" ]] || {
-    printf 'Unexpected host compiler target: %s (expected znver3).\n' "$march" >&2
+march="znver3"
+if ! gcc -march=znver3 -mtune=znver3 -O3 -x c -c /dev/null -o /tmp/emo-build-policy-test.o >/dev/null 2>&1; then
+    printf 'Compiler cannot accept required Zen 3 target: %s.\n' "$march" >&2
     exit 2
-}
+fi
+rm -f /tmp/emo-build-policy-test.o
 
-printf 'Build policy OK: repo=%s cpu=%s.\n' "$local_repo_name" "$march"
+printf 'Build policy OK: repo=%s target=%s.\n' "$local_repo_name" "$march"

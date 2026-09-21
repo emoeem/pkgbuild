@@ -308,6 +308,13 @@ jobs:
           set -Eeuo pipefail
           bash source/scripts/fetch-repository-state.sh
 
+      - name: Install publication verification tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libarchive-tools
+
       - name: Verify publication inputs match source
         shell: bash
         run: |
