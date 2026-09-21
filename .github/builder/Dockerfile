@@ -3,6 +3,11 @@ FROM docker.io/cachyos/cachyos-v3:latest
 ARG CUDA_BUILDER=0
 
 RUN sed -i '/^\[options\]$/a DisableSandboxNetwork' /etc/pacman.conf \
+    && pacman-key --init \
+    && pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com \
+    && pacman-key --lsign-key F3B607488DB35A47 \
+    && pacman-key --updatedb \
+    && pacman-key --list-keys F3B607488DB35A47 | grep -q 'CachyOS' \
     && pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com \
     && pacman-key --lsign-key 3056513887B78AEB \
     && pacman -U --noconfirm \
