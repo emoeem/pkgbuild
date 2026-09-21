@@ -7,10 +7,53 @@ repository_dir="${1:?usage: verify-repository-elf.sh <repository-dir>}"
 failures=0
 declare -A soname_owner=()
 declare -A private_sonames=()
+declare -A package_provides=()
+declare -A package_conflicts=()
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   failures=$((failures + 1))
+}
+
+# Two packages in a repository may legitimately ship the same SONAME when
+# pacman considers them mutually exclusive alternatives.  For example,
+# llama.cpp-cuda and ggml-cuda-git both provide libggml, while llama.cpp-cuda
+# explicitly conflicts with libggml.  Such pairs cannot be installed
+# together, so the duplicate SONAME is not an integrity error.
+relation_name() {
+  printf '%s\n' "$1" | sed -E 's/[<>=].*$//'
+}
+
+package_relation_contains() {
+  local relation_list="$1" wanted="$2" relation
+  while IFS= read -r relation; do
+    [[ -n "$relation" ]] || continue
+    [[ "$(relation_name "$relation")" == "$wanted" ]] && return 0
+  done <<< "$relation_list"
+  return 1
+}
+
+packages_are_mutually_exclusive() {
+  local left="$1" right="$2" right_relation
+  if package_relation_contains "${package_conflicts[$left]:-}" "$right"; then
+    return 0
+  fi
+  while IFS= read -r right_relation; do
+    [[ -n "$right_relation" ]] || continue
+    if package_relation_contains "${package_conflicts[$left]:-}" "$(relation_name "$right_relation")"; then
+      return 0
+    fi
+  done <<< "${package_provides[$right]:-}"
+  if package_relation_contains "${package_conflicts[$right]:-}" "$left"; then
+    return 0
+  fi
+  while IFS= read -r right_relation; do
+    [[ -n "$right_relation" ]] || continue
+    if package_relation_contains "${package_conflicts[$right]:-}" "$(relation_name "$right_relation")"; then
+      return 0
+    fi
+  done <<< "${package_provides[$left]:-}"
+  return 1
 }
 
 mapfile -t package_files < <(
@@ -18,9 +61,14 @@ mapfile -t package_files < <(
 )
 
 for package_file in "${package_files[@]}"; do
-  pkgname="$(bsdtar -xOf "$package_file" .PKGINFO |
+  pkginfo="$(bsdtar -xOf "$package_file" .PKGINFO)"
+  pkgname="$(printf '%s\n' "$pkginfo" |
     awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
   [[ -n "$pkgname" ]] || { fail "missing pkgname: $package_file"; continue; }
+  package_provides["$pkgname"]="$(printf '%s\n' "$pkginfo" |
+    awk -F ' = ' '$1 == "provides" {print $2}')"
+  package_conflicts["$pkgname"]="$(printf '%s\n' "$pkginfo" |
+    awk -F ' = ' '$1 == "conflict" {print $2}')"
 
   tmpdir="$(mktemp -d)"
   bsdtar -xf "$package_file" -C "$tmpdir"
@@ -29,7 +77,10 @@ for package_file in "${package_files[@]}"; do
       [[ -n "$soname" ]] || continue
       if [[ -n "${soname_owner[$soname]:-}" &&
             "${soname_owner[$soname]}" != "$pkgname" ]]; then
-        fail "duplicate SONAME $soname: ${soname_owner[$soname]} and $pkgname"
+        owner="${soname_owner[$soname]}"
+        if ! packages_are_mutually_exclusive "$owner" "$pkgname"; then
+          fail "duplicate SONAME $soname: $owner and $pkgname"
+        fi
       else
         soname_owner["$soname"]="$pkgname"
         private_sonames["$soname"]=1

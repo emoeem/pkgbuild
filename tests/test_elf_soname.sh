@@ -27,4 +27,24 @@ if "$root/scripts/check-elf-needed.sh" "$tmp" "$tmp/providers-bad"; then
   exit 1
 fi
 
+make_repo_package() {
+  local name="$1" metadata="$2"
+  local staging="$tmp/$name"
+  mkdir -p "$staging/usr/lib"
+  cp "$tmp/lib/libfixture.so.999" "$staging/usr/lib/libfixture.so.999"
+  printf '%s\n' "pkgname = $name" "pkgbase = $name" "pkgver = 1" \
+    "pkgrel = 1" "arch = x86_64" "$metadata" > "$staging/.PKGINFO"
+  tar --zstd --create --file "$tmp/$name-1-1-x86_64.pkg.tar.zst" \
+    --directory "$staging" .PKGINFO usr
+}
+
+make_repo_package "fixture-provider" "provides = libfixture"
+make_repo_package "fixture-alternative" "conflict = libfixture"
+mkdir -p "$tmp/repository"
+cp "$tmp/fixture-provider-1-1-x86_64.pkg.tar.zst" \
+  "$tmp/repository/fixture-provider-1-1-x86_64.pkg.tar.zst"
+cp "$tmp/fixture-alternative-1-1-x86_64.pkg.tar.zst" \
+  "$tmp/repository/fixture-alternative-1-1-x86_64.pkg.tar.zst"
+"$root/scripts/verify-repository-elf.sh" "$tmp/repository"
+
 printf 'ELF SONAME fault-injection test passed.\n'
