@@ -102,7 +102,7 @@ done
 # private repository. External Arch/CachyOS/AUR providers are intentionally
 # outside this script's trust boundary and are checked by maintenance.yml.
 for package_file in "${package_files[@]}"; do
-  pkgname="$(bsdtar -xOf "$package_file" .PKGINFO |
+  pkgname="$(tar -xOf "$package_file" .PKGINFO |
     awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
   tmpdir="$(mktemp -d)"
   tar -xf "$package_file" -C "$tmpdir"
