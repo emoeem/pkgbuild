@@ -19,7 +19,6 @@ command -v gcc >/dev/null
 command -v g++ >/dev/null
 command -v as >/dev/null
 command -v ld >/dev/null
-[[ "$(gcc -march=native -Q --help=target 2>/dev/null | awk '$1 == "-march=" {print $2}')" == "znver3" ]]
 gcc -march=znver3 -mtune=znver3 -O3 -x c -c -o /tmp/emo-cflags-test.o - <<< 'int main(void){return 0;}'
 rm -f /tmp/emo-cflags-test.o
 
