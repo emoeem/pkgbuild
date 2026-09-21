@@ -14,7 +14,7 @@ RUN sed -i '/^\[options\]$/a DisableSandboxNetwork' /etc/pacman.conf \
         'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' \
         'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' \
     && printf '%s\n' '[chaotic-aur]' 'Include = /etc/pacman.d/chaotic-mirrorlist' >> /etc/pacman.conf \
-    && packages='aria2 base-devel curl git gnupg jq namcap shellcheck sudo' \
+    && packages='aria2 base-devel curl gcc-objc git gnupg jq namcap shellcheck sudo' \
     && if [ "$CUDA_BUILDER" = 1 ]; then packages="$packages cuda gcc15"; fi \
     && pacman -Syu --needed --noconfirm $packages \
     && install -d /etc/makepkg.conf.d \
