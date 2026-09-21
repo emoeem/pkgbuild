@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/builder/**"
       - ".github/workflows/builder.yml"
+      - "tests/test-cachyos-environment.sh"
   workflow_dispatch:
 
 permissions:
