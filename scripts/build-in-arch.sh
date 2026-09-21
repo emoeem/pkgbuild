@@ -49,9 +49,6 @@ if [[ "$prepared_image" == "1" ]]; then
     # before yay/Go tries to create per-package cache directories.
     chmod u+rwx,go+rx "$cache_dir"
     chmod -R a+rwX "$source_cache_dir" "$cargo_cache_dir" "$cache_dir/yay"
-    # yay may reuse Git repositories from the shared host cache. Git 2.55+
-    # rejects these as dubious ownership when the cache was created by root.
-    git config --global --add safe.directory '*'
     sed -i "/^CacheDir = /d" /etc/pacman.conf
     sed -i "/^\[options\]$/a CacheDir = $pacman_cache_dir" /etc/pacman.conf
 fi
@@ -77,11 +74,14 @@ if ! id builder >/dev/null 2>&1; then
     chmod 0440 /etc/sudoers.d/builder
 fi
 
-# The shared yay cache is consumed as the unprivileged builder user. Configure
-# safe.directory in that user's protected global config as well; root's config
-# is not inherited when HOME switches to the builder account.
+# The shared yay cache is restored by the GitHub runner and can be owned by
+# root. yay consumes it as builder, so align ownership and configure Git for
+# the exact HOME used by as_builder(). This avoids dubious-ownership failures
+# without requiring a cache-key reset.
 if [[ "$prepared_image" == "1" ]]; then
-    runuser -u builder -- git config --global --add safe.directory '*'
+    chown -R builder:builder "$cache_dir/yay/$package_name"
+    runuser -u builder -- env HOME="$builder_home" \
+        git config --global --add safe.directory '*'
 fi
 
 install -d -o builder -g builder "$build_root" "$output_dir"

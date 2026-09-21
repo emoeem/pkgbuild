@@ -109,7 +109,7 @@ def affected_packages(root: Path, paths: list[str], available: set[str]) -> set[
     infrastructure = False
     for path in paths:
         parts = path.split("/")
-        if path.startswith("config/") or path == "scripts/build-in-arch.sh":
+        if path.startswith("config/"):
             infrastructure = True
         if len(parts) >= 3 and parts[0] == "packages" and parts[1] in available:
             selected.add(parts[1])
