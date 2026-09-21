@@ -77,6 +77,13 @@ if ! id builder >/dev/null 2>&1; then
     chmod 0440 /etc/sudoers.d/builder
 fi
 
+# The shared yay cache is consumed as the unprivileged builder user. Configure
+# safe.directory in that user's protected global config as well; root's config
+# is not inherited when HOME switches to the builder account.
+if [[ "$prepared_image" == "1" ]]; then
+    runuser -u builder -- git config --global --add safe.directory '*'
+fi
+
 install -d -o builder -g builder "$build_root" "$output_dir"
 rm -rf "$package_dir" "$package_remote"
 cp -a "$source_dir" "$package_dir"
