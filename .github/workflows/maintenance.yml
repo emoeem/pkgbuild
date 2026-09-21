@@ -134,6 +134,46 @@ jobs:
                 "$pkgname" "${#soname_deps[@]}" >> /out/report.txt
             fi
           done
+
+          # Also inspect ELF NEEDED entries shipped inside each package.
+          # A package may declare a dependency such as `openvino` while the
+          # actual ELF object still requires an older SONAME (for example
+          # libopenvino_c.so.2631). A repository update can therefore leave
+          # an apparently satisfied pacman dependency but a broken runtime.
+          # Rebuild the package when any linked SONAME is no longer provided
+          # by the current repositories.
+          for package_file in "$published"/x86_64/*.pkg.tar.zst; do
+            [[ -e "$package_file" ]] || continue
+            pkgname="$(
+              bsdtar -xOf "$package_file" .BUILDINFO |
+                awk -F ' = ' '$1 == "pkgname" { print $2; exit }'
+            )"
+            [[ -n "$pkgname" ]] || continue
+
+            tmpdir="$(mktemp -d)"
+            bsdtar -xf "$package_file" -C "$tmpdir"
+            missing_elf=""
+
+            while IFS= read -r -d '' elf; do
+              mapfile -t needed < <(
+                readelf -d "$elf" 2>/dev/null |
+                  awk '/NEEDED/ { gsub(/[\[\]]/, "", $NF); print $NF }'
+              )
+              for soname in "${needed[@]}"; do
+                [[ "$soname" == *.so* ]] || continue
+                if ! grep -qE "^${soname}(=|$)" <<<"$provides"; then
+                  missing_elf+="${soname} "
+                fi
+              done
+            done < <(find "$tmpdir" -type f -print0)
+
+            rm -rf "$tmpdir"
+            if [[ -n "$missing_elf" ]]; then
+              echo "$pkgname" >> /out/stale.txt
+              echo "STALE $pkgname: ELF NEEDED no longer provided: $missing_elf" >> /out/report.txt
+            fi
+          done
+
           sort -u -o /out/stale.txt /out/stale.txt
           cat /out/report.txt
           CONTAINER
