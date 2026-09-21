@@ -55,12 +55,12 @@ jobs:
           MODE: ${{ matrix.variant }}
         run: |
           set -Eeuo pipefail
-          docker run --rm \
+          docker run --pull always --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             "$IMAGE" \
             bash /workspace/tests/test-cachyos-environment.sh builder
           if [[ "$MODE" == cuda ]]; then
-            docker run --rm \
+            docker run --pull always --rm \
               --volume "$GITHUB_WORKSPACE:/workspace:ro" \
               "$IMAGE" \
               bash /workspace/tests/test-cachyos-environment.sh cuda

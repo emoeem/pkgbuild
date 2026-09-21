@@ -68,7 +68,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          docker run --rm \
+          docker run --pull always --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
             bash -c 'set -Eeuo pipefail; useradd --create-home checker; runuser -u checker -- env HOME=/home/checker AUDIT_ROOT=/workspace bash -c "cd /workspace && ./scripts/audit-packages.sh && ./tests/test-package-audit.sh"'
@@ -76,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          docker run --rm \
+          docker run --pull always --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             docker.io/cachyos/cachyos-v3:latest \
             bash -c 'cd /workspace && bash tests/test_repository.sh'
@@ -99,7 +99,7 @@ jobs:
           PACKAGE_NAME: ${{ matrix.package }}
         run: |
           set -Eeuo pipefail
-          docker run --rm \
+          docker run --pull always --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --env "PACKAGE_NAME=$PACKAGE_NAME" \
             ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
