@@ -27,6 +27,8 @@ jobs:
 
       - name: Update dae release metadata
         id: update
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -38,6 +40,16 @@ jobs:
           else
             echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Regenerate dae .SRCINFO
+        if: steps.update.outputs.updated == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            docker.io/cachyos/cachyos-v3:latest \
+            bash -c 'cd /workspace/packages/dae-emo && makepkg --printsrcinfo > .SRCINFO'
 
       - name: Validate updated dae package
         if: steps.update.outputs.updated == 'true'

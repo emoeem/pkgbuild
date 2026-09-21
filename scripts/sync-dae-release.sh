@@ -7,17 +7,13 @@ pkgbuild="$package_dir/PKGBUILD"
 tracked_file="$package_dir/.upstream-release"
 
 command -v curl >/dev/null
+command -v gh >/dev/null
 command -v python >/dev/null
-command -v makepkg >/dev/null
 
 release_json="$(mktemp)"
 trap 'rm -f "$release_json"' EXIT
-curl --fail --silent --show-error --location \
-  --retry 5 --retry-all-errors --retry-delay 2 \
-  --connect-timeout 30 \
-  -H 'Accept: application/vnd.github+json' \
-  https://api.github.com/repos/daeuniverse/dae/releases/latest \
-  -o "$release_json"
+gh api repos/daeuniverse/dae/releases/latest \
+  -H 'Accept: application/vnd.github+json' > "$release_json"
 
 readarray -t release_meta < <(
   python - "$release_json" <<'PY'
@@ -85,10 +81,5 @@ path.write_text(text, encoding="utf-8")
 PY
 
 printf '%s\n' "$release_tag" > "$tracked_file"
-
-(
-  cd "$package_dir"
-  makepkg --printsrcinfo > .SRCINFO
-)
 
 echo "Updated dae-emo to $release_tag ($sha256)."
