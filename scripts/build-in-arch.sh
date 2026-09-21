@@ -70,7 +70,7 @@ install -d -o builder -g builder "$build_root" "$output_dir"
 rm -rf "$package_dir" "$package_remote"
 cp -a "$source_dir" "$package_dir"
 chown -R builder:builder "$package_dir"
-bash "$workspace_dir/scripts/prepare-build-source.sh" "$package_dir"
+as_builder bash "$workspace_dir/scripts/prepare-build-source.sh" "$package_dir"
 
 sed -Ei \
     's/(^OPTIONS=.*[[:space:]])debug([[:space:]\)])/\1!debug\2/' \
@@ -83,6 +83,7 @@ as_builder() {
     local -a environment=(
         "HOME=${builder_home}"
         "MAKEFLAGS=-j${make_jobs}"
+        "BUMP_PKGREL=${BUMP_PKGREL:-false}"
     )
 
     if [[ "$prepared_image" == "1" ]]; then
