@@ -1,0 +1,25 @@
+pkgbase = daed-emo
+	pkgdesc = Modern web dashboard for dae (current upstream, x86-64-v3/AVX2 build)
+	pkgver = 1.27.0.r0.gunknown
+	pkgrel = 1
+	url = https://github.com/daeuniverse/daed
+	arch = x86_64
+	license = MIT
+	makedepends = base-devel
+	makedepends = clang
+	makedepends = git
+	makedepends = go
+	makedepends = llvm
+	makedepends = nodejs
+	makedepends = pnpm
+	depends = v2ray-geoip
+	depends = v2ray-domain-list-community
+	provides = daed
+	conflicts = daed
+	conflicts = daed-git
+	conflicts = daed-avx2-bin
+	replaces = daed-avx2-bin
+	source = git+https://github.com/daeuniverse/daed.git
+	sha256sums = SKIP
+
+pkgname = daed-emo
