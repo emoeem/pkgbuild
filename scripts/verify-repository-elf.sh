@@ -61,7 +61,7 @@ mapfile -t package_files < <(
 )
 
 for package_file in "${package_files[@]}"; do
-  pkginfo="$(bsdtar -xOf "$package_file" .PKGINFO)"
+  pkginfo="$(tar -xOf "$package_file" .PKGINFO)"
   pkgname="$(printf '%s\n' "$pkginfo" |
     awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
   [[ -n "$pkgname" ]] || { fail "missing pkgname: $package_file"; continue; }
@@ -71,7 +71,7 @@ for package_file in "${package_files[@]}"; do
     awk -F ' = ' '$1 == "conflict" {print $2}')"
 
   tmpdir="$(mktemp -d)"
-  bsdtar -xf "$package_file" -C "$tmpdir"
+  tar -xf "$package_file" -C "$tmpdir"
   while IFS= read -r -d '' elf; do
     while IFS= read -r soname; do
       [[ -n "$soname" ]] || continue
@@ -105,7 +105,7 @@ for package_file in "${package_files[@]}"; do
   pkgname="$(bsdtar -xOf "$package_file" .PKGINFO |
     awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
   tmpdir="$(mktemp -d)"
-  bsdtar -xf "$package_file" -C "$tmpdir"
+  tar -xf "$package_file" -C "$tmpdir"
   while IFS= read -r -d '' elf; do
     while IFS= read -r needed; do
       [[ -n "$needed" ]] || continue
