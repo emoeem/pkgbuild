@@ -3,7 +3,7 @@
 
 pkgname=ffmpeg-full
 pkgver=9.0.2
-pkgrel=1.1
+pkgrel=1.3
 _svt_hevc_ver='4181c9ee0611baefb40b4c0ed10023cfd837d522'
 _whispercpp_ver='1.9.4'
 pkgdesc='Complete solution to record, convert and stream audio and video (all possible features including libfdk-aac)'
@@ -234,15 +234,18 @@ build() {
     cd "ffmpeg-${pkgver}"
     printf '%s\n' '  -> Running ffmpeg configure script...'
     
+    export CFLAGS='-march=x86-64-v3 -mtune=generic -O2 -pipe -fno-plt -fexceptions'
+    export CXXFLAGS="$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
+    export LDFLAGS='-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now'
     export CFLAGS+=' -isystem/opt/cuda/include'
     export LDFLAGS+=' -L/opt/cuda/lib64'
-    
-    # fix build of libavfilter/asrc_flite.c with gcc 14
+
+    # fix build of libavfilter/asrc_flite.c with gcc 14+
     export CFLAGS+=' -Wno-error=incompatible-pointer-types'
-    
+
     ./configure \
         --prefix='/usr' \
-        --enable-lto \
+        --disable-lto \
         \
         --disable-rpath \
         --enable-gpl \

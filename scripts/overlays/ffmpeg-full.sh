@@ -49,18 +49,39 @@ fi
 
 # 3. Distinguish local builds from the AUR package so pacman treats them as
 #    separate revisions even at the same upstream pkgrel.
-sed -i -E 's/^pkgrel=([0-9]+)(\.[0-9]+)?$/pkgrel=\1.1/' "$pkgbuild"
+sed -i -E 's/^pkgrel=([0-9]+)(\.[0-9]+)?$/pkgrel=\1.3/' "$pkgbuild"
+
+# 3b. Do not inherit the builder host's -march=native.
+python3 - "$pkgbuild" <<'PY2'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+start = s.index("    # Do not inherit the repository host's -march=native.") if "    # Do not inherit the repository host's -march=native." in s else s.index("    export CFLAGS+=' -isystem/opt/cuda/include'")
+end = s.index("    ./configure \\", start)
+block = """    export CFLAGS='-march=x86-64-v3 -mtune=generic -O2 -pipe -fno-plt -fexceptions'
+    export CXXFLAGS="$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
+    export LDFLAGS='-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now'
+    export CFLAGS+=' -isystem/opt/cuda/include'
+    export LDFLAGS+=' -L/opt/cuda/lib64'
+
+    # fix build of libavfilter/asrc_flite.c with gcc 14+
+    export CFLAGS+=' -Wno-error=incompatible-pointer-types'
+
+"""
+p.write_text(s[:start] + block + s[end:])
+PY2
 
 # 4. Mirror the changes into .SRCINFO: regenerate with makepkg when available
 #    (local sync runs); patch the two changed entries textually otherwise
 #    (CI sync runners have no pacman).
-base_pkgrel="$(sed -nE 's/^pkgrel=([0-9]+)\.1$/\1/p' "$pkgbuild")"
+base_pkgrel="$(sed -nE 's/^pkgrel=([0-9]+)\.[0-9]+$/\1/p' "$pkgbuild")"
 [[ -n "$base_pkgrel" ]] || fail 'unable to parse overlaid pkgrel'
 
 if command -v makepkg > /dev/null 2>&1; then
     ( cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO )
 else
-    sed -i -E 's/^(\tpkgrel = )[0-9]+(\.[0-9]+)?$/\1'"${base_pkgrel}"'.1/' "$srcinfo"
+    sed -i -E 's/^(\tpkgrel = )[0-9]+(\.[0-9]+)?$/\1'"${base_pkgrel}"'.3/' "$srcinfo"
     if ! grep -qF 'optdepends = cuda: for NVIDIA NPP filters' "$srcinfo"; then
         awk -v line="\toptdepends = cuda: for NVIDIA NPP filters (scale_npp, transpose_npp, overlay_npp)" '
             /\toptdepends = nvidia-utils:/ && !optdepend_done {
@@ -83,16 +104,18 @@ fi
 # Assertions.
 grep -q '^        --enable-libnpp \\' "$pkgbuild" ||
     fail 'libnpp flag missing after rewrite'
+grep -q '^        --disable-lto \\' "$pkgbuild" ||
+    fail 'LTO must remain disabled for the stable custom build'
 grep -q -- '--disable-libnpp' "$pkgbuild" &&
     fail 'libnpp disable flag still present'
 [[ "$(grep -cF 'cuda: for NVIDIA NPP filters' "$pkgbuild")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in PKGBUILD'
-grep -q "^pkgrel=${base_pkgrel}\.1$" "$pkgbuild" ||
+grep -q "^pkgrel=${base_pkgrel}\.3$" "$pkgbuild" ||
     fail 'pkgrel bump missing'
-grep -qE "$(printf '\t')pkgrel = ${base_pkgrel}\.1$" "$srcinfo" ||
+grep -qE "$(printf '\t')pkgrel = ${base_pkgrel}\.3$" "$srcinfo" ||
     fail 'pkgrel missing in .SRCINFO'
 [[ "$(grep -cF 'optdepends = cuda: for NVIDIA NPP filters' "$srcinfo")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in .SRCINFO'
 
-printf 'ffmpeg-full overlay applied: libnpp enabled, pkgrel %s.1.\n' \
+printf 'ffmpeg-full overlay applied: libnpp enabled, LTO disabled, pkgrel %s.3.\n' \
     "$base_pkgrel"
