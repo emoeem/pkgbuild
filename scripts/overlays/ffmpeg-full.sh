@@ -49,7 +49,7 @@ fi
 
 # 3. Distinguish local builds from the AUR package so pacman treats them as
 #    separate revisions even at the same upstream pkgrel.
-sed -i -E 's/^pkgrel=([0-9]+)(\.[0-9]+)?$/pkgrel=\1.3/' "$pkgbuild"
+sed -i -E 's/^pkgrel=([0-9]+)(\.[0-9]+)?$/pkgrel=\1.4/' "$pkgbuild"
 
 # 3b. Do not inherit the builder host's -march=native.
 python3 - "$pkgbuild" <<'PY2'
@@ -104,18 +104,16 @@ fi
 # Assertions.
 grep -q '^        --enable-libnpp \\' "$pkgbuild" ||
     fail 'libnpp flag missing after rewrite'
-grep -q '^        --disable-lto \\' "$pkgbuild" ||
-    fail 'LTO must remain disabled for the stable custom build'
 grep -q -- '--disable-libnpp' "$pkgbuild" &&
     fail 'libnpp disable flag still present'
 [[ "$(grep -cF 'cuda: for NVIDIA NPP filters' "$pkgbuild")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in PKGBUILD'
-grep -q "^pkgrel=${base_pkgrel}\.3$" "$pkgbuild" ||
+grep -q "^pkgrel=${base_pkgrel}\.4$" "$pkgbuild" ||
     fail 'pkgrel bump missing'
-grep -qE "$(printf '\t')pkgrel = ${base_pkgrel}\.3$" "$srcinfo" ||
+grep -qE "$(printf '\t')pkgrel = ${base_pkgrel}\.4$" "$srcinfo" ||
     fail 'pkgrel missing in .SRCINFO'
 [[ "$(grep -cF 'optdepends = cuda: for NVIDIA NPP filters' "$srcinfo")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in .SRCINFO'
 
-printf 'ffmpeg-full overlay applied: libnpp enabled, LTO disabled, pkgrel %s.3.\n' \
+printf 'ffmpeg-full overlay applied: libnpp enabled, pkgrel %s.4.\n' \
     "$base_pkgrel"

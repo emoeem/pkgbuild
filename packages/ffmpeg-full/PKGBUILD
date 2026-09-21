@@ -3,7 +3,7 @@
 
 pkgname=ffmpeg-full
 pkgver=9.0.2
-pkgrel=1.3
+pkgrel=1.4
 _svt_hevc_ver='4181c9ee0611baefb40b4c0ed10023cfd837d522'
 _whispercpp_ver='1.9.4'
 pkgdesc='Complete solution to record, convert and stream audio and video (all possible features including libfdk-aac)'
@@ -245,7 +245,6 @@ build() {
 
     ./configure \
         --prefix='/usr' \
-        --disable-lto \
         \
         --disable-rpath \
         --enable-gpl \
