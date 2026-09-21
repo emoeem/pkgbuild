@@ -84,14 +84,14 @@ class SelectPackagesTests(unittest.TestCase):
         after = self.commit("docs")
         self.assertEqual(self.select(before, after), [])
 
-    def test_build_script_change_rebuilds_everything(self):
+    def test_build_script_change_does_not_rebuild_everything(self):
         self.add_package("foo")
         self.add_package("bar")
         before = self.commit("base")
         (self.root / "scripts").mkdir()
         (self.root / "scripts/build-in-arch.sh").write_text("changed\n", encoding="utf-8")
         after = self.commit("build infrastructure")
-        self.assertEqual(self.select(before, after), ["bar", "foo"])
+        self.assertEqual(self.select(before, after), [])
 
 if __name__ == "__main__":
     unittest.main()
