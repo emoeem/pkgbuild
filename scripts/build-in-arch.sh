@@ -53,6 +53,7 @@ if [[ "$prepared_image" == "1" ]]; then
     chmod -R a+rwX "$source_cache_dir" "$cargo_cache_dir" "$cache_dir/yay"
     git config --global --add safe.directory "*"
     git config --global --add safe.directory "*"
+    git config --global --add safe.directory "*"
     # yay may reuse Git repositories from the shared host cache. Git 2.55+
     # rejects these as dubious ownership when the cache was created by root.
     git config --global --add safe.directory '*'
