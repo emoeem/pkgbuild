@@ -13,8 +13,6 @@ readonly source_cache_dir="${cache_dir}/sources/${package_name}"
 readonly cargo_cache_dir="${cache_dir}/cargo"
 readonly prepared_image="${PKGBUILD_BUILDER_IMAGE:-0}"
 readonly native_profile="${NATIVE_PROFILE:-${workspace_dir}/config/emo-native-flags.sh}"
-readonly local_repo_dir="${LOCAL_REPO_DIR:-}"
-readonly local_repo_name="${LOCAL_REPO_NAME:-emoeem}"
 
 if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
     printf 'PACKAGE_NAME is missing or invalid: %s\n' "$package_name" >&2
@@ -51,10 +49,6 @@ if [[ "$prepared_image" == "1" ]]; then
     # before yay/Go tries to create per-package cache directories.
     chmod u+rwx,go+rx "$cache_dir"
     chmod -R a+rwX "$source_cache_dir" "$cargo_cache_dir" "$cache_dir/yay"
-    git config --global --add safe.directory "*"
-    git config --global --add safe.directory "*"
-    git config --global --add safe.directory "*"
-    git config --global --add safe.directory "*"
     # yay may reuse Git repositories from the shared host cache. Git 2.55+
     # rejects these as dubious ownership when the cache was created by root.
     git config --global --add safe.directory '*'
@@ -125,6 +119,7 @@ as_builder() {
         env "${environment[@]}" "$@"
 }
 
+# shellcheck disable=SC1090
 source "$native_profile"
 
 as_builder bash "$workspace_dir/scripts/prepare-build-source.sh" "$package_dir"
