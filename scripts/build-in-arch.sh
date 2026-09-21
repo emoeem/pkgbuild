@@ -51,6 +51,9 @@ if [[ "$prepared_image" == "1" ]]; then
     # before yay/Go tries to create per-package cache directories.
     chmod u+rwx,go+rx "$cache_dir"
     chmod -R a+rwX "$source_cache_dir" "$cargo_cache_dir" "$cache_dir/yay"
+    # yay may reuse Git repositories from the shared host cache. Git 2.55+
+    # rejects these as dubious ownership when the cache was created by root.
+    git config --global --add safe.directory '*'
     sed -i "/^CacheDir = /d" /etc/pacman.conf
     sed -i "/^\[options\]$/a CacheDir = $pacman_cache_dir" /etc/pacman.conf
 fi
