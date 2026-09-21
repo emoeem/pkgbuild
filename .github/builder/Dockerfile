@@ -1,8 +1,10 @@
 FROM docker.io/cachyos/cachyos-v3:latest
 
 ARG CUDA_BUILDER=0
+COPY config/emo-native-flags.conf /etc/makepkg.conf.d/90-emo-native.conf
 
 RUN sed -i '/^\[options\]$/a DisableSandboxNetwork' /etc/pacman.conf \
+    && sed -i '/^\[options\]$/a ParallelDownloads = 8' /etc/pacman.conf \
     && pacman-key --init \
     && pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com \
     && pacman-key --lsign-key F3B607488DB35A47 \
@@ -14,7 +16,7 @@ RUN sed -i '/^\[options\]$/a DisableSandboxNetwork' /etc/pacman.conf \
         'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' \
         'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' \
     && printf '%s\n' '[chaotic-aur]' 'Include = /etc/pacman.d/chaotic-mirrorlist' >> /etc/pacman.conf \
-    && packages='aria2 base-devel curl gcc-objc git gnupg jq namcap shellcheck sudo' \
+    && packages='aria2 base-devel curl core/gcc-objc git gnupg jq namcap shellcheck sudo' \
     && if [ "$CUDA_BUILDER" = 1 ]; then packages="$packages cuda gcc15"; fi \
     && pacman -Syu --needed --noconfirm $packages \
     && install -d /etc/makepkg.conf.d \

@@ -154,6 +154,18 @@ jobs:
           echo image=pkgbuild-builder:fallback >> "$GITHUB_OUTPUT"
 
 
+      - name: Fetch current private repository packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf .cache/pkgbuild/repo/x86_64
+          mkdir -p .cache/pkgbuild/repo/x86_64
+          if gh release view repo --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download repo --repo "$GITHUB_REPOSITORY" --pattern "*.pkg.tar.zst" --dir .cache/pkgbuild/repo/x86_64 --clobber
+          fi
+
       - name: Build in reusable CachyOS builder
         shell: bash
         env:
@@ -167,6 +179,9 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/dist:/out" \
             --volume "$GITHUB_WORKSPACE/.cache/pkgbuild:/cache" \
+            --volume "$GITHUB_WORKSPACE/.cache/pkgbuild/repo/x86_64:/localrepo" \
+            --env "LOCAL_REPO_DIR=/localrepo" \
+            --env "LOCAL_REPO_NAME=emoeem" \
             --env "MAKE_JOBS=$MAKE_JOBS" \
             --env "BUMP_PKGREL=$BUMP_PKGREL" \
             --env "PACKAGE_NAME=$PACKAGE_NAME" \
@@ -292,6 +307,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           bash source/scripts/fetch-repository-state.sh
+
+      - name: Verify publication inputs match source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash source/scripts/verify-publish-inputs.sh incoming-packages source
 
       - name: Update repository database
         shell: bash

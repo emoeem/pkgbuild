@@ -12,6 +12,9 @@ readonly pacman_cache_dir="${cache_dir}/pacman"
 readonly source_cache_dir="${cache_dir}/sources/${package_name}"
 readonly cargo_cache_dir="${cache_dir}/cargo"
 readonly prepared_image="${PKGBUILD_BUILDER_IMAGE:-0}"
+readonly native_profile="${NATIVE_PROFILE:-${workspace_dir}/config/emo-native-flags.sh}"
+readonly local_repo_dir="${LOCAL_REPO_DIR:-}"
+readonly local_repo_name="${LOCAL_REPO_NAME:-emoeem}"
 
 if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
     printf 'PACKAGE_NAME is missing or invalid: %s\n' "$package_name" >&2
@@ -25,6 +28,11 @@ readonly package_remote="${build_root}/${package_name}-origin.git"
 make_jobs="${MAKE_JOBS:-$(nproc)}"
 if [[ ! "$make_jobs" =~ ^[1-9][0-9]*$ ]]; then
     printf 'MAKE_JOBS must be a positive integer, got: %s\n' "$make_jobs" >&2
+    exit 2
+fi
+
+if [[ ! -f "${native_profile}" ]]; then
+    printf 'Performance profile not found at %s\n' "$native_profile" >&2
     exit 2
 fi
 
@@ -42,10 +50,12 @@ if [[ "$prepared_image" == "1" ]]; then
     # complete cache path traversable and writable by the unprivileged builder
     # before yay/Go tries to create per-package cache directories.
     chmod u+rwx,go+rx "$cache_dir"
-    chown -R builder:builder "$source_cache_dir" "$cargo_cache_dir" "$cache_dir/yay"
+    chmod -R a+rwX "$source_cache_dir" "$cargo_cache_dir" "$cache_dir/yay"
     sed -i "/^CacheDir = /d" /etc/pacman.conf
     sed -i "/^\[options\]$/a CacheDir = $pacman_cache_dir" /etc/pacman.conf
 fi
+
+bash "$workspace_dir/scripts/configure-build-repo.sh"
 
 if [[ "$prepared_image" != "1" ]]; then
     if ! grep -q '^ID=cachyos$' /etc/os-release; then
@@ -57,7 +67,7 @@ if [[ "$prepared_image" != "1" ]]; then
         exit 2
     fi
     printf 'Using native CachyOS build environment.\n'
-    pacman -Syu --needed --noconfirm aria2 base-devel git gnupg sudo curl jq namcap
+    pacman -Syu --needed --noconfirm aria2 base-devel gcc-objc git gnupg sudo curl jq namcap
 fi
 
 if ! id builder >/dev/null 2>&1; then
@@ -83,6 +93,13 @@ as_builder() {
         "HOME=${builder_home}"
         "MAKEFLAGS=-j${make_jobs}"
         "BUMP_PKGREL=${BUMP_PKGREL:-false}"
+        "CFLAGS=${EMO_CFLAGS}"
+        "CXXFLAGS=${EMO_CXXFLAGS}"
+        "LDFLAGS=${EMO_LDFLAGS}"
+        "RUSTFLAGS=${EMO_RUSTFLAGS}"
+        "CMAKE_BUILD_PARALLEL_LEVEL=${make_jobs}"
+        "NINJAFLAGS=-j${make_jobs}"
+        "SRCDEST=${source_cache_dir}"
     )
 
     if [[ "$prepared_image" == "1" ]]; then
@@ -100,6 +117,8 @@ as_builder() {
     runuser -u builder -- \
         env "${environment[@]}" "$@"
 }
+
+source "$native_profile"
 
 as_builder bash "$workspace_dir/scripts/prepare-build-source.sh" "$package_dir"
 
@@ -161,6 +180,7 @@ fi
 yay --version
 printf "Refreshing package databases and pruning stale binary caches...\n"
 pacman -Sy --noconfirm
+bash "$workspace_dir/scripts/validate-build-policy.sh"
 pacman -Sc --noconfirm
 
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
@@ -169,6 +189,13 @@ if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
 fi
 
 printf 'Resolving dependencies, building and installing %s...\n' "$package_name"
+if [[ "$package_name" == "ffmpeg-full" ]]; then
+    # Resolve virtual/provider dependencies non-interactively and pin them to
+    # the same concrete packages selected by this local CachyOS-v3 profile.
+    pacman -S --needed --noconfirm \
+        sdl2-compat libglvnd l-smash onetbb tevent \
+        tesseract-data-eng tesseract-data-osd
+fi
 yay_status=0
 as_builder yay -Bi "$package_dir" \
     --noconfirm \
@@ -217,6 +244,7 @@ for package_file in "${package_files[@]}"; do
     cp "$package_file" "$output_dir/"
     bsdtar -xOf "$package_file" .PKGINFO > "${output_dir}/${filename}.PKGINFO"
     bsdtar -xOf "$package_file" .BUILDINFO > "${output_dir}/${filename}.BUILDINFO"
+    bash "${workspace_dir}/scripts/verify-build-dependencies.sh" "${output_dir}/${filename}.BUILDINFO"
 done
 
 printf "Running installed-package runtime smoke test...

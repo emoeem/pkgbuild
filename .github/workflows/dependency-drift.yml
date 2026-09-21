@@ -1,0 +1,60 @@
+name: Rebuild on dependency drift
+
+on:
+  schedule:
+    - cron: "43 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Fetch current repository state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p published/x86_64
+          if gh release view repo --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download repo --repo "$GITHUB_REPOSITORY" \
+              --pattern '*.pkg.tar.zst' --dir published/x86_64 --clobber
+          fi
+
+      - name: Detect direct dependency drift
+        if: ${{ hashFiles('published/x86_64/*.pkg.tar.zst') != '' }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p drift
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$GITHUB_WORKSPACE/published:/published:ro" \
+            --env "LOCAL_REPO_DIR=/published/x86_64" \
+            docker.io/cachyos/cachyos-v3:latest \
+            bash -c 'pacman -Syu --noconfirm >/dev/null; bash /workspace/scripts/check-dependency-drift.sh /published/x86_64 /workspace > /workspace/drift/report.txt || true'
+
+      - name: Dispatch affected package rebuilds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mapfile -t packages < <(
+            sed -n 's/^STALE \([^:]*\):.*/\1/p' drift/report.txt | sort -u
+          )
+          if (( ${#packages[@]} == 0 )); then
+            echo 'No direct dependency drift detected.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          selected="$(IFS=,; echo "${packages[*]}")"
+          echo "Dependency drift requires: $selected" >> "$GITHUB_STEP_SUMMARY"
+          gh workflow run build.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            -f packages="$selected" \
+            -f make_jobs=4 \
+            -f bump_pkgrel=true

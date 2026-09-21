@@ -118,7 +118,7 @@ build() {
     _cmake_options+=(
       -DGGML_BACKEND_DL=OFF
       -DGGML_NATIVE=ON
-      -DCMAKE_CUDA_ARCHITECTURES=native
+      -DCMAKE_CUDA_ARCHITECTURES=89
     )
   fi
 
