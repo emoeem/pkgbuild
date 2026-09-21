@@ -70,7 +70,6 @@ install -d -o builder -g builder "$build_root" "$output_dir"
 rm -rf "$package_dir" "$package_remote"
 cp -a "$source_dir" "$package_dir"
 chown -R builder:builder "$package_dir"
-as_builder bash "$workspace_dir/scripts/prepare-build-source.sh" "$package_dir"
 
 sed -Ei \
     's/(^OPTIONS=.*[[:space:]])debug([[:space:]\)])/\1!debug\2/' \
@@ -101,6 +100,8 @@ as_builder() {
     runuser -u builder -- \
         env "${environment[@]}" "$@"
 }
+
+as_builder bash "$workspace_dir/scripts/prepare-build-source.sh" "$package_dir"
 
 printf 'Creating an isolated package source snapshot...\n'
 as_builder git init --bare --initial-branch=main "$package_remote"
