@@ -84,13 +84,9 @@ jobs:
           set -Eeuo pipefail
           run_id=""
           for attempt in $(seq 1 90); do
-            run_id="$(gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow build.yml \
-              --event workflow_dispatch \
-              --limit 20 \
-              --json databaseId,createdAt \
-              --jq '.[] | select(.createdAt >= $ENV.STARTED) | .databaseId' 2>/dev/null | head -n1)"
+            run_id="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=workflow_dispatch&per_page=20" \
+              --jq ".workflow_runs[] | select(.created_at >= \"$STARTED\") | .id" 2>/dev/null | head -n1)"
             if [[ -n "$run_id" ]]; then
               break
             fi
@@ -130,13 +126,9 @@ jobs:
           set -Eeuo pipefail
           run_id=""
           for attempt in $(seq 1 90); do
-            run_id="$(gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow build.yml \
-              --event workflow_dispatch \
-              --limit 20 \
-              --json databaseId,createdAt \
-              --jq '.[] | select(.createdAt >= $ENV.STARTED) | .databaseId' 2>/dev/null | head -n1)"
+            run_id="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=workflow_dispatch&per_page=20" \
+              --jq ".workflow_runs[] | select(.created_at >= \"$STARTED\") | .id" 2>/dev/null | head -n1)"
             if [[ -n "$run_id" ]]; then
               break
             fi
