@@ -3,7 +3,7 @@
 
 pkgname=ffmpeg-full
 pkgver=9.0.2
-pkgrel=1.5
+pkgrel=1.4
 _svt_hevc_ver='4181c9ee0611baefb40b4c0ed10023cfd837d522'
 _whispercpp_ver='1.9.4'
 pkgdesc='Complete solution to record, convert and stream audio and video (all possible features including libfdk-aac)'
@@ -100,7 +100,7 @@ depends=(
     'rockchip-mpp'
     'rtmpdump'
     'rubberband'
-    'sdl2-compat'
+    'sdl2'
     'shine'
     'smbclient'
     'snappy'
@@ -147,7 +147,7 @@ makedepends=(
     'git'
     'glslang'
     'gmp'
-    'libglvnd'
+    'libgl'
     'lv2'
     'nasm'
     'opencl-headers'
@@ -234,15 +234,18 @@ build() {
     cd "ffmpeg-${pkgver}"
     printf '%s\n' '  -> Running ffmpeg configure script...'
     
-    # Local-only Zen 3 profile: keep all FFmpeg components on one target.
-    export CFLAGS="-march=znver3 -mtune=znver3 -O3 -pipe -fno-plt -fexceptions -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security -fstack-clash-protection"
+    export CFLAGS='-march=x86-64-v3 -mtune=generic -O2 -pipe -fno-plt -fexceptions'
     export CXXFLAGS="$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
-    export LDFLAGS="-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now"
-    export CFLAGS+=" -isystem/opt/cuda/include -Wno-error=incompatible-pointer-types"
-    export LDFLAGS+=" -L/opt/cuda/lib64"
+    export LDFLAGS='-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now'
+    export CFLAGS+=' -isystem/opt/cuda/include'
+    export LDFLAGS+=' -L/opt/cuda/lib64'
+
+    # fix build of libavfilter/asrc_flite.c with gcc 14+
+    export CFLAGS+=' -Wno-error=incompatible-pointer-types'
 
     ./configure \
         --prefix='/usr' \
+        --enable-lto \
         \
         --disable-rpath \
         --enable-gpl \
@@ -251,7 +254,6 @@ build() {
         --enable-shared \
         --disable-static \
         --disable-stripping \
-        --enable-lto=full \
         --disable-htmlpages \
         --enable-gray \
         \
