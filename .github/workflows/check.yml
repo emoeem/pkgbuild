@@ -62,6 +62,8 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
       - name: Run dependency graph tests
         run: python tests/test_select_packages.py
+      - name: Run ELF SONAME fault-injection test
+        run: bash tests/test_elf_soname.sh
       - name: Run package audit in prepared builder
         shell: bash
         run: |

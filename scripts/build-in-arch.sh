@@ -70,6 +70,7 @@ install -d -o builder -g builder "$build_root" "$output_dir"
 rm -rf "$package_dir" "$package_remote"
 cp -a "$source_dir" "$package_dir"
 chown -R builder:builder "$package_dir"
+bash "$workspace_dir/scripts/prepare-build-source.sh" "$package_dir"
 
 sed -Ei \
     's/(^OPTIONS=.*[[:space:]])debug([[:space:]\)])/\1!debug\2/' \
@@ -156,6 +157,9 @@ if [[ "$prepared_image" != "1" ]]; then
 fi
 
 yay --version
+printf "Refreshing package databases and pruning stale binary caches...\n"
+pacman -Sy --noconfirm
+pacman -Sc --noconfirm
 
 if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
     printf 'Container bootstrap validation completed.\n'
@@ -212,6 +216,17 @@ for package_file in "${package_files[@]}"; do
     bsdtar -xOf "$package_file" .PKGINFO > "${output_dir}/${filename}.PKGINFO"
     bsdtar -xOf "$package_file" .BUILDINFO > "${output_dir}/${filename}.BUILDINFO"
 done
+
+printf "Running installed-package runtime smoke test...
+"
+while IFS= read -r package_name_from_info; do
+    [[ -n "$package_name_from_info" ]] || continue
+    bash "${workspace_dir}/scripts/runtime-smoke-test.sh" "$package_name_from_info"
+done < <(
+    for package_file in "${package_files[@]}"; do
+        bsdtar -xOf "$package_file" .PKGINFO | awk -F" = " '$1 == "pkgname" {print $2; exit}'
+    done | sort -u
+)
 
 cp "${source_dir}/PKGBUILD" "$output_dir/PKGBUILD.used"
 cp "${source_dir}/.SRCINFO" "$output_dir/SRCINFO.used"

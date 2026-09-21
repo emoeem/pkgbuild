@@ -47,6 +47,12 @@ else
 fi
 
 printf 'Verified %d package asset(s) and %d database entries.\n' "${#package_files[@]}" "${#descriptions[@]}"
+if [[ -x "$(dirname "$0")/verify-repository-elf.sh" ]]; then
+    bash "$(dirname "$0")/verify-repository-elf.sh" "$repository_dir" || fail "ELF ABI verification failed"
+else
+    fail "verify-repository-elf.sh is missing"
+fi
+
 if (( failures > 0 )); then
     printf 'Repository verification found %d failure(s).\n' "$failures" >&2
     exit 1

@@ -123,10 +123,10 @@ jobs:
               if ! grep -qxF -- "$soname" <<<"$provides"; then
                 missing+="${soname} "
               fi
-            done
+              printf '%s\n' "$pkgname" >> /out/stale.txt
 
             if [[ -n "$missing" ]]; then
-              printf '%s\n' "$pkgname" >> /out/stale.txt
+              printf '%s' "$provides" > "$providers_file"
               printf 'STALE %s: missing %s\n' "$pkgname" "$missing" \
                 >> /out/report.txt
             else
@@ -151,27 +151,15 @@ jobs:
             [[ -n "$pkgname" ]] || continue
 
             tmpdir="$(mktemp -d)"
+            providers_file="$tmpdir/providers"
+            printf '%s' "$provides" > "$providers_file"
             bsdtar -xf "$package_file" -C "$tmpdir"
             missing_elf=""
-
-            while IFS= read -r -d '' elf; do
-              mapfile -t needed < <(
-                readelf -d "$elf" 2>/dev/null |
-                  awk '/NEEDED/ { gsub(/[\[\]]/, "", $NF); print $NF }'
-              )
-              for soname in "${needed[@]}"; do
-                [[ "$soname" == *.so* ]] || continue
-                if ! grep -qE "^${soname}(=|$)" <<<"$provides"; then
-                  missing_elf+="${soname} "
-                fi
-              done
-            done < <(find "$tmpdir" -type f -print0)
-
-            rm -rf "$tmpdir"
-            if [[ -n "$missing_elf" ]]; then
+            if ! missing_elf="$(bash /workspace/scripts/check-elf-needed.sh "$tmpdir" "$providers_file")"; then
               echo "$pkgname" >> /out/stale.txt
               echo "STALE $pkgname: ELF NEEDED no longer provided: $missing_elf" >> /out/report.txt
             fi
+            rm -rf "$tmpdir"
           done
 
           sort -u -o /out/stale.txt /out/stale.txt
@@ -184,19 +172,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          if [[ -s maintenance-out/stale.txt ]]; then
-            stale="$(paste -sd, maintenance-out/stale.txt)"
-            printf 'Stale packages: %s\n' "$stale" | tee -a "$GITHUB_STEP_SUMMARY"
-            gh workflow run build.yml \
-              --repo "$GITHUB_REPOSITORY" \
-              -f packages="$stale" \
-              -f make_jobs=4
-            printf 'Triggered rebuild for: %s\n' "$stale" \
-              | tee -a "$GITHUB_STEP_SUMMARY"
-            printf 'stale=%s\n' "$stale" >> "$GITHUB_OUTPUT"
-          else
-            printf 'All packages are up to date with current repository sonames.\n' \
-              | tee -a "$GITHUB_STEP_SUMMARY"
-            printf 'stale=\n' >> "$GITHUB_OUTPUT"
-          fi
+          bash scripts/dispatch-stale-rebuilds.sh maintenance-out/stale.txt
           cat maintenance-out/report.txt >> "$GITHUB_STEP_SUMMARY" || true
