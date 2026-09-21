@@ -1,0 +1,28 @@
+# Maintainer: emoeem
+pkgname=dae-emo
+pkgver=2.1.1
+pkgrel=1
+pkgdesc='High-performance transparent proxy solution based on eBPF (x86-64-v3/AVX2 release)'
+arch=('x86_64')
+url='https://github.com/daeuniverse/dae'
+license=('AGPL-3.0-or-later')
+depends=('v2ray-geoip' 'v2ray-domain-list-community')
+makedepends=('tar' 'xz')
+provides=('dae')
+conflicts=('dae' 'dae-avx2-bin' 'dae-bin-x64-v3' 'dae-git')
+backup=('etc/dae/config.dae')
+source=("dae-${pkgver}-x86_64_v3_avx2.tar.xz::https://github.com/daeuniverse/dae/releases/download/v${pkgver}/dae-linux-x86_64_v3_avx2.tar.xz")
+sha256sums=('54e202e712868fff704f4acb2ac90d5c609ca49af1798f240dc397f7a45ecfeb')
+
+package() {
+  tar -xJf "${srcdir}/dae-${pkgver}-x86_64_v3_avx2.tar.xz" -C "${pkgdir}"
+
+  rm -f "${pkgdir}/usr/share/dae/geoip.dat" "${pkgdir}/usr/share/dae/geosite.dat"
+  ln -s /usr/share/v2ray/geoip.dat "${pkgdir}/usr/share/dae/geoip.dat"
+  ln -s /usr/share/v2ray/geosite.dat "${pkgdir}/usr/share/dae/geosite.dat"
+
+  install -Dm640 /dev/stdin "${pkgdir}/etc/dae/config.dae" <<'EOF'
+# Put your dae configuration in this file.
+# See /etc/dae/example.dae for a complete example.
+EOF
+}
