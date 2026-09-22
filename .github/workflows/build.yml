@@ -23,6 +23,11 @@ on:
         required: false
         default: false
         type: boolean
+      allow_partial_publish:
+        description: Publish successful packages even if another selected package fails
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -238,10 +243,9 @@ jobs:
     needs:
       - select
       - build
-    # Publish even when some matrix builds failed: the release update is
-    # incremental (current release state + successful packages), so one
-    # broken package must not block shipping the rest.
-    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
+    # Keep build -> verify -> publish atomic by default. Partial publication is
+    # available only when explicitly requested for an unrelated multi-package run.
+    if: ${{ !cancelled() && needs.build.result == 'success' || (needs.build.result == 'failure' && inputs.allow_partial_publish == true) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
