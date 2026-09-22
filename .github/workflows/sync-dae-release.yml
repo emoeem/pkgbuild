@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   sync:
-    name: Update dae-emo and gate daed rebuild
+    name: Update dae release marker and rebuild daed
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -25,7 +25,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update dae release metadata
+      - name: Track latest dae release
         id: update
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,88 +34,33 @@ jobs:
           set -Eeuo pipefail
           chmod +x scripts/sync-dae-release.sh
           ./scripts/sync-dae-release.sh
-          if git diff --quiet -- packages/dae-emo; then
+          if git diff --quiet -- state/dae-upstream-release; then
             echo "updated=false" >> "$GITHUB_OUTPUT"
             echo "No new dae release."
           else
             echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Regenerate dae .SRCINFO
+      - name: Validate daed package metadata
         if: steps.update.outputs.updated == 'true'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace" \
-            docker.io/cachyos/cachyos-v3:latest \
-            bash -c 'cd /workspace/packages/dae-emo && makepkg --printsrcinfo > .SRCINFO'
+        run: ./scripts/check-package.sh daed-emo
 
-      - name: Validate updated dae package
+      - name: Commit and push dae release marker
         if: steps.update.outputs.updated == 'true'
-        run: ./scripts/check-package.sh dae-emo
-
-      - name: Commit and push dae update
-        if: steps.update.outputs.updated == 'true'
-        id: commit
         shell: bash
         run: |
           set -Eeuo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/dae-emo
-          git commit -m "chore(dae): track upstream release"
+          git add state/dae-upstream-release
+          git commit -m "chore(daed): track upstream dae release"
           git push origin HEAD:main
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "dae_commit=$(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Trigger dae package build
-        if: steps.update.outputs.updated == 'true'
-        id: dae_dispatch
-        env:
-          GH_TOKEN: \${{ github.token }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "started=$started" >> "$GITHUB_OUTPUT"
-          gh workflow run build.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref main \
-            -f packages=dae-emo \
-            -f make_jobs=2 \
-            -f bump_pkgrel=false
-
-      - name: Wait for dae package build
-        if: steps.update.outputs.updated == 'true'
-        env:
-          GH_TOKEN: \${{ github.token }}
-          STARTED: \${{ steps.dae_dispatch.outputs.started }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          run_id=""
-          for attempt in $(seq 1 90); do
-            run_id="$(gh api \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=workflow_dispatch&per_page=20" \
-              --jq ".workflow_runs[] | select(.created_at >= \"$STARTED\") | .id" 2>/dev/null | head -n1)"
-            if [[ -n "$run_id" ]]; then
-              break
-            fi
-            sleep 10
-          done
-          [[ -n "$run_id" ]] || {
-            echo "Timed out waiting for the dae build workflow." >&2
-            exit 1
-          }
-          echo "dae build run: $run_id"
-          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
 
       - name: Trigger daed rebuild
         if: steps.update.outputs.updated == 'true'
         id: daed_dispatch
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -126,18 +71,18 @@ jobs:
             --ref main \
             -f packages=daed-emo \
             -f make_jobs=2 \
-            -f bump_pkgrel=false
+            -f bump_pkgrel=true
 
       - name: Wait for daed rebuild
         if: steps.update.outputs.updated == 'true'
         env:
-          GH_TOKEN: \${{ github.token }}
-          STARTED: \${{ steps.daed_dispatch.outputs.started }}
+          GH_TOKEN: ${{ github.token }}
+          STARTED: ${{ steps.daed_dispatch.outputs.started }}
         shell: bash
         run: |
           set -Eeuo pipefail
           run_id=""
-          for attempt in $(seq 1 90); do
+          for _ in $(seq 1 90); do
             run_id="$(gh api \
               "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=workflow_dispatch&per_page=20" \
               --jq ".workflow_runs[] | select(.created_at >= \"$STARTED\") | .id" 2>/dev/null | head -n1)"
@@ -159,7 +104,7 @@ jobs:
           {
             echo "## dae → daed update completed"
             echo
-            echo "- dae-emo metadata updated and its package build passed."
-            echo "- daed-emo rebuild ran only after dae-emo passed."
+            echo "- The latest stable dae release is recorded for daed."
+            echo "- daed-emo was rebuilt with pkgrel bumped for the upstream dae refresh."
             echo "- The existing pacman repository publisher handled artifact publication."
           } >> "$GITHUB_STEP_SUMMARY"
