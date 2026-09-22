@@ -123,10 +123,10 @@ jobs:
               if ! grep -qxF -- "$soname" <<<"$provides"; then
                 missing+="${soname} "
               fi
-              printf '%s\n' "$pkgname" >> /out/stale.txt
+            done
 
             if [[ -n "$missing" ]]; then
-              printf '%s' "$provides" > "$providers_file"
+              printf '%s\n' "$pkgname" >> /out/stale.txt
               printf 'STALE %s: missing %s\n' "$pkgname" "$missing" \
                 >> /out/report.txt
             else
