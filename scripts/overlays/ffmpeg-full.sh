@@ -52,20 +52,41 @@ fi
 sed -i -E 's/^pkgrel=([0-9]+)(\.[0-9]+)?$/pkgrel=\1.6/' "$pkgbuild"
 
 # 3b. Do not inherit the builder host's -march=native.
-# The replacement starts either at its own marker or, on a freshly synced
-# PKGBUILD that has never been overlaid, at the first of the three exported
-# variables. Anchoring only on the later ' -isystem/opt/cuda/include' line
-# would re-emit those three lines on every run and duplicate them.
+# The flag block is replaced from its first line up to the configure call. That
+# first line is either this overlay's own marker (already overlaid PKGBUILD) or
+# the first CFLAGS/CXXFLAGS/LDFLAGS assignment (freshly synced upstream
+# PKGBUILD, which has no -march line at all). Anything else inside the replaced
+# region would be dropped silently, so it aborts instead.
 python3 - "$pkgbuild" <<'PY2'
 from pathlib import Path
+import re
 import sys
+
 p = Path(sys.argv[1])
 s = p.read_text()
-marker = "    # Do not inherit the repository host's -march=native.\n"
-first = "    export CFLAGS='-march=x86-64-v3 -mtune=generic -O2 -pipe -fno-plt -fexceptions'\n"
-start = s.index(marker) if marker in s else s.index(first)
-end = s.index("    ./configure \\", start)
-block = marker + """    export CFLAGS='-march=x86-64-v3 -mtune=generic -O2 -pipe -fno-plt -fexceptions'
+
+end = s.index("    ./configure \\")
+anchor = re.compile(
+    r"^    (?:# Do not inherit the repository host|export (?:CFLAGS|CXXFLAGS|LDFLAGS)[+<>=])",
+    re.M,
+)
+starts = [match.start() for match in anchor.finditer(s[:end])]
+if not starts:
+    raise SystemExit('ffmpeg flag block anchor not found')
+start = starts[0]
+
+unexpected = [
+    line for line in s[start:end].splitlines()
+    if line.strip()
+    and not line.lstrip().startswith('#')
+    and not re.match(r"^    export (?:CFLAGS|CXXFLAGS|LDFLAGS)[+<>=]", line)
+]
+if unexpected:
+    raise SystemExit('unexpected lines inside the ffmpeg flag block: '
+                     + ' | '.join(unexpected))
+
+block = """    # Do not inherit the repository host's -march=native.
+    export CFLAGS='-march=x86-64-v3 -mtune=generic -O2 -pipe -fno-plt -fexceptions'
     export CXXFLAGS="$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
     export LDFLAGS='-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now'
     export CFLAGS+=' -isystem/opt/cuda/include'
@@ -80,17 +101,18 @@ PY2
 
 # 3c. openapv 1.1 (API set 1) changed oapvm_create() to take a descriptor
 #     argument, so the liboapv encoder of ffmpeg 9.0.2 no longer compiles.
-#     Backport the upstream fix (FFmpeg commit c54710db, "avcodec/liboapvenc:
-#     fix build with openapv >= 1.1"). Without it a rebuild against
+#     Without the upstream fix (FFmpeg commit c54710db) a rebuild against
 #     openapv 1.1.1.0 fails, while the already published ffmpeg-full still
 #     needs the removed liboapv.so.2 -- which breaks every consumer of
-#     libavcodec, mpv included. The patch is guarded by `#if OAPV_VER_APISET
-#     >= 1` in C, so it stays correct if openapv is ever downgraded again.
+#     libavcodec, mpv included. AUR ships this patch itself since pkgrel 2, so
+#     only add our own copy when the synced PKGBUILD does not carry one.
 oapv_patch='080-ffmpeg-liboapvenc-openapv-1.1.patch'
 oapv_patch_url='https://github.com/FFmpeg/FFmpeg/commit/c54710db21c1827dbc3e47658a562525af0fe528.patch'
 oapv_patch_sum='f773a85ec68f3b26e0b2ab3cddb7a304df5be8eb5c1887c9b627e23e782c7ec2'
+oapv_injected=0
 
-if ! grep -qF "'${oapv_patch}'" "$pkgbuild"; then
+if ! grep -qE 'c54710db|openapv[^'"'"']*[.]patch' "$pkgbuild"; then
+    oapv_injected=1
     python3 - "$pkgbuild" "$oapv_patch" "$oapv_patch_url" "$oapv_patch_sum" <<'PY3'
 from pathlib import Path
 import sys
@@ -120,6 +142,10 @@ path.write_text(s)
 PY3
 fi
 
+# Exactly one openapv patch must be applied, whether it came from AUR or from us.
+[[ "$(grep -cE '^    patch .*openapv.*[.]patch' "$pkgbuild")" == 1 ]] ||
+    fail 'the openapv patch is not applied exactly once in prepare()'
+
 # 4. Mirror the changes into .SRCINFO: regenerate with makepkg when available
 #    (local sync runs); patch the two changed entries textually otherwise
 #    (CI sync runners have no pacman).
@@ -130,7 +156,7 @@ if command -v makepkg > /dev/null 2>&1; then
     ( cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO )
 else
     sed -i -E 's/^(\tpkgrel = )[0-9]+(\.[0-9]+)?$/\1'"${base_pkgrel}"'.6/' "$srcinfo"
-    if ! grep -qF "	source = ${oapv_patch}::" "$srcinfo"; then
+    if (( oapv_injected )) && ! grep -qF "	source = ${oapv_patch}::" "$srcinfo"; then
         python3 - "$srcinfo" "$oapv_patch" "$oapv_patch_url" "$oapv_patch_sum" <<'PY4'
 from pathlib import Path
 import sys
@@ -181,14 +207,14 @@ grep -q -- '--disable-libnpp' "$pkgbuild" &&
     fail 'libnpp disable flag still present'
 [[ "$(grep -cF 'cuda: for NVIDIA NPP filters' "$pkgbuild")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in PKGBUILD'
-[[ "$(grep -cF "'${oapv_patch}'::\"${oapv_patch_url}\"" "$pkgbuild")" == 1 ]] ||
-    fail 'liboapv patch source entry duplicated or missing in PKGBUILD'
-[[ "$(grep -cF "'${oapv_patch_sum}'" "$pkgbuild")" == 1 ]] ||
-    fail 'liboapv patch checksum duplicated or missing in PKGBUILD'
-[[ "$(grep -cF "${oapv_patch}" "$pkgbuild")" == 2 ]] ||
-    fail 'liboapv patch not applied in prepare()'
-[[ "$(grep -cF "	source = ${oapv_patch}::${oapv_patch_url}" "$srcinfo")" == 1 ]] ||
-    fail 'liboapv patch source entry duplicated or missing in .SRCINFO'
+if (( oapv_injected )); then
+    [[ "$(grep -cF "'${oapv_patch}'::\"${oapv_patch_url}\"" "$pkgbuild")" == 1 ]] ||
+        fail 'injected liboapv patch source entry duplicated or missing in PKGBUILD'
+    [[ "$(grep -cF "'${oapv_patch_sum}'" "$pkgbuild")" == 1 ]] ||
+        fail 'injected liboapv patch checksum duplicated or missing in PKGBUILD'
+    [[ "$(grep -cF "	source = ${oapv_patch}::${oapv_patch_url}" "$srcinfo")" == 1 ]] ||
+        fail 'injected liboapv patch source entry duplicated or missing in .SRCINFO'
+fi
 grep -q "^pkgrel=${base_pkgrel}\.6$" "$pkgbuild" ||
     fail 'pkgrel bump missing'
 grep -qE "$(printf '\t')pkgrel = ${base_pkgrel}\.6$" "$srcinfo" ||
@@ -196,5 +222,7 @@ grep -qE "$(printf '\t')pkgrel = ${base_pkgrel}\.6$" "$srcinfo" ||
 [[ "$(grep -cF 'optdepends = cuda: for NVIDIA NPP filters' "$srcinfo")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in .SRCINFO'
 
-printf 'ffmpeg-full overlay applied: libnpp enabled, liboapv 1.1 fix backported, pkgrel %s.6.\n' \
-    "$base_pkgrel"
+oapv_source='from AUR'
+(( oapv_injected )) && oapv_source='backported'
+printf 'ffmpeg-full overlay applied: libnpp enabled, openapv 1.1 fix %s, pkgrel %s.6.\n' \
+    "$oapv_source" "$base_pkgrel"
