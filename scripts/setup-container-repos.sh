@@ -7,11 +7,17 @@
 # for example) are invisible: the soname check then reports every library they
 # provide as missing, and the version drift check silently skips them.
 #
-# The chaotic CDN occasionally answers 503, so both the keyring installation and
-# the database sync are retried. When the keyring route keeps failing the
-# repository is added unsigned but restricted to metadata queries
-# (`Usage = Sync Search`), which is all these checks need: they never install a
-# package from it.
+# Two routes, in order of preference:
+#
+#   1. the keyring route from the builder image (chaotic-keyring +
+#      chaotic-mirrorlist, signature checking intact);
+#   2. direct mirrors with `SigLevel = Never` and `Usage = Sync Search`, which
+#      still allows the database and file-database syncs these checks need but
+#      forbids installing anything from the repository.
+#
+# Both routes are attempted, and the second one is also used when the first
+# route installs but its mirrors cannot be synced, because cdn-mirror.chaotic.cx
+# regularly answers 503 for the keyring packages.
 #
 # Exits non-zero when chaotic-aur is not usable, so callers can decide whether
 # to abort (a check whose provider set is incomplete produces false findings)
@@ -20,7 +26,17 @@
 set -Eeuo pipefail
 export LC_ALL=C
 
-chaotic_mirror='https://cdn-mirror.chaotic.cx/chaotic-aur'
+# Canonical chaotic-aur mirrors. The installed mirrorlist carries a longer,
+# per-region list; these answered reliably and are enough for the keyring
+# download as well as for the fallback.
+chaotic_mirrors=(
+    'https://geo-mirror.chaotic.cx/chaotic-aur'
+    'https://cdn-mirror.chaotic.cx/chaotic-aur'
+    'https://de-mirror.chaotic.cx/chaotic-aur'
+    'https://br-mirror.chaotic.cx/chaotic-aur'
+)
+
+route=''
 
 retry() {
     local attempt
@@ -34,37 +50,75 @@ retry() {
     return 1
 }
 
+# Import the signing keys and install chaotic-keyring + chaotic-mirrorlist from
+# the first mirror that serves them. Nothing is written to pacman.conf unless
+# both packages are installed and the mirrorlist really exists: a partial
+# download used to leave an unreadable `Include` behind, which made every later
+# pacman call fail.
 configure_keyring_repo() {
-    pacman-key --init > /dev/null
-    pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com > /dev/null
-    pacman-key --lsign-key F3B607488DB35A47 > /dev/null
-    pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com > /dev/null
-    pacman-key --lsign-key 3056513887B78AEB > /dev/null
-    pacman -U --noconfirm \
-        "${chaotic_mirror}/chaotic-keyring.pkg.tar.zst" \
-        "${chaotic_mirror}/chaotic-mirrorlist.pkg.tar.zst" > /dev/null
-    printf '%s\n' '[chaotic-aur]' 'Include = /etc/pacman.d/chaotic-mirrorlist' \
-        >> /etc/pacman.conf
+    if ! pacman-key --init > /dev/null ||
+        ! pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com > /dev/null ||
+        ! pacman-key --lsign-key F3B607488DB35A47 > /dev/null ||
+        ! pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com > /dev/null ||
+        ! pacman-key --lsign-key 3056513887B78AEB > /dev/null; then
+        printf 'could not import the chaotic-aur signing keys\n' >&2
+        return 1
+    fi
+
+    local mirror
+    for mirror in "${chaotic_mirrors[@]}"; do
+        if pacman -U --noconfirm \
+                "${mirror}/chaotic-keyring.pkg.tar.zst" \
+                "${mirror}/chaotic-mirrorlist.pkg.tar.zst" > /dev/null &&
+            [[ -f /etc/pacman.d/chaotic-mirrorlist ]]; then
+            printf '%s\n' '[chaotic-aur]' 'Include = /etc/pacman.d/chaotic-mirrorlist' \
+                >> /etc/pacman.conf
+            return 0
+        fi
+        printf 'chaotic-keyring/chaotic-mirrorlist unavailable from %s\n' "$mirror" >&2
+    done
+    return 1
 }
 
 configure_unsigned_repo() {
-    printf '%s\n' '[chaotic-aur]' 'SigLevel = Never' 'Usage = Sync Search' \
-        "Server = ${chaotic_mirror}" >> /etc/pacman.conf
+    {
+        printf '%s\n' '[chaotic-aur]' 'SigLevel = Never' 'Usage = Sync Search'
+        local mirror
+        for mirror in "${chaotic_mirrors[@]}"; do
+            printf 'Server = %s/$arch\n' "$mirror"
+        done
+    } >> /etc/pacman.conf
+}
+
+# Drop the section this script appended so the other route can replace it. Safe
+# because it is always the last section in the file.
+remove_chaotic_section() {
+    sed -i '/^\[chaotic-aur\]$/,$d' /etc/pacman.conf
 }
 
 sed -i "/^\[options\]$/a DisableSandboxNetwork" /etc/pacman.conf
 
-if ! grep -qx '\[chaotic-aur\]' /etc/pacman.conf; then
-    if ! retry configure_keyring_repo; then
-        printf '%s\n' \
-            'keyring setup failed; falling back to an unsigned metadata-only chaotic-aur' >&2
-        configure_unsigned_repo
-    fi
+if configure_keyring_repo; then
+    route='keyring'
+else
+    printf '%s\n' \
+        'keyring route unavailable; using direct chaotic mirrors without signature checks' >&2
+    configure_unsigned_repo
+    route='direct'
 fi
 
-retry pacman -Sy --noconfirm > /dev/null || true
+if ! retry pacman -Sy --noconfirm > /dev/null; then
+    if [[ "$route" == 'keyring' ]]; then
+        printf '%s\n' 'keyring mirrorlist could not be synced; switching to direct mirrors' >&2
+        remove_chaotic_section
+        configure_unsigned_repo
+        retry pacman -Sy --noconfirm > /dev/null || true
+    fi
+fi
 
 if [[ -z "$(pacman -Slq chaotic-aur 2>/dev/null | head -n 1)" ]]; then
     printf 'chaotic-aur is not usable\n' >&2
     exit 1
 fi
+
+printf 'chaotic-aur configured via %s route\n' "$route"
