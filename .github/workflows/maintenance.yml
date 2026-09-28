@@ -82,89 +82,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p maintenance-out
-          docker run --rm -i \
+          docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/maintenance-out:/out" \
             docker.io/cachyos/cachyos-v3:latest \
-            bash -s -- /workspace/published <<'CONTAINER'
-          set -Eeuo pipefail
-          sed -i "/^\[options\]$/a DisableSandboxNetwork" /etc/pacman.conf
-          published="$1"
-
-          # Use the same CachyOS-v3 repositories as the build container.
-          printf '\n[emoeem]\nSigLevel = Never\nServer = file://%s/x86_64\n' \
-            "$published" >> /etc/pacman.conf
-
-          pacman -Syu --noconfirm expac > /dev/null
-
-          mapfile -t repo_names < <(pacman -Slq)
-          provides="$(
-            expac -S '%P' "${repo_names[@]}" | tr ' ' '\n' | sort -u
-          )"
-
-          : > /out/stale.txt
-          : > /out/report.txt
-          for package_file in "$published"/x86_64/*.pkg.tar.zst; do
-            [[ -e "$package_file" ]] || continue
-            pkgname="$(
-              bsdtar -xOf "$package_file" .BUILDINFO |
-                awk -F ' = ' '$1 == "pkgname" { print $2; exit }'
-            )"
-            [[ -n "$pkgname" ]] || continue
-
-            mapfile -t soname_deps < <(
-              bsdtar -xOf "$package_file" .PKGINFO .BUILDINFO |
-                awk -F ' = ' '$1 == "depend" || $1 == "depends" { print $2 }' |
-                grep '\.so=' | sort -u
-            )
-
-            missing=""
-            for soname in "${soname_deps[@]}"; do
-              if ! grep -qxF -- "$soname" <<<"$provides"; then
-                missing+="${soname} "
-              fi
-            done
-
-            if [[ -n "$missing" ]]; then
-              printf '%s\n' "$pkgname" >> /out/stale.txt
-              printf 'STALE %s: missing %s\n' "$pkgname" "$missing" \
-                >> /out/report.txt
-            else
-              printf 'OK    %s (%s soname deps)\n' \
-                "$pkgname" "${#soname_deps[@]}" >> /out/report.txt
-            fi
-          done
-
-          # Also inspect ELF NEEDED entries shipped inside each package.
-          # A package may declare a dependency such as `openvino` while the
-          # actual ELF object still requires an older SONAME (for example
-          # libopenvino_c.so.2631). A repository update can therefore leave
-          # an apparently satisfied pacman dependency but a broken runtime.
-          # Rebuild the package when any linked SONAME is no longer provided
-          # by the current repositories.
-          for package_file in "$published"/x86_64/*.pkg.tar.zst; do
-            [[ -e "$package_file" ]] || continue
-            pkgname="$(
-              bsdtar -xOf "$package_file" .BUILDINFO |
-                awk -F ' = ' '$1 == "pkgname" { print $2; exit }'
-            )"
-            [[ -n "$pkgname" ]] || continue
-
-            tmpdir="$(mktemp -d)"
-            providers_file="$tmpdir/providers"
-            printf '%s' "$provides" > "$providers_file"
-            bsdtar -xf "$package_file" -C "$tmpdir"
-            missing_elf=""
-            if ! missing_elf="$(bash /workspace/scripts/check-elf-needed.sh "$tmpdir" "$providers_file")"; then
-              echo "$pkgname" >> /out/stale.txt
-              echo "STALE $pkgname: ELF NEEDED no longer provided: $missing_elf" >> /out/report.txt
-            fi
-            rm -rf "$tmpdir"
-          done
-
-          sort -u -o /out/stale.txt /out/stale.txt
-          cat /out/report.txt
-          CONTAINER
+            bash /workspace/scripts/check-repository-sonames.sh \
+              /workspace/published/x86_64 /out /workspace/packages
 
       - name: Dispatch rebuilds for stale packages
         id: dispatch
@@ -172,5 +95,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          bash scripts/dispatch-stale-rebuilds.sh maintenance-out/stale.txt
           cat maintenance-out/report.txt >> "$GITHUB_STEP_SUMMARY" || true
+          if [[ -s maintenance-out/orphans.txt ]]; then
+            {
+              printf '\nPublished packages without a source package'
+              printf ' (remove them from the release, they cannot be rebuilt):\n'
+              sed 's/^/- /' maintenance-out/orphans.txt
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          bash scripts/dispatch-stale-rebuilds.sh maintenance-out/stale.txt

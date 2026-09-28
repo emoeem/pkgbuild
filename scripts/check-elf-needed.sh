@@ -1,10 +1,30 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# readelf translates the "Shared library:" label in a localized environment
+# ("共享库：[libc.so.6]"), which turns every NEEDED entry into an unmatched
+# name. Force the C locale so the parsing below always sees English.
+export LC_ALL=C
+
 root="${1:?usage: check-elf-needed.sh <root> <providers-file> [report-file]}"
 providers_file="${2:?usage: check-elf-needed.sh <root> <providers-file> [report-file]}"
 report_file="${3:-}"
 [[ -d "$root" && -f "$providers_file" ]] || exit 2
+
+# Load the providers once into an exact-match table. The previous
+# `grep -qE "^${soname}(=|$)"` treated the SONAME as a regular expression, so
+# names containing regex metacharacters (libstdc++.so.6, libatk-1.0.so.0, ...)
+# never matched, and it re-read the file for every NEEDED entry.
+declare -A provided=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] || continue
+  provided["$line"]=1
+  # pacman SONAME provides spell a version differently than the linker:
+  # libx264.so=165-64 -> libx264.so.165
+  if [[ "$line" =~ ^(.*[.]so)=([0-9][0-9.]*)(-[0-9]+)?$ ]]; then
+    provided["${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"]=1
+  fi
+done < "$providers_file"
 
 missing=""
 while IFS= read -r -d '' elf; do
@@ -14,7 +34,7 @@ while IFS= read -r -d '' elf; do
   )
   for soname in "${needed[@]}"; do
     [[ "$soname" == *.so* ]] || continue
-    if ! grep -qE "^${soname}(=|$)" "$providers_file"; then
+    if [[ -z "${provided[$soname]:-}" ]]; then
       missing+="${soname} "
     fi
   done

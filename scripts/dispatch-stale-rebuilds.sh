@@ -15,6 +15,14 @@ dispatchable=()
 now="$(date -u +%s)"
 while IFS= read -r pkg; do
   [[ -n "$pkg" ]] || continue
+  # Discovering one name that no longer exists in the source tree used to make
+  # select-packages.py reject the whole selection, so the dispatched build
+  # failed in ten seconds and nothing was ever rebuilt.
+  if [[ ! -f "packages/${pkg}/PKGBUILD" ]]; then
+    printf 'IGNORE %s: no such package directory; not dispatching.\n' "$pkg" |
+      tee -a "$summary_file"
+    continue
+  fi
   active=0
   recent_failure=0
   while IFS=$'\t' read -r run_id run_status run_conclusion run_time; do
