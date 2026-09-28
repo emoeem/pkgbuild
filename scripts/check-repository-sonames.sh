@@ -52,9 +52,14 @@ mkdir -p "$out_dir"
 report() { printf '%s\n' "$*" >> "$out_dir/report.txt"; }
 
 # ---------------------------------------------------------------------------
-# Same repositories as the build container, plus the published one.
+# Same repositories as the build container, plus the published one. The
+# provider set below can only be correct when those repositories are present,
+# so a failure to configure them is fatal here.
 # ---------------------------------------------------------------------------
-sed -i "/^\[options\]$/a DisableSandboxNetwork" /etc/pacman.conf
+if ! bash "${script_dir}/setup-container-repos.sh"; then
+    printf 'third-party repositories unavailable; refusing to report false positives\n' >&2
+    exit 3
+fi
 if ! grep -qx '\[emoeem\]' /etc/pacman.conf; then
     printf '\n[emoeem]\nSigLevel = Never\nServer = file://%s\n' "$published" >> /etc/pacman.conf
 fi

@@ -45,7 +45,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE/published:/published:ro" \
             --env "LOCAL_REPO_DIR=/published/x86_64" \
             docker.io/cachyos/cachyos-v3:latest \
-            bash -c 'pacman -Syu --noconfirm >/dev/null; bash /workspace/scripts/check-dependency-drift.sh /published/x86_64 /workspace' \
+            bash -c 'bash /workspace/scripts/setup-container-repos.sh || echo "WARNING: chaotic-aur unavailable, drift only covers the remaining repositories" >&2; bash /workspace/scripts/check-dependency-drift.sh /published/x86_64 /workspace' \
             > drift/report.txt || true
           cat drift/report.txt
 
