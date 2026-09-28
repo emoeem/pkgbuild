@@ -2,7 +2,11 @@ name: Rebuild on dependency drift
 
 on:
   schedule:
-    - cron: "43 16 * * *"
+    # Every four hours: a dependency SONAME/ABI bump breaks the already
+    # published packages immediately, and the rebuild can only start once this
+    # detection has run. The check only compares recorded dependency versions
+    # against the current repositories, so running it often is cheap.
+    - cron: "43 */4 * * *"
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = *
+
+[Action]
+Description = Checking which packages need to be rebuilt (AUR + emoeem)
+When = PostTransaction
+Exec = /usr/bin/env LC_ALL=C /usr/bin/checkrebuild -i emoeem
+NeedsTargets

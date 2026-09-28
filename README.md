@@ -181,6 +181,69 @@ SigLevel = Never
 Server = file:///var/lib/emoeem-repo/x86_64
 ```
 
+## SONAME 漂移排查
+
+私有仓库的包由自己构建，不在 Arch 官方 rebuild 范围内。第三方依赖升级换掉
+SONAME（`libfoo.so.2` → `libfoo.so.1`）或 ABI 后，已发布的包会立刻变成
+「装得上、跑不起来」，典型症状：
+
+```
+mpv: error while loading shared libraries: liboapv.so.2: cannot open shared object file
+```
+
+五步定位：
+
+```bash
+# 1. 缺哪个库
+ldd "$(command -v mpv)" | grep 'not found'
+
+# 2. 这个 SONAME 还有没有主人（报错 = 提供者已经换了 SONAME）
+pacman -Qo /usr/lib/liboapv.so.2
+pacman -Ql openapv | grep liboapv
+
+# 3. 刚才是谁升级换掉的
+grep -iE 'openapv|liboapv' /var/log/pacman.log | tail
+
+# 4. 哪些已安装的包需要重建（AUR + 私人仓库）
+LC_ALL=C checkrebuild -i emoeem
+
+# 5. 重建：推送到 main（只重建变化的包及其依赖者），或手动触发
+gh workflow run build.yml -f packages=<pkg> -f make_jobs=4 [-f bump_pkgrel=true]
+```
+
+`rebuild-detector` 自带的 hook 在本机是**失效**的，两个原因：
+
+- 它内部用 `LANG=C stat --printf "%F"` 识别可执行文件，但 `LC_MESSAGES`
+  的优先级高于 `LANG`，中文环境下 `%F` 输出「一般文件」而不是
+  `regular file`，于是它扫不到任何文件，永远报告「没有需要重建的包」。
+  实测：`checkrebuild -i emoeem` 无输出，写成 `LC_ALL=C checkrebuild -i emoeem`
+  后立刻列出 `emoeem  ffmpeg-full`。手动调用必须带 `LC_ALL=C`。
+- `checkrebuild` 默认只覆盖 AUR（foreign）包和 `file://` 仓库，私人仓库
+  需要显式 `-i emoeem`。
+
+安装仓库自带的 hook 覆盖版本，`pacman -Syu` 结束时会直接列出需要重建的包：
+
+```bash
+sudo install -Dm644 client/host/rebuild-detector.hook \
+  /etc/pacman.d/hooks/rebuild-detector.hook
+```
+
+`/etc/pacman.d/hooks/` 中的同名 hook 会覆盖
+`/usr/share/libalpm/hooks/rebuild-detector.hook`；卸载 `rebuild-detector`
+后请同时删除该文件。
+
+仓库侧的自动化：
+
+- 推送 `packages/**` 或 `scripts/overlays/**` 时，`build.yml` 只重建变化的
+  包及其依赖者。
+- `dependency-drift.yml` 每 4 小时比对 `.BUILDINFO` 里记录的依赖版本与仓库
+  当前版本，自动 dispatch 重建。
+- `maintenance.yml` 每天扫描已发布包的 ELF `NEEDED`，确认每个 SONAME 仍由
+  当前仓库提供，缺失时自动 dispatch 重建。
+
+如果依赖提供者自己没声明 `provides=('libfoo.so=N-64')`（例如 chaotic-aur 的
+`openapv`），pacman 无法阻止不兼容升级，只能依赖上面的自动检测及时重建。
+
 ## 自动更新客户端
 
 从 `main` 源码目录执行一次：
