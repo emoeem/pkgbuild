@@ -95,8 +95,16 @@ fi
         sed -nE 's/^(.*[.]so)=([0-9][0-9.]*)(-[0-9]+)?$/\1.\2/p'
     # 4. libraries installed in this container
     find /usr/lib /lib -maxdepth 1 -name '*.so*' -printf '%f\n' 2>/dev/null || true
-} | sed 's:.*/::' | sed '/^$/d' | sort -u > "$providers"
-report "providers: $(wc -l < "$providers") library names"
+    # Only shared libraries can satisfy a NEEDED entry; dropping the rest keeps
+    # the table small (a full inventory is a few hundred thousand names).
+} | sed 's:.*/::' | sed -n '/[.]so/p' | sed '/^$/d' | sort -u > "$providers"
+provider_count="$(wc -l < "$providers")"
+report "providers: ${provider_count} library names"
+if (( provider_count < 100 )); then
+    printf 'provider list looks empty (%s entries); refusing to report false positives\n' \
+        "$provider_count" >&2
+    exit 3
+fi
 
 # ---------------------------------------------------------------------------
 # Source tree: map every pkgname/pkgbase back to its package directory so the

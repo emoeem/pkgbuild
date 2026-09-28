@@ -18,6 +18,10 @@ report_file="${3:-}"
 declare -A provided=()
 while IFS= read -r line; do
   [[ -n "$line" ]] || continue
+  # Only shared-library names are ever queried below, so skipping everything
+  # else keeps the table small when a caller passes a full file inventory
+  # (291k names vs 7k library names measured on a real system).
+  [[ "$line" == *.so* ]] || continue
   provided["$line"]=1
   # pacman SONAME provides spell a version differently than the linker:
   # libx264.so=165-64 -> libx264.so.165
