@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Force the C locale: the checks below parse tool output (readelf, pacman,
+# ldd, ...) whose labels are localized, and a translated label silently
+# turns the check into a no-op instead of failing loudly.
+export LC_ALL=C
+
 buildinfo="$1"
 [[ -f "$buildinfo" ]] || exit 2
 

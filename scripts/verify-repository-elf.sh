@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Force the C locale: the checks below parse tool output (readelf, pacman,
+# ldd, ...) whose labels are localized, and a translated label silently
+# turns the check into a no-op instead of failing loudly.
+export LC_ALL=C
+
 repository_dir="${1:?usage: verify-repository-elf.sh <repository-dir>}"
 [[ -d "$repository_dir" ]] || exit 2
 

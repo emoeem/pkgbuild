@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Force the C locale: the checks below parse tool output (readelf, pacman,
+# ldd, ...) whose labels are localized, and a translated label silently
+# turns the check into a no-op instead of failing loudly.
+export LC_ALL=C
+
 repo_dir="${1:-}"
 root="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 [[ -d "$repo_dir" ]] || { echo "usage: $0 <published-repo-dir> [repo-root] [stale-file]" >&2; exit 2; }
