@@ -240,7 +240,9 @@ AUR + 私人仓库包（本机实测约 2 秒），也能发现由传递依赖�
 - `dependency-drift.yml` 每 4 小时比对 `.BUILDINFO` 里记录的依赖版本与仓库
   当前版本，自动 dispatch 重建。
 - `maintenance.yml` 每天扫描已发布包的 ELF `NEEDED`，确认每个 SONAME 仍由
-  当前仓库提供，缺失时自动 dispatch 重建。
+  当前仓库提供；只有源码树里仍存在的包才会被 dispatch 重建，已下架却仍在
+  发布的包记为 `ORPHAN`，而来自 chaotic-aur / archlinuxcn / arch4edu / AUR
+  的库记在 `scripts/data/external-sonames.txt`（文件头部写明更新方法）。
 
 如果依赖提供者自己没声明 `provides=('libfoo.so=N-64')`（例如 chaotic-aur 的
 `openapv`），pacman 无法阻止不兼容升级，只能依赖上面的自动检测及时重建。
