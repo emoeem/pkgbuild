@@ -38,8 +38,19 @@ grep -Fq -- 'NVCC_CCBIN=/usr/bin/g++-15' "$root/scripts/build-in-arch.sh" \
     || fail 'ffmpeg-full builder path does not pin nvcc to GCC 15'
 printf '%s\n' '3/3: verify local Zen 3 performance profile and RTX 4050 CUDA target'
 grep -Fq -- '-march=znver3 -mtune=znver3 -O3' "$root/config/emo-native-flags.conf" || fail 'local Zen 3 profile missing'
-grep -Fq -- '-march=znver3 -mtune=znver3 -O3' "$root/packages/ffmpeg-full/PKGBUILD" || fail 'ffmpeg-full does not use Zen 3 profile'
-grep -Fq -- '--enable-lto=full' "$root/packages/ffmpeg-full/PKGBUILD" || fail 'ffmpeg-full LTO missing'
-grep -Fq -- '-DCMAKE_CUDA_ARCHITECTURES=89' "$root/packages/ggml-cuda-git/PKGBUILD" || fail 'CUDA 89 target missing'
+# Published ffmpeg-full artifacts have to stay usable on every x86-64-v3
+# machine, so the overlay pins the portable baseline instead of the local Zen 3
+# profile and must never inherit the builder host's -march=native.
+grep -Fq -- '-march=x86-64-v3 -mtune=generic' "$root/packages/ffmpeg-full/PKGBUILD" \
+    || fail 'ffmpeg-full does not pin the portable x86-64-v3 baseline'
+if grep -v '^[[:space:]]*#' "$root/packages/ffmpeg-full/PKGBUILD" | grep -Fq -- '-march=native'; then
+    fail 'ffmpeg-full inherits the builder host -march=native'
+fi
+grep -Fq -- '--enable-lto' "$root/packages/ffmpeg-full/PKGBUILD" || fail 'ffmpeg-full LTO missing'
+if grep -Fq -- '--enable-lto=full' "$root/packages/ffmpeg-full/PKGBUILD"; then
+    fail 'ffmpeg-full uses the unsupported --enable-lto=full'
+fi
+grep -Fq -- 'EMO_CMAKE_CUDA_ARCHITECTURES="89"' "$root/config/emo-native-flags.sh" \
+    || fail 'CUDA 89 target missing from the native profile'
 grep -Fq -- 'objective-c -c' "$root/tests/test-cachyos-environment.sh" || fail 'Objective-C preflight missing'
 printf '%s\n' 'All build regression tests passed.'
