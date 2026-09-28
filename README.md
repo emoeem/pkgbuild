@@ -230,7 +230,8 @@ sudo install -Dm644 client/host/rebuild-detector.hook \
 
 `/etc/pacman.d/hooks/` 中的同名 hook 会覆盖
 `/usr/share/libalpm/hooks/rebuild-detector.hook`；卸载 `rebuild-detector`
-后请同时删除该文件。
+后请同时删除该文件。该版本不使用 `NeedsTargets`，因此每次事务都会重扫全部
+AUR + 私人仓库包（本机实测约 2 秒），也能发现由传递依赖引起的失效。
 
 仓库侧的自动化：
 

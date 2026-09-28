@@ -1,3 +1,18 @@
+# Overrides /usr/share/libalpm/hooks/rebuild-detector.hook (same file name in
+# /etc/pacman.d/hooks wins). Install with:
+#
+#   sudo install -Dm644 client/host/rebuild-detector.hook \
+#     /etc/pacman.d/hooks/rebuild-detector.hook
+#
+# LC_ALL=C is required: checkrebuild filters executables with
+# `LANG=C stat --printf "%F"`, but LC_MESSAGES outranks LANG, so under a
+# non-English locale it matches nothing and silently reports nothing at all.
+# `-i emoeem` is required because checkrebuild otherwise only looks at
+# foreign (AUR) packages and file:// repositories.
+# Without NeedsTargets every transaction rescans all AUR + emoeem packages
+# (about two seconds on this host), which also catches breakage caused by a
+# transitive dependency.
+
 [Trigger]
 Operation = Upgrade
 Type = Package
@@ -7,4 +22,3 @@ Target = *
 Description = Checking which packages need to be rebuilt (AUR + emoeem)
 When = PostTransaction
 Exec = /usr/bin/env LC_ALL=C /usr/bin/checkrebuild -i emoeem
-NeedsTargets
