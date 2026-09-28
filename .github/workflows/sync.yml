@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync:
@@ -78,3 +79,22 @@ jobs:
           git add packages
           git commit -m "chore: sync AUR packages: $PACKAGES"
           git push
+
+      - name: Dispatch rebuild for the synced packages
+        if: steps.changes.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGES: ${{ steps.changes.outputs.packages }}
+        run: |
+          set -Eeuo pipefail
+          # A push made with GITHUB_TOKEN does not trigger other workflows, so
+          # the rebuild has to be requested explicitly; without this a synced
+          # AUR update sits in git until some unrelated check happens to
+          # dispatch a build. Only packages whose AUR sources really changed are
+          # synced, so this is not a periodic rebuild.
+          gh workflow run build.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            -f packages="$PACKAGES" \
+            -f make_jobs=4
+          printf 'Dispatched a rebuild for: %s\n' "$PACKAGES"
