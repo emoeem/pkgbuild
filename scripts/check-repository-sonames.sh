@@ -95,11 +95,23 @@ fi
         sed -nE 's/^(.*[.]so)=([0-9][0-9.]*)(-[0-9]+)?$/\1.\2/p'
     # 4. libraries installed in this container
     find /usr/lib /lib -maxdepth 1 -name '*.so*' -printf '%f\n' 2>/dev/null || true
+    # 5. libraries known to come from packages outside the configured
+    #    repositories (chaotic-aur, archlinuxcn, arch4edu, AUR); see the file
+    #    header for how to refresh the list
+    if [[ -f "${script_dir}/data/external-sonames.txt" ]]; then
+        sed -e 's/#.*//' -e 's/[[:space:]]*$//' \
+            "${script_dir}/data/external-sonames.txt"
+    fi
     # Only shared libraries can satisfy a NEEDED entry; dropping the rest keeps
     # the table small (a full inventory is a few hundred thousand names).
 } | sed 's:.*/::' | sed -n '/[.]so/p' | sed '/^$/d' | sort -u > "$providers"
 provider_count="$(wc -l < "$providers")"
-report "providers: ${provider_count} library names"
+external_file="${script_dir}/data/external-sonames.txt"
+external_count=0
+if [[ -f "$external_file" ]]; then
+    external_count="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$external_file" | wc -l)"
+fi
+report "providers: ${provider_count} library names (${external_count} external)"
 if (( provider_count < 100 )); then
     printf 'provider list looks empty (%s entries); refusing to report false positives\n' \
         "$provider_count" >&2

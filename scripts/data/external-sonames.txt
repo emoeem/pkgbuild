@@ -1,0 +1,39 @@
+# Libraries that are provided by packages outside the repositories configured
+# in the maintenance container (chaotic-aur, archlinuxcn, arch4edu and the AUR),
+# but are installed on the machines that use this repository.
+#
+# They cannot be discovered from the container's pacman file databases, so
+# without this list every ffmpeg-full release is reported as needing a rebuild
+# and the maintenance job dispatches a pointless rebuild with a pkgrel bump on
+# every run.
+#
+# Refresh procedure: run the maintenance workflow, and for every soname it
+# reports as no longer provided, verify the owning package on the target
+# machine:
+#
+#   pacman -Qoq /usr/lib/<soname>          # owning package
+#   pacman -Si <package> | grep '软件库\|Repository'
+#
+# Add the soname here when the owner comes from a third-party repository or the
+# AUR. When the owner is a package in one of the container's repositories, the
+# report is a real finding and the package does need a rebuild.
+#
+# One name per line; blank lines and lines starting with '#' are ignored.
+libaribcaption.so
+libdavs2.so.16
+libflite_cmu_us_awb.so.1
+libflite_cmu_us_kal.so.1
+libflite_cmu_us_rms.so.1
+libklvanc.so.0
+liblcevc_dec_api.so.4
+libopencv_core.so.414
+libopencv_imgproc.so.414
+librockchip_mpp.so.1
+libshine.so.3
+libuavs3d.so
+libvo-amrwbenc.so.0
+libvvenc.so.1.14
+libxavs.so.1
+libxavs2.so.13
+libxevd.so.0
+libxeve.so.0
