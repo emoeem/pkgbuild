@@ -97,7 +97,17 @@ MetaCubeX `geoip/cn` / mihomo_yamls `cncidr`）的 sha256，**有变化才**更�
 
 > 背景：rootless podman 默认的 pasta 把容器数据包 splice 进宿主栈、不创建宿主 socket，
 > 因此 eBPF 的 local cgroup 数据面看不到容器流量（容器 DNS 与国内直连正常、境外直连失败）。
-> 快速绕过：容器加 `--network=host`。
+>
+> **实测结论（kernel 7.2.8-1-cachyos-bore-lto）**：本机内核不支持 TC 路径的 eBPF 监听器
+> （`register TC eBPF TCP listener: operation not supported`），因此 `--data-plane tc` 与
+> `shared`（`packet_rewrite`）**都不可用**，容器透明代理只能靠：
+>
+> ```bash
+> podman run --rm --network=host <镜像> ...
+> ```
+>
+> 两个脚本现在都会先跑 `sing-box tools ebpf status --mode all`，非 `passed` 时直接拦下并给出上述建议
+> （`--force` 可强行尝试）。注意 `--mode local` 全 PASS **不代表** TC 可用。
 
 ## 添加 AUR 软件包
 

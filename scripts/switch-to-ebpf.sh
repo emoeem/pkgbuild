@@ -18,8 +18,17 @@ SERVICE="${SERVICE:-sing-box}"
 API_URL="${API_URL:-http://127.0.0.1:9091}"
 BACKUP_DIR="/etc/sing-box/backups"
 SHARED_IFACE=""
-[[ "${1:-}" == "--shared" ]] && SHARED_IFACE="${2:-}"
-[[ -n "${1:-}" && "${1:-}" != "--shared" ]] && { printf 'FATAL 未知参数：%s（可用：--shared <接口>）\n' "$1" >&2; exit 1; }
+DATA_PLANE="cgroup"
+FORCE=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --shared)     SHARED_IFACE="${2:-}"; shift 2 ;;
+    --data-plane) DATA_PLANE="${2:-}"; shift 2 ;;
+    --force)      FORCE=1; shift ;;
+    *) printf 'FATAL 未知参数：%s（可用：--shared <接口> | --data-plane cgroup|tc | --force）\n' "$1" >&2; exit 1 ;;
+  esac
+done
+case "$DATA_PLANE" in cgroup|tc) ;; *) printf 'FATAL --data-plane 只能是 cgroup 或 tc\n' >&2; exit 1 ;; esac
 
 WORK="$(mktemp -d /tmp/switch-ebpf.XXXXXX)"
 NEW_JSON="$WORK/new-config.json"
@@ -37,17 +46,44 @@ command -v python3 >/dev/null || die "需要 python3"
 say "① 前置检查"
 systemctl is-active --quiet "$SERVICE" || die "$SERVICE 不是 active，先修好它"
 "$BIN" check -c "$CONF" >/dev/null 2>&1 || die "当前配置 check 不过"
+ALREADY_EBPF=0
 if python3 -c "
 import json,sys
 d=json.load(open('$CONF'))
 sys.exit(0 if any(i.get('type')=='ebpf' for i in d.get('inbounds',[])) else 1)"; then
-  die "配置里已经有 ebpf 入站了（无需再切）；要回退请用 /etc/sing-box/backups/ 里的备份"
+  ALREADY_EBPF=1
 fi
-python3 -c "
+if (( ALREADY_EBPF )); then
+  say "   服务 active、配置合法、**已是 eBPF 模式**（本次只调整数据面/共享设置）"
+else
+  python3 -c "
 import json,sys
 d=json.load(open('$CONF'))
-sys.exit(0 if any(i.get('type')=='tun' for i in d.get('inbounds',[])) else 1)" || die "配置里既没有 tun 也没有 ebpf 入站，本脚本不适用"
-say "   服务 active、配置合法、当前是 TUN 模式"
+sys.exit(0 if any(i.get('type')=='tun' for i in d.get('inbounds',[])) else 1)" \
+    || die "配置里既没有 tun 也没有 ebpf 入站，本脚本不适用"
+  say "   服务 active、配置合法、当前是 TUN 模式"
+fi
+
+if [[ $DATA_PLANE == tc ]]; then
+  say "②a tc 数据面可行性守卫（tc/packet_rewrite 依赖 TC eBPF）"
+  _pf="$("$BIN" tools ebpf status --mode all --json 2>/dev/null || true)"
+  _res="$(printf '%s' "$_pf" | python3 -c "
+import sys,json
+try: print(json.load(sys.stdin).get('result','unknown'))
+except Exception: print('unknown')" 2>/dev/null || echo unknown)"
+  _unk="$(printf '%s' "$_pf" | python3 -c "
+import sys,json
+try: print(json.load(sys.stdin).get('summary',{}).get('unknown',0))
+except Exception: print('?')" 2>/dev/null || echo '?')"
+  printf '   --mode all 预检：result=%s，unknown=%s\n' "$_res" "$_unk"
+  if [[ $_res != passed ]]; then
+    warn "预检未能确认 TC 支持（result=$_res）。已知本机内核实测会失败于："
+    warn "  register TC eBPF TCP listener: operation not supported"
+    warn "  → tc 数据面在这台机器上不可用；容器请改用 --network=host。"
+    (( FORCE )) || die "已中止（要强行尝试请加 --force）"
+    warn "已按 --force 继续，失败会自动回滚"
+  fi
+fi
 
 say "② eBPF 内核能力预检（不挂载任何东西）"
 if "$BIN" tools ebpf status --mode local --json > "$WORK/preflight.json" 2>"$WORK/preflight.err"; then
@@ -64,14 +100,27 @@ else
   tail -3 "$WORK/preflight.err" | sed 's/^/     /'
 fi
 
-say "③ 生成新配置（tun → ebpf${SHARED_IFACE:+，shared=$SHARED_IFACE}）"
-python3 - "$CONF" "$NEW_JSON" "$SHARED_IFACE" <<'PY'
+if (( ALREADY_EBPF )); then
+  say "③ 已是 eBPF 模式：只改数据面 local.data_plane → $DATA_PLANE"
+  python3 - "$CONF" "$NEW_JSON" "$DATA_PLANE" <<'PY'
+import json, sys
+conf_path, out_path, data_plane = sys.argv[1], sys.argv[2], sys.argv[3]
+cfg = json.load(open(conf_path, encoding="utf-8"))
+for i in cfg["inbounds"]:
+    if i.get("type") == "ebpf":
+        i.setdefault("local", {})["data_plane"] = data_plane
+        print(f"   local.data_plane → {data_plane}（其余保持不动）")
+json.dump(cfg, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PY
+else
+say "③ 生成新配置（tun → ebpf${SHARED_IFACE:+，shared=$SHARED_IFACE}，data_plane=$DATA_PLANE）"
+python3 - "$CONF" "$NEW_JSON" "$SHARED_IFACE" "$DATA_PLANE" <<'PY'
 import copy, json, sys
-conf_path, out_path, shared_iface = sys.argv[1], sys.argv[2], sys.argv[3]
+conf_path, out_path, shared_iface, data_plane = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 cfg = json.load(open(conf_path, encoding="utf-8"))
 local = {
     "enabled": True,
-    "data_plane": "cgroup",          # 内核 socket hook，不跟随网卡
+    "data_plane": data_plane,        # cgroup=内核 socket hook；tc=跟随默认接口（可抓到 pasta splice 的包）
     "dns_mode": "hijack",            # 端口 53 在内核侧接管
     "bypass_private_address": True,  # 私网/特殊地址直接绕过（等价于 TUN 下的 ip_is_private）
     "ipv6": True,
@@ -93,8 +142,9 @@ out.append(ebpf)
 cfg["inbounds"] = out
 json.dump(cfg, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 print(f"   移除 tun 入站（tag={[d.get('tag') for d in dropped]}），新增 ebpf-in"
-      f"（local=cgroup, dns=hijack, ipv6=on, shared={'on: ' + shared_iface if shared_iface else 'off'}）")
+      f"（local={data_plane}, dns=hijack, ipv6=on, shared={'on: ' + shared_iface if shared_iface else 'off'}）")
 PY
+fi
 
 say "④ 校验新配置（check 不过就什么都不做）"
 if ! "$BIN" check -c "$NEW_JSON" > "$CHECK_OUT" 2>&1; then
@@ -105,9 +155,9 @@ say "   check 通过 ✅"
 
 say "⑤ 备份 → 原子替换 → 重启"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BK="$BACKUP_DIR/config.$STAMP.pre-ebpf.json"
+if (( ALREADY_EBPF )); then BK="$BACKUP_DIR/config.$STAMP.pre-dataplane.json"; else BK="$BACKUP_DIR/config.$STAMP.pre-ebpf.json"; fi
 install -d -m 755 "$BACKUP_DIR"
-cp -a "$CONF" "$BK" && say "   备份（TUN 配置）：$BK"
+cp -a "$CONF" "$BK" && say "   备份（切换前配置）：$BK"
 cp -a "$NEW_JSON" "$CONF.new" && chmod 644 "$CONF.new" && mv -f "$CONF.new" "$CONF"
 systemctl restart "$SERVICE"
 sleep 3
@@ -181,7 +231,9 @@ if [[ -n $fail ]]; then
   cp -a "$BK" "$CONF"
   systemctl restart "$SERVICE"
   sleep 3
-  if systemctl is-active --quiet "$SERVICE" && ip link show tun0 >/dev/null 2>&1; then
+  if (( ALREADY_EBPF )); then
+    warn "已回滚到切换前的 eBPF 配置并重启"
+  elif systemctl is-active --quiet "$SERVICE" && ip link show tun0 >/dev/null 2>&1; then
     warn "已回滚并重启，TUN 模式恢复（tun0 已回来）"
   else
     warn "回滚后仍异常！请手动检查：systemctl status $SERVICE；journalctl -u $SERVICE -n 50"
@@ -190,6 +242,20 @@ if [[ -n $fail ]]; then
 fi
 
 resolvectl flush-caches >/dev/null 2>&1 || true   # 丢掉过渡期可能被缓存的外部答案
+
+say "⑦ 附带探测：rootless 容器（pasta）是否被接管（信息性，不影响成败）"
+if command -v podman >/dev/null 2>&1; then
+  cip="$(timeout 180 podman run --rm docker.io/library/alpine:latest \
+        sh -c 'apk add --no-cache curl >/dev/null 2>&1; curl -4 -s -m 25 https://api.ipify.org' 2>/dev/null | tail -1 || true)"
+  printf '   容器出口=%s / 代理出口=%s\n' "${cip:-失败}" "$(curl -s -m 10 -x http://127.0.0.1:7892 https://api.ipify.org || echo 无)"
+  if [[ -n $cip && "$cip" == "$(curl -s -m 10 -x http://127.0.0.1:7892 https://api.ipify.org || true)" ]]; then
+    printf '   ✅ 容器已被接管\n'
+  else
+    printf '   ⚠️ 容器未被接管（pasta 不创建宿主 socket）。替代：容器加 --network=host\n'
+  fi
+else
+  printf '   未安装 podman，跳过\n'
+fi
 
 say "✅ 已切换到 eBPF 模式，全部检查通过"
 echo "   备份（回滚用）：$BK"

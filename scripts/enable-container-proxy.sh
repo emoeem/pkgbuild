@@ -20,12 +20,14 @@ SERVICE="${SERVICE:-sing-box}"
 API_URL="${API_URL:-http://127.0.0.1:9091}"
 BACKUP_DIR="/etc/sing-box/backups"
 MODE="enable"
+FORCE=0
 IFACE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --disable) MODE="disable"; shift ;;
     --iface)   IFACE="${2:-}"; shift 2 ;;
-    *) printf 'FATAL 未知参数：%s（可用：--disable --iface <接口>）\n' "$1" >&2; exit 1 ;;
+    --force)   FORCE=1; shift ;;
+    *) printf 'FATAL 未知参数：%s（可用：--disable --iface <接口> | --force）\n' "$1" >&2; exit 1 ;;
   esac
 done
 
@@ -51,6 +53,29 @@ t=[i.get('type') for i in d.get('inbounds',[])]
 print('ebpf' if 'ebpf' in t else ('tun' if 'tun' in t else 'other'))")"
 [[ $INBOUND_KIND == "ebpf" ]] || die "当前不是 eBPF 模式（是 $INBOUND_KIND）。TUN 模式下容器本来就靠 auto_route 管着，不需要本脚本"
 say "   eBPF 模式确认"
+
+if [[ $MODE == "enable" ]]; then
+  say "①a 检查内核是否支持 shared 所需的 TC / packet_rewrite 路径"
+  _pf="$("$BIN" tools ebpf status --mode all --json 2>/dev/null || true)"
+  _res="$(printf '%s' "$_pf" | python3 -c "
+import sys,json
+try: print(json.load(sys.stdin).get('result','unknown'))
+except Exception: print('unknown')" 2>/dev/null || echo unknown)"
+  printf '   --mode all 预检：result=%s\n' "$_res"
+  if [[ $_res != passed ]]; then
+    warn "shared 数据面（packet_rewrite）依赖 TC eBPF，而预检未确认支持（result=$_res）。"
+    warn "本机内核实测会失败于：register TC eBPF TCP listener: operation not supported"
+    cat <<'EOT' >&2
+
+   结论：这台机器上 shared 方案不可用（改配置只会让 sing-box 起不来）。
+   容器走代理的可行办法（已实测）：
+       podman run --rm --network=host <镜像> ...
+   此时容器直接用宿主 socket，能被 eBPF 的 local cgroup 数据面接管。
+EOT
+    (( FORCE )) || exit 3
+    warn "已按 --force 继续（大概率失败，失败会自动回滚）"
+  fi
+fi
 
 if [[ $MODE == "disable" ]]; then
   say "② 关闭 shared（容器将只走直连）"
@@ -79,7 +104,31 @@ else
                grep -E '^(podman|cni-podman|podman[0-9]+|cni[0-9]+)$' | head -1 || true)"
     fi
   fi
-  [[ -n $IFACE ]] || die "仍找不到网桥接口。请先跑一次 rootful 容器（例如 sudo podman run --rm alpine true），或用 --iface 指定"
+  if [[ -z $IFACE ]]; then
+    warn "找不到 podman 网桥，先做一次自诊断（结果如下，可直接贴给维护者）："
+    {
+      printf 'podman 版本: %s\n' "$(podman --version 2>&1)"
+      printf 'network backend=%s rootless_cmd=%s\n' \
+        "$(podman info --format '{{.Host.NetworkBackend}}' 2>&1)" \
+        "$(podman info --format '{{.Host.RootlessNetworkCmd}}' 2>&1)"
+      printf '现有网络:\n'; podman network ls 2>&1 | sed 's/^/  /'
+      printf '尝试创建桥网络 sbtest: '; podman network create --driver bridge sbtest 2>&1 | tail -1
+      printf '用该网络跑一次容器: '; timeout 150 podman run --rm --network sbtest docker.io/library/alpine:latest \
+        ip -brief addr show 2>&1 | tail -2
+      printf '当前网桥接口:\n'; ip -brief link show type bridge 2>&1 | sed 's/^/  /'
+    } | sed 's/^/   /'
+    cat <<'EOT' >&2
+
+   ↑ 如果上面显示 "创建桥网络" 或 "跑容器" 失败、并且始终没有网桥接口，
+     说明你这版 podman(6.x) 连 rootful 也默认走 pasta —— 它把容器数据包直接 splice 进宿主栈、
+     不创建宿主 socket，eBPF 的 local cgroup 数据面看不到，shared 也就没有可绑的下游接口。
+
+   可行替代（已实测）：容器加 --network=host
+     podman run --rm --network=host <镜像> ...
+   此时容器直接用宿主 socket，能被 eBPF cgroup 钩子接管（实测出口 = 代理 IP）。
+EOT
+    exit 2
+  fi
   ip link show "$IFACE" >/dev/null 2>&1 || die "接口 $IFACE 不存在"
   FRAMING_OK="$(ip -details link show "$IFACE" 2>/dev/null | grep -c 'link/ether' || true)"
   (( FRAMING_OK > 0 )) || die "接口 $IFACE 不是以太网帧（shared packet_rewrite 需要）"
