@@ -19,7 +19,15 @@ CONF="${CONF:-/etc/sing-box/config.json}"
 BIN="${BIN:-sing-box}"
 CLASH="${CLASH:-http://127.0.0.1:9090}"
 KEEP=0
-[[ "${1:-}" == "--keep" ]] && KEEP=1
+DEBUG_LOG=0
+for a in "$@"; do
+    case "$a" in
+        --keep) KEEP=1 ;;
+        --debug-log) DEBUG_LOG=1 ;;
+        -h|--help) printf '用法：sudo %s [--keep] [--debug-log]\n  --keep       保留 netns/veth 现场\n  --debug-log  临时把 log.level 调到 debug、跑完自动还原（看清 sing-box 的判定）\n' "$0"; exit 0 ;;
+        *) printf '不认识的参数：%s\n' "$a" >&2; exit 2 ;;
+    esac
+done
 
 say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*"; }
@@ -51,7 +59,12 @@ CLIENT_IP="$(awk -F. -v p="250" '{print $1"."$2"."$3"."p}' <<<"$GW")"
 say "网段 $CIDR → 测试客户端 $CLIENT_IP/$PREFIX，网关 $GW"
 
 NS=sb-shared-test; VH=sbveth-h; VC=sbveth-c
+PCAP=/tmp/sb-shared-test.pcap
+TCPDUMP_PID=""
 cleanup() {
+    restore_log 2>/dev/null || true
+    [[ -n $TCPDUMP_PID ]] && kill "$TCPDUMP_PID" 2>/dev/null || true
+    [[ -n $TCPDUMP_PID ]] && wait "$TCPDUMP_PID" 2>/dev/null || true
     ip netns del "$NS" 2>/dev/null || true
     ip link del "$VH" 2>/dev/null || true
     rm -rf "/etc/netns/$NS" 2>/dev/null || true
@@ -59,6 +72,32 @@ cleanup() {
 trap 'cleanup' EXIT
 cleanup   # 先清一遍，避免上次残留
 sleep 0.5
+
+CONF_BAK=""
+restore_log() {
+    if [[ -n $CONF_BAK && -f $CONF_BAK ]]; then
+        cp -a "$CONF_BAK" "$CONF"
+        systemctl restart sing-box
+        sleep 2
+        printf '   已还原原配置并重启（log.level 恢复）\n'
+        CONF_BAK=""
+    fi
+}
+if (( DEBUG_LOG )); then
+    say "⓪ 临时把 log.level 调到 debug（跑完自动还原）"
+    CONF_BAK="$(mktemp /tmp/sb-conf-bak.XXXXXX)"
+    cp -a "$CONF" "$CONF_BAK"
+    python3 - "$CONF" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d.setdefault("log", {})["level"] = "debug"
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PY
+    systemctl restart sing-box
+    sleep 2
+    printf '   log.level=debug，服务已重启\n'
+fi
 
 say "① 建 netns + veth，并把宿主端接进 $IFACE"
 ip netns add "$NS"
@@ -80,6 +119,17 @@ printf '   netns DNS: %s\n' "$(tr '\n' ' ' < "/etc/netns/$NS/resolv.conf")"
 printf '   桥状态: %s\n' "$(cat /sys/class/net/$IFACE/operstate 2>/dev/null || echo '?')"
 printf '   客户端路由: %s\n' "$(ip netns exec "$NS" ip route show default | head -1)"
 sleep 2   # 等桥 learning / carrier 稳定
+
+# 抓包：客户端那一侧的所有报文（这是"包死在哪儿"的最直接证据）
+if command -v tcpdump >/dev/null 2>&1; then
+    rm -f "$PCAP"
+    tcpdump -i "$IFACE" -nn -s 128 -w "$PCAP" "host $CLIENT_IP" >/dev/null 2>&1 &
+    TCPDUMP_PID=$!
+    sleep 1
+    say "   已开始抓包 → $PCAP（接口 $IFACE，过滤 host $CLIENT_IP）"
+else
+    warn "没装 tcpdump，跳过抓包取证"
+fi
 
 inside() { ip netns exec "$NS" "$@"; }
 say "② 在 netns 里发请求（同时盯 Clash API，看有没有来自 $CLIENT_IP 的连接）"
@@ -174,6 +224,19 @@ for h in d.get("hits", [])[:4]:
     print(f"     {h['host'] or h['dest']}:{h['port']} 规则={h['rule'] or '-'} 链路={' → '.join(h['chains']) or '-'}")
 PY
 
+if [[ -s $PCAP ]]; then
+    say "④ 抓包分析（$PCAP）"
+    printf '   客户端发出的 SYN      : %s\n' "$(tcpdump -nn -r "$PCAP" 'tcp[tcpflags] & tcp-syn != 0 and src host '"$CLIENT_IP" 2>/dev/null | wc -l)"
+    printf '   回给客户端的 SYN-ACK  : %s\n' "$(tcpdump -nn -r "$PCAP" 'tcp[tcpflags] & (tcp-syn|tcp-ack) == (tcp-syn|tcp-ack) and dst host '"$CLIENT_IP" 2>/dev/null | wc -l)"
+    printf '   RST 报文              : %s\n' "$(tcpdump -nn -r "$PCAP" 'tcp[tcpflags] & tcp-rst != 0' 2>/dev/null | wc -l)"
+    echo "   TCP 会话表（收发双向，packets: A→B / B→A）:"
+    if command -v tshark >/dev/null 2>&1; then
+        tshark -r "$PCAP" -nn -q -z conv,tcp 2>/dev/null | sed -n '2,8p' | sed 's/^/     /'
+    else
+        tcpdump -nn -r "$PCAP" 2>/dev/null | awk '{print $3, $5}' | sort | uniq -c | sort -rn | head -6 | sed 's/^/     /'
+    fi
+fi
+
 echo
 if [[ -n $NS_EXIT && -n $PROXY_EXIT && $NS_EXIT == "$PROXY_EXIT" ]]; then
     printf '  \033[1;32m✅ 共享接管成功\033[0m：netns 里的流量确实被 eBPF shared 接管并走了代理\n'
@@ -184,6 +247,15 @@ elif [[ -n $NS_EXIT && $NS_EXIT == "$HOST_DIRECT" ]]; then
 else
     printf '  \033[1;33m⚠️ 结论不明\033[0m：netns 出口拿不到（链路/网段/桥的问题）\n'
     RC=2
+fi
+
+if (( DEBUG_LOG )); then
+    DBG=/tmp/sb-shared-debug.log
+    journalctl -u sing-box --since "-3 min" --no-pager > "$DBG" 2>/dev/null || true
+    say "⑤ debug 日志已存到 $DBG"
+    printf '   与 eBPF/TC/分配相关的行（前 12 条）:\n'
+    grep -iE "ebpf|tc |assign|token|rewrite|shared|packet" "$DBG" | tail -12 | sed 's/.*sing-box\[[0-9]*\]: //' | sed 's/^/     /' || true
+    restore_log
 fi
 
 if (( KEEP )); then
