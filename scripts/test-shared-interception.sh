@@ -199,28 +199,28 @@ t = threading.Thread(target=poll, daemon=True); t.start()
 # 从 netns 里发真实请求（由外层 shell 调用）
 probe = r"""
 {
-  echo "ADDR"; ip -brief addr
-  echo "ROUTE4"; ip route
-  echo "ROUTE6"; ip -6 route
-  echo "RESOLV"; cat /etc/resolv.conf
-  echo "DNS_AAAA"; getent ahostsv6 api.ipify.org | head -2
-  echo "DNS_A"; getent ahostsv4 api.ipify.org | head -2
-  echo "CURL4"; curl -4 -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org
-  echo "CURL6"; curl -6 -s -m 8  -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org
-  echo "CURLDEF"; curl -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org
-  echo "EXIT4"; curl -4 -s -m 15 https://api.ipify.org
-  echo "CN"; curl -4 -s -m 12 https://myip.ipip.net
-  echo "GOOGLE4"; curl -4 -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://www.google.com
-  echo "NEIGH"; ip neigh
-  echo "PINGGW"; ping -c1 -W2 192.168.122.1 >/dev/null 2>&1 && echo ok || echo fail
-  echo "ENV_PROXY"; env | grep -i proxy || echo none
-  echo "ROUTE_GET"; ip route get 104.26.13.205 2>&1 | head -2
-  echo "LINKSTAT"; ip -s link show sbveth-c | tail -3
-  echo "CURLV_CN"; curl -4 -v -m 8 https://myip.ipip.net 2>&1 | grep -aE "Trying|connect to|from |Failed|error|refused" | tail -5
-  echo "CURLV_FOREIGN"; curl -4 -v -m 8 https://api.ipify.org 2>&1 | grep -aE "Trying|connect to|from |Failed|error|refused" | tail -5
-  echo "CURLRC"; ls -la /root/.curlrc /etc/curlrc 2>/dev/null || echo none; echo "---"; cat /root/.curlrc 2>/dev/null || true
-  echo "CURLV_CLEANENV"; env -i /usr/bin/curl -4 -v -m 8 https://api.ipify.org 2>&1 | grep -aE "Trying|connect to|from |Failed|error|refused" | tail -5
-  echo "CURLV_BIND"; env -i /usr/bin/curl -4 -v --interface 192.168.122.250 -m 8 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org 2>&1 | tail -4
+  echo "@@ADDR"; ip -brief addr
+  echo "@@ROUTE4"; ip route
+  echo "@@ROUTE6"; ip -6 route
+  echo "@@RESOLV"; cat /etc/resolv.conf
+  echo "@@DNS_AAAA"; getent ahostsv6 api.ipify.org | head -2
+  echo "@@DNS_A"; getent ahostsv4 api.ipify.org | head -2
+  echo "@@CURL4"; curl -4 -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org
+  echo "@@CURL6"; curl -6 -s -m 8  -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org
+  echo "@@CURLDEF"; curl -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org
+  echo "@@EXIT4"; curl -4 -s -m 15 https://api.ipify.org
+  echo "@@CN"; curl -4 -s -m 12 https://myip.ipip.net
+  echo "@@GOOGLE4"; curl -4 -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://www.google.com
+  echo "@@NEIGH"; ip neigh
+  echo "@@PINGGW"; ping -c1 -W2 192.168.122.1 >/dev/null 2>&1 && echo ok || echo fail
+  echo "@@ENV_PROXY"; env | grep -i proxy || echo none
+  echo "@@ROUTE_GET"; ip route get 104.26.13.205 2>&1 | head -2
+  echo "@@LINKSTAT"; ip -s link show sbveth-c | tail -3
+  echo "@@CURLV_CN"; curl -4 -v -m 8 https://myip.ipip.net 2>&1 | grep -aE "Trying|connect to|from |Failed|error|refused" | tail -5
+  echo "@@CURLV_FOREIGN"; curl -4 -v -m 8 https://api.ipify.org 2>&1 | grep -aE "Trying|connect to|from |Failed|error|refused" | tail -5
+  echo "@@CURLRC"; ls -la /root/.curlrc /etc/curlrc 2>/dev/null || echo none; echo "---"; cat /root/.curlrc 2>/dev/null || true
+  echo "@@CURLV_CLEANENV"; env -i /usr/bin/curl -4 -v -m 8 https://api.ipify.org 2>&1 | grep -aE "Trying|connect to|from |Failed|error|refused" | tail -5
+  echo "@@CURLV_BIND"; env -i /usr/bin/curl -4 -v --interface 192.168.122.250 -m 8 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org 2>&1 | tail -4
 } > /tmp/sb-ns-diag.txt 2>&1
 """
 subprocess.run(["ip","netns","exec",ns,"sh","-c",probe], capture_output=True, timeout=90)
@@ -230,7 +230,13 @@ PY
 )"
 NS_DIAG="$(cat /tmp/sb-ns-diag.txt 2>/dev/null || true)"
 rm -f /tmp/sb-ns-diag.txt
-field() { printf '%s' "$NS_DIAG" | awk -v k="$1" '$0==k{f=1;next} /^[A-Z0-9_]+$/{f=0} f' | tr '\n' ' '; }
+field() { printf '%s' "$NS_DIAG" | python3 -c "
+import sys, re
+name = sys.argv[1]
+txt = sys.stdin.read()
+m = re.search(r'^@@' + re.escape(name) + r'$\n(.*?)(?=^@@|\Z)', txt, re.S | re.M)
+print(' '.join((m.group(1) if m else '').split()))
+" "$1"; }
 NS_EXIT="$(field EXIT4 | tr -d ' ')"
 NS_CN="$(field CN)"
 NS_GOOGLE_HTTP="$(field GOOGLE4)"
@@ -244,7 +250,13 @@ NS_NEIGH="$(field NEIGH)"
 NS_ENVPROXY="$(field ENV_PROXY)"
 NS_ROUTEGET="$(field ROUTE_GET)"
 NS_LINKSTAT="$(field LINKSTAT | tr -s ' ')"
-block() { printf '%s' "$NS_DIAG" | awk -v k="$1" '$0==k{f=1;next} /^[A-Z0-9_]+$/{f=0} f'; }
+block() { printf '%s' "$NS_DIAG" | python3 -c "
+import sys, re
+name = sys.argv[1]
+txt = sys.stdin.read()
+m = re.search(r'^@@' + re.escape(name) + r'$\n(.*?)(?=^@@|\Z)', txt, re.S | re.M)
+print((m.group(1) if m else '').rstrip())
+" "$1"; }
 NS_CURLV_CN="$(block CURLV_CN)"
 NS_CURLV_FOREIGN="$(block CURLV_FOREIGN)"
 NS_CURLRC="$(block CURLRC)"
@@ -306,16 +318,31 @@ if [[ -s $PCAP ]]; then
 fi
 
 echo
-if [[ -n $NS_EXIT && -n $PROXY_EXIT && $NS_EXIT == "$PROXY_EXIT" ]]; then
-    printf '  \033[1;32m✅ 共享接管成功\033[0m：netns 里的流量确实被 eBPF shared 接管并走了代理\n'
-    RC=0
-elif [[ -n $NS_EXIT && $NS_EXIT == "$HOST_DIRECT" ]]; then
-    printf '  \033[1;31m❌ 没被接管\033[0m：netns 出口 = 宿主直连出口，说明流量绕过了 sing-box\n'
-    RC=1
-else
-    printf '  \033[1;33m⚠️ 结论不明\033[0m：netns 出口拿不到（链路/网段/桥的问题）\n'
-    RC=2
-fi
+# 判据用 Clash API 的实际链路（比"和本地代理口比出口"更权威，local 关闭时也成立）
+VERDICT="$(python3 - "$CLASH_JSON" <<'PY'
+import json, sys
+try: d = json.loads(sys.argv[1])
+except Exception: d = {}
+hits = d.get("hits", []) or []
+total = d.get("total", 0)
+proxied = [h for h in hits if any("Proxy" in c or "Auto" in c for c in (h.get("chains") or []))]
+direct = [h for h in hits if h.get("chains") == ["direct"]]
+if total == 0:
+    print("none")
+elif proxied:
+    print("proxied")
+elif direct:
+    print("direct")
+else:
+    print("other")
+PY
+)"
+case "$VERDICT" in
+  proxied) printf '  \033[1;32m✅ 共享接管成功（走代理）\033[0m：客户端连接命中 Proxy 链路，抓包双向完整\n'; RC=0 ;;
+  direct)  printf '  \033[1;32m✅ 共享接管成功（走直连）\033[0m：客户端连接被判为 direct\n'; RC=0 ;;
+  none)    printf '  \033[1;31m❌ 没被接管\033[0m：Clash API 里没有来自测试客户端的连接\n'; RC=1 ;;
+  *)       printf '  \033[1;33m⚠️ 部分成功\033[0m：有连接但链路判断异常，看上面的规则/链路明细\n'; RC=2 ;;
+esac
 
 if (( DEBUG_LOG )); then
     DBG=/tmp/sb-shared-debug.log
