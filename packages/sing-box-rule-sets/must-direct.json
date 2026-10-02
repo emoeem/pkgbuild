@@ -3,27 +3,43 @@
   "rules": [
     {
       "domain_suffix": [
+        "client-update.queniuqe.com",
+        "csgo.com.cn",
+        "csgo.wmsj.cn",
+        "dl.steam.clngaa.com",
+        "dota2.com.cn",
+        "dota2.wmsj.cn",
+        "gstore.val.manlaxy.com",
         "lancache.steamcontent.com",
-        "stun.playstation.net",
+        "msftconnecttest.com",
+        "msftncsi.com",
         "srv.nintendo.net",
+        "st.dl.bscstorage.net",
+        "st.dl.eccdnx.com",
+        "st.dl.pinyuncloud.com",
+        "steamchina.com",
+        "steampowered.com.8686c.com",
+        "steamstatic.com.8686c.com",
+        "stun.playstation.net",
+        "stun.syncthing.net",
         "stun.twilio.com",
         "turn.twilio.com",
-        "stun.syncthing.net",
+        "wmsjsteam.com",
         "xboxlive.com",
-        "xboxservices.com",
-        "msftncsi.com",
-        "msftconnecttest.com"
+        "xboxservices.com"
       ],
       "domain": [
+        "dl.steam.ksyna.com",
+        "lv.queniujq.cn",
+        "steampipe.steamcontent.tnkjmec.com",
         "stun.l.google.com",
         "stun1.l.google.com",
         "stun2.l.google.com",
+        "time.apple.com",
         "time.windows.com",
-        "time.apple.com"
+        "xz.pphimalayanrt.com"
       ],
-      "domain_keyword": [
-        "stun."
-      ]
+      "domain_keyword": []
     }
   ]
 }

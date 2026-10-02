@@ -6,6 +6,7 @@
 #   anti-ad.srs         ← anti-AD 广告/追踪表（AdGuard 语法，构建时用 sing-box 自带转换器转 .srs）
 #   geoip-cn-fresh.srs  ← MetaCubeX 最新 geoip/cn（本地 sing-geoip-rule-set 常年偏旧，实测缺段）
 #   cncidr-mihomo.srs   ← HenryChiao/mihomo_yamls 的国内 IP 表（第三份独立来源）
+#   adblockfilters.srs  ← 217heidai/adblockfilters 聚合广告表（215k 条域名后缀，8 小时更新）
 #   must-direct.srs     ← 自制：STUN/游戏主机/LAN cache/NCSI 必须直连（走代理会坏功能）
 #   ads-extra.srs       ← 自制：anti-AD 漏掉的国内广告端点（精确域名，不动 apex）
 #
@@ -21,8 +22,8 @@
 
 pkgname=sing-box-rule-sets
 pkgver=20261002
-pkgrel=1
-pkgdesc='Extra sing-box rule-sets: anti-AD tracker list, fresh geoip/cn, mihomo CN CIDR, always-direct list, CN ad-SDK extras'
+pkgrel=2
+pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, always-direct list, CN ad-SDK extras'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
 license=('GPL-3.0-or-later' 'AGPL-3.0-or-later' 'LicenseRef-anti-AD')
@@ -34,6 +35,10 @@ source=(
     'anti-ad.txt::https://anti-ad.net/adguard.txt'
     'geoip-cn.srs::https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs'
     'cncidr.srs::https://raw.githubusercontent.com/HenryChiao/mihomo_yamls/ruleset/singbox/version4/cncidr.srs'
+    # adblockfilters（217heidai）：聚合 EasyList / EasyPrivacy / AdGuard 全家桶 / AdRules / OISD /
+    # DNS-Blocklists PRO / StevenBlack / AWAvenue …，每 8 小时更新，并会先用 3+3 组 DNS 验证
+    # 上游域名是否还有效（去掉失效的）。上游**直接提供 sing-box 1.12+ 的 .srs**，无需转换。
+    'adblockfilters.srs::https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblocksingbox.srs'
     'must-direct.json'
     'ads-extra.json'
     'LICENSE-anti-AD'
@@ -42,6 +47,7 @@ sha256sums=(
     '5b0f507dce4446e173c4a43bb51b410753f2793af8b5d2223daccf687eb2666f'
     'ac82bac86a7f9f873b4e016765f9ee5afe0152da52049b72c16f459572c317ee'
     'df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f'
+    '9d2029366331ba218e5a3508bb1ae963d83575c3e49b424d10eeb9db0c4a1934'
     'SKIP'
     'SKIP'
     'SKIP'
@@ -51,6 +57,7 @@ _rule_sets=(
     anti-ad
     geoip-cn-fresh
     cncidr-mihomo
+    adblockfilters
     must-direct
     ads-extra
 )
@@ -103,7 +110,8 @@ package() {
 | `anti-ad.srs` | anti-AD 广告/追踪表（AdGuard 源，构建时转换） | 补 DNS/连接层的广告拦截 |
 | `geoip-cn-fresh.srs` | MetaCubeX 最新 `geoip/cn` | 国内 IP 判定（比 `sing-geoip-rule-set` 新） |
 | `cncidr-mihomo.srs` | mihomo_yamls 的国内 IP 表（独立来源，17958 条） | 与上面互为补充 |
-| `must-direct.srs` | STUN / 游戏主机 / LAN cache / NCSI | 这些域名走代理会坏功能（NAT 类型、Steam 局域网缓存） |
+| `adblockfilters.srs` | 217heidai/adblockfilters 聚合表（215248 条域名后缀，8 小时更新） | 广告/追踪拦截的国际表覆盖更广（EasyPrivacy / AdGuard 全家桶 / OISD…） |
+| `must-direct.srs` | ① STUN / 游戏主机 / LAN cache / NCSI ② **Steam 国服 CDN** | ① 走代理会坏功能（NAT 类型、Steam 局域网缓存）；② 直连明显更快 —— 只取国内 CDN 端点（`st.dl.eccdnx.com`、`dl.steam.clngaa.com`、`csgo.com.cn`…，来自 lingqiqi5211/sing-box-rules 的 `steam-cn`），**刻意不含** `steamcontent.com` / `steamusercontent.com` / `cm.steampowered.com` 等全球域名（强制直连有风险） |
 | `ads-extra.srs` | `ad.duowan.com` / `sdkmob.com` / `ads.wps.cn` | 补 anti-AD 漏掉的国内广告端点（只用精确域名，不拦 apex） |
 
 ## 在 sing-box 配置里引用
@@ -114,10 +122,11 @@ package() {
 { "type": "local", "tag": "geoip/cn-fresh", "format": "binary", "path": "/usr/share/sing-box-rule-sets/geoip-cn-fresh.srs" },
 { "type": "local", "tag": "cncidr-mihomo",  "format": "binary", "path": "/usr/share/sing-box-rule-sets/cncidr-mihomo.srs" },
 { "type": "local", "tag": "must-direct",    "format": "binary", "path": "/usr/share/sing-box-rule-sets/must-direct.srs" },
-{ "type": "local", "tag": "ads-extra",      "format": "binary", "path": "/usr/share/sing-box-rule-sets/ads-extra.srs" }
+{ "type": "local", "tag": "ads-extra",      "format": "binary", "path": "/usr/share/sing-box-rule-sets/ads-extra.srs" },
+{ "type": "local", "tag": "adblockfilters", "format": "binary", "path": "/usr/share/sing-box-rule-sets/adblockfilters.srs" }
 
 // DNS 与路由的 reject 规则都要带上广告表（浏览器自带 DoH 会绕过 DNS 规则，连接层才是兜底）
-{ "rule_set": ["geosite/category-ads-all", "Ads_AWAvenue", "anti-AD", "ads-extra"], "action": "reject" }
+{ "rule_set": ["geosite/category-ads-all", "Ads_AWAvenue", "anti-AD", "ads-extra", "adblockfilters"], "action": "reject" }
 
 // 国内 IP：三份表一起匹配
 { "rule_set": ["geoip/cn", "geoip/cn-fresh", "cncidr-mihomo"], "action": "route", "outbound": "direct" }
@@ -131,6 +140,7 @@ package() {
 - `geoip-cn-fresh.srs`：MetaCubeX/meta-rules-dat，GPL-3.0-or-later
 - `cncidr-mihomo.srs`：HenryChiao/mihomo_yamls，AGPL-3.0-or-later
 - `anti-ad.srs`：prprpi/anti-AD（仓库未附许可证文件，个人使用）
+- `adblockfilters.srs`：217heidai/adblockfilters，GPL-3.0（聚合上游各表，上游许可见其仓库）
 - `must-direct.srs` / `ads-extra.srs`：本仓库自制
 EOF
 }

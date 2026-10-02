@@ -18,6 +18,7 @@ readonly -a urls=(
     "https://anti-ad.net/adguard.txt"
     "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs"
     "https://raw.githubusercontent.com/HenryChiao/mihomo_yamls/ruleset/singbox/version4/cncidr.srs"
+    "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblocksingbox.srs"
 )
 
 [[ -f "$pkgbuild" ]] || { printf 'missing %s\n' "$pkgbuild" >&2; exit 1; }
@@ -41,12 +42,12 @@ for i in "${!urls[@]}"; do
     printf '  %s  %s\n' "${new_sums[$i]:0:12}" "$url"
 done
 
-# 取出 PKGBUILD 里当前的前三个 sha256sums（远程源）
-mapfile -t old_sums < <(awk -F"'" '/^sha256sums=\(/{f=1;next} f&&/^\)/{exit} f&&/\x27[0-9a-f]{64}\x27/{gsub(/[^0-9a-f]/,"");print}' "$pkgbuild")
-old_sums=("${old_sums[@]:0:3}")
+# 取出 PKGBUILD 里当前的远程源 sha256sums（个数 = urls 的个数，别写死）
+mapfile -t old_sums < <(awk -F"'" '/^sha256sums=\(/{f=1;next} f&&/^\)/{exit} f&&/\x27[0-9a-f]{64}\x27/{gsub(/[^0-9a-f]/,"");print}' "$pkgbuild" | head -n "${#urls[@]}")
+old_sums=("${old_sums[@]:0:${#urls[@]}}")
 
 changed=0
-for i in 0 1 2; do
+for ((i = 0; i < ${#urls[@]}; i++)); do
     if [[ "${old_sums[$i]:-}" != "${new_sums[$i]}" ]]; then
         printf 'changed: source %d\n  old %s\n  new %s\n' "$i" "${old_sums[$i]:-<none>}" "${new_sums[$i]}"
         changed=1
@@ -70,8 +71,16 @@ p = pathlib.Path(path)
 s = p.read_text(encoding="utf-8")
 s = re.sub(r"^pkgver=.*$", f"pkgver={date_}", s, count=1, flags=re.M)
 s = re.sub(r"^pkgrel=\d+$", "pkgrel=1", s, count=1, flags=re.M)
-body = "".join(f"    '{v}'\n" if i < len(sums) else "" for i, v in enumerate(sums))
-s = re.sub(r"sha256sums=\(\n(?:.*\n)*?\)", "sha256sums=(\n" + body + "    'SKIP'\n    'SKIP'\n)", s, count=1)
+body = "".join(f"    '{v}'\n" for v in sums)
+# SKIP 的个数 = 本地源个数：从原文件里数出来，别写死（增减本地源时会错位，
+# 后果是 makepkg 报「完整性校验缺失」而构建失败）
+skip_count = len(re.findall(r"^\s*'SKIP'", s, flags=re.M))
+s = re.sub(
+    r"sha256sums=\(\n(?:.*\n)*?\)",
+    lambda _m: "sha256sums=(\n" + body + "    'SKIP'\n" * skip_count + ")",
+    s,
+    count=1,
+)
 p.write_text(s, encoding="utf-8")
 print(f"PKGBUILD updated: pkgver={date_}")
 PY
