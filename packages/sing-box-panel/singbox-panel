@@ -18,6 +18,7 @@ import os
 import re
 import secrets
 import shutil
+import tempfile
 import subprocess
 import sys
 import threading
@@ -321,11 +322,19 @@ class ConfigManager:
         cache = (probe.get("experimental", {}) or {}).get("cache_file")
         if isinstance(cache, dict) and cache.get("path"):
             cache["path"] = "/tmp/sing-box-panel-check-cache.db"
-        tmp = Path("/tmp/sing-box-panel-check.json")
-        tmp.write_text(json.dumps(probe, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        rc, out, e = run([self.s["sing_box_bin"], "check", "-c", str(tmp)], timeout=60)
-        tmp.unlink(missing_ok=True)
+        # 用 mkstemp 而不是固定 /tmp 路径：内核 fs.protected_regular=1 时，
+        # root 无法写 /tmp 下属于其他用户的已存在文件（EACCES），固定路径会偶发失败。
+        fd, tmp_path = tempfile.mkstemp(prefix="sing-box-panel-check-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(probe, fh, ensure_ascii=False, indent=2)
+            os.chmod(tmp_path, 0o600)
+            rc, out, e = run([self.s["sing_box_bin"], "check", "-c", tmp_path], timeout=60)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
         if rc == 0:
             return True, e or out or "check 通过"
         return False, (e or out or f"check 退出码 {rc}").strip()
@@ -342,10 +351,10 @@ class ConfigManager:
                 backup_name = self.backup(reason)
             target = self.s.sing_box_config
             if self.s.dry_run:
-                Path("/tmp/sing-box-panel-dryrun-config.json").write_text(
-                    self.s.dump_sing_box_config(new_cfg), encoding="utf-8"
-                )
-                return ok(f"[dry-run] 校验通过，已写入 /tmp/sing-box-panel-dryrun-config.json（未重启）")
+                fd, dry_path = tempfile.mkstemp(prefix="sing-box-panel-dryrun-", suffix=".json")
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(self.s.dump_sing_box_config(new_cfg))
+                return ok(f"[dry-run] 校验通过，已写入 {dry_path}（未重启）")
 
             previous = target.read_text("utf-8") if target.exists() else ""
             tmp = target.with_suffix(".json.panel-tmp")

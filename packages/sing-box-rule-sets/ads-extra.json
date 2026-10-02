@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "domain": ["ad.duowan.com", "sdkmob.com", "ads.wps.cn"],
+      "domain_suffix": ["sdkmob.com"]
+    }
+  ]
+}

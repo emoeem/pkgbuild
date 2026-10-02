@@ -21,7 +21,7 @@ _zash_ver=3.29.1
 
 pkgname=sing-box-panel
 pkgver=0.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc='Local web panel for sing-box: service control, subscriptions/nodes, per-app eBPF policy, safe config pipeline'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "domain_suffix": [
+        "lancache.steamcontent.com",
+        "stun.playstation.net",
+        "srv.nintendo.net",
+        "stun.twilio.com",
+        "turn.twilio.com",
+        "stun.syncthing.net",
+        "xboxlive.com",
+        "xboxservices.com",
+        "msftncsi.com",
+        "msftconnecttest.com"
+      ],
+      "domain": [
+        "stun.l.google.com",
+        "stun1.l.google.com",
+        "stun2.l.google.com",
+        "time.windows.com",
+        "time.apple.com"
+      ],
+      "domain_keyword": [
+        "stun."
+      ]
+    }
+  ]
+}

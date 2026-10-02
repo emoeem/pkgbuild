@@ -1,0 +1,64 @@
+name: Refresh sing-box rule-sets
+
+# sing-box-rule-sets 的数据每天都在变（anti-AD / MetaCubeX / mihomo_yamls），
+# 这里每天比对三个远程源的 sha256：有变化才更新 PKGBUILD 并推送，推送会触发 build.yml 重建该包；
+# 没有变化就什么都不做，不浪费 CI。
+on:
+  schedule:
+    # 23:40 UTC = 次日 07:40 CST，紧跟 mihomo_yamls 的 07:30 构建
+    - cron: "40 23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: refresh-rule-sets
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Check upstream rule-set sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Refresh rule-set sources
+        id: refresh
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          chmod +x scripts/refresh-rule-sets.sh
+          before="$(sha256sum packages/sing-box-rule-sets/PKGBUILD | cut -d' ' -f1)"
+          ./scripts/refresh-rule-sets.sh
+          after="$(sha256sum packages/sing-box-rule-sets/PKGBUILD | cut -d' ' -f1)"
+          if [[ "$before" == "$after" ]]; then
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            echo "No upstream rule-set change."
+          else
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate package metadata
+        if: steps.refresh.outputs.updated == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ./scripts/check-package.sh sing-box-rule-sets
+
+      - name: Commit and push
+        if: steps.refresh.outputs.updated == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/sing-box-rule-sets
+          git diff --cached --quiet && { echo "Nothing staged."; exit 0; }
+          git commit -m "chore(sing-box-rule-sets): refresh upstream rule-sets"
+          git push

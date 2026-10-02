@@ -27,6 +27,7 @@
 | `scx-scheds-git` | `x86_64` | sched_ext 调度器集合 |
 | `sing-box-ebpf` | `x86_64` | 带实验性 eBPF 入站的 sing-box（reF1nd 分支，`with_ebpf`，替换官方 `sing-box`） |
 | `sing-box-panel` | `any` | sing-box 本地面板：服务控制、订阅/节点、分应用 eBPF 策略、配置安全管线（内嵌 zashboard） |
+| `sing-box-rule-sets` | `any` | sing-box 补充规则集：anti-AD 广告表、最新 geoip/cn、mihomo 国内 IP 表、必须直连清单、国内广告补漏（每日自动比对上游） |
 | `vapoursynth-plugin-mlrt-ncnn-runtime` | `x86_64` | VapourSynth MLRT NCNN runtime |
 | `mpeghdec` | `x86_64` | Fraunhofer MPEG-H 解码器 |
 | `quirc` | `i686`, `x86_64` | QR 解码库 |
@@ -76,6 +77,12 @@ PKGBUILD 重新构建，不会直接安装同名预编译包。
 **Maintenance** 工作流每天 `16:17 UTC` 运行：清理过期 Artifact，并把已
 发布软件包记录的 soname 依赖与当前各仓库比对，发现依赖过时就自动触发
 对应软件包重建。
+
+**Refresh sing-box rule-sets** 工作流每天 `23:40 UTC`（次日 `07:40 CST`）运行
+`scripts/refresh-rule-sets.sh`：比对 `sing-box-rule-sets` 三个上游源（anti-AD /
+MetaCubeX `geoip/cn` / mihomo_yamls `cncidr`）的 sha256，**有变化才**更新 PKGBUILD
+的校验和与 `pkgver`（日期）并推送，进而触发该包重建；没有变化就不产生提交。
+本地可随时 `./scripts/refresh-rule-sets.sh --check` 预览。
 
 ## 添加 AUR 软件包
 

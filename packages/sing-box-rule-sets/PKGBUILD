@@ -1,0 +1,136 @@
+# Maintainer: emoeem
+#
+# 补充规则集包：把审计(2026-10-02)里验证过的几份规则数据固化成「跟着 pacman 更新」的资产。
+#
+# 内容（装到 /usr/share/sing-box-rule-sets/）：
+#   anti-ad.srs         ← anti-AD 广告/追踪表（AdGuard 语法，构建时用 sing-box 自带转换器转 .srs）
+#   geoip-cn-fresh.srs  ← MetaCubeX 最新 geoip/cn（本地 sing-geoip-rule-set 常年偏旧，实测缺段）
+#   cncidr-mihomo.srs   ← HenryChiao/mihomo_yamls 的国内 IP 表（第三份独立来源）
+#   must-direct.srs     ← 自制：STUN/游戏主机/LAN cache/NCSI 必须直连（走代理会坏功能）
+#   ads-extra.srs       ← 自制：anti-AD 漏掉的国内广告端点（精确域名，不动 apex）
+#
+# 为什么单独打包：这些数据每天都在变，而 sing-geoip-rule-set / sing-geosite-rule-set 更新很慢；
+# 放在这里就能跟着本仓库的 CI 一起滚动重建（见 scripts/refresh-rule-sets.sh + 定时工作流）。
+#
+# 数据来源与许可：
+#   MetaCubeX/meta-rules-dat → GPL-3.0-or-later
+#   HenryChiao/mihomo_yamls  → AGPL-3.0-or-later
+#   anti-AD (prprpi/anti-AD) → 仓库未附许可证文件，个人使用；此处标注 LicenseRef-anti-AD
+#
+# 升级方式：`pkgver` 用日期；改了远程源就用 `scripts/refresh-rule-sets.sh` 自动比对 sha256 并提交。
+
+pkgname=sing-box-rule-sets
+pkgver=20261002
+pkgrel=1
+pkgdesc='Extra sing-box rule-sets: anti-AD tracker list, fresh geoip/cn, mihomo CN CIDR, always-direct list, CN ad-SDK extras'
+arch=('any')
+url='https://github.com/emoeem/pkgbuild'
+license=('GPL-3.0-or-later' 'AGPL-3.0-or-later' 'LicenseRef-anti-AD')
+# 运行时要 sing-box 来读这些规则集；构建时也要它自带的 rule-set 转换器
+depends=('sing-box')
+makedepends=('sing-box')
+options=('!strip')
+source=(
+    'anti-ad.txt::https://anti-ad.net/adguard.txt'
+    'geoip-cn.srs::https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs'
+    'cncidr.srs::https://raw.githubusercontent.com/HenryChiao/mihomo_yamls/ruleset/singbox/version4/cncidr.srs'
+    'must-direct.json'
+    'ads-extra.json'
+    'LICENSE-anti-AD'
+)
+sha256sums=(
+    '5b0f507dce4446e173c4a43bb51b410753f2793af8b5d2223daccf687eb2666f'
+    'ac82bac86a7f9f873b4e016765f9ee5afe0152da52049b72c16f459572c317ee'
+    'df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+)
+
+_rule_sets=(
+    anti-ad
+    geoip-cn-fresh
+    cncidr-mihomo
+    must-direct
+    ads-extra
+)
+
+build() {
+    cd "$srcdir"
+
+    # AdGuard 语法 → sing-box 二进制规则集（用的是包依赖里的 sing-box 自带转换器）
+    sing-box rule-set convert anti-ad.txt -t adguard -o anti-ad.srs
+
+    # 自制清单：源 JSON → .srs
+    sing-box rule-set compile must-direct.json -o must-direct.srs
+    sing-box rule-set compile ads-extra.json   -o ads-extra.srs
+
+    # 上游直接给的 .srs 改个更明确的名字
+    install -m 644 geoip-cn.srs   geoip-cn-fresh.srs
+    install -m 644 cncidr.srs     cncidr-mihomo.srs
+
+    # 兜底断言：五份产物都必须是合法 rule-set（magic = "SRS"）
+    local f
+    for f in "${_rule_sets[@]}"; do
+        [[ -s "$f.srs" ]] || { printf 'sing-box-rule-sets: %s.srs 为空\n' "$f" >&2; return 1; }
+        [[ "$(head -c 3 "$f.srs")" == "SRS" ]] || {
+            printf 'sing-box-rule-sets: %s.srs 不是合法 rule-set\n' "$f" >&2
+            return 1
+        }
+    done
+    printf '%s\n' "Built ${#_rule_sets[@]} rule-sets:"
+    ls -la ./*.srs | awk '{print "  ",$5,$9}'
+}
+
+package() {
+    install -d "$pkgdir/usr/share/sing-box-rule-sets"
+    local f
+    for f in "${_rule_sets[@]}"; do
+        install -m 644 "$srcdir/$f.srs" "$pkgdir/usr/share/sing-box-rule-sets/$f.srs"
+    done
+
+    # 许可证说明：namcap 要求 LicenseRef-* 必须在 /usr/share/licenses/<pkg>/ 下有对应文件
+    install -Dm644 "$srcdir/LICENSE-anti-AD" \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE-anti-AD"
+
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/sing-box-rule-sets/README.md" <<'EOF'
+# sing-box 补充规则集
+
+由 `sing-box-rule-sets` 包安装到本目录，随 pacman 更新。所有文件都是 sing-box 二进制规则集（`.srs`）。
+
+| 文件 | 内容 | 用途 |
+|---|---|---|
+| `anti-ad.srs` | anti-AD 广告/追踪表（AdGuard 源，构建时转换） | 补 DNS/连接层的广告拦截 |
+| `geoip-cn-fresh.srs` | MetaCubeX 最新 `geoip/cn` | 国内 IP 判定（比 `sing-geoip-rule-set` 新） |
+| `cncidr-mihomo.srs` | mihomo_yamls 的国内 IP 表（独立来源，17958 条） | 与上面互为补充 |
+| `must-direct.srs` | STUN / 游戏主机 / LAN cache / NCSI | 这些域名走代理会坏功能（NAT 类型、Steam 局域网缓存） |
+| `ads-extra.srs` | `ad.duowan.com` / `sdkmob.com` / `ads.wps.cn` | 补 anti-AD 漏掉的国内广告端点（只用精确域名，不拦 apex） |
+
+## 在 sing-box 配置里引用
+
+```jsonc
+// route.rule_set
+{ "type": "local", "tag": "anti-AD",     "format": "binary", "path": "/usr/share/sing-box-rule-sets/anti-ad.srs" },
+{ "type": "local", "tag": "geoip/cn-fresh", "format": "binary", "path": "/usr/share/sing-box-rule-sets/geoip-cn-fresh.srs" },
+{ "type": "local", "tag": "cncidr-mihomo",  "format": "binary", "path": "/usr/share/sing-box-rule-sets/cncidr-mihomo.srs" },
+{ "type": "local", "tag": "must-direct",    "format": "binary", "path": "/usr/share/sing-box-rule-sets/must-direct.srs" },
+{ "type": "local", "tag": "ads-extra",      "format": "binary", "path": "/usr/share/sing-box-rule-sets/ads-extra.srs" }
+
+// DNS 与路由的 reject 规则都要带上广告表（浏览器自带 DoH 会绕过 DNS 规则，连接层才是兜底）
+{ "rule_set": ["geosite/category-ads-all", "Ads_AWAvenue", "anti-AD", "ads-extra"], "action": "reject" }
+
+// 国内 IP：三份表一起匹配
+{ "rule_set": ["geoip/cn", "geoip/cn-fresh", "cncidr-mihomo"], "action": "route", "outbound": "direct" }
+
+// 必须直连：放在 ip_is_private 之后、广告规则之前
+{ "rule_set": ["must-direct"], "action": "route", "outbound": "direct" }
+```
+
+## 许可证
+
+- `geoip-cn-fresh.srs`：MetaCubeX/meta-rules-dat，GPL-3.0-or-later
+- `cncidr-mihomo.srs`：HenryChiao/mihomo_yamls，AGPL-3.0-or-later
+- `anti-ad.srs`：prprpi/anti-AD（仓库未附许可证文件，个人使用）
+- `must-direct.srs` / `ads-extra.srs`：本仓库自制
+EOF
+}

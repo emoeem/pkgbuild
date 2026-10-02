@@ -1,0 +1,26 @@
+pkgbase = sing-box-rule-sets
+	pkgdesc = Extra sing-box rule-sets: anti-AD tracker list, fresh geoip/cn, mihomo CN CIDR, always-direct list, CN ad-SDK extras
+	pkgver = 20261002
+	pkgrel = 1
+	url = https://github.com/emoeem/pkgbuild
+	arch = any
+	license = GPL-3.0-or-later
+	license = AGPL-3.0-or-later
+	license = LicenseRef-anti-AD
+	makedepends = sing-box
+	depends = sing-box
+	options = !strip
+	source = anti-ad.txt::https://anti-ad.net/adguard.txt
+	source = geoip-cn.srs::https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs
+	source = cncidr.srs::https://raw.githubusercontent.com/HenryChiao/mihomo_yamls/ruleset/singbox/version4/cncidr.srs
+	source = must-direct.json
+	source = ads-extra.json
+	source = LICENSE-anti-AD
+	sha256sums = 5b0f507dce4446e173c4a43bb51b410753f2793af8b5d2223daccf687eb2666f
+	sha256sums = ac82bac86a7f9f873b4e016765f9ee5afe0152da52049b72c16f459572c317ee
+	sha256sums = df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+
+pkgname = sing-box-rule-sets

@@ -1,0 +1,32 @@
+sing-box-rule-sets —— 数据来源与许可说明
+========================================
+
+本包不包含任何可执行代码，只安装从公开规则数据转换/编译得到的 sing-box 二进制规则集
+（`.srs`），安装位置 /usr/share/sing-box-rule-sets/。
+
+来源与许可
+----------
+1) anti-ad.srs
+   来源：https://anti-ad.net/adguard.txt （prprpi/anti-AD）
+   许可：上游仓库未附许可证文件。此处按 LicenseRef-anti-AD 处理，仅供个人使用；
+         如需再分发请先向上游确认。
+
+2) geoip-cn-fresh.srs
+   来源：https://github.com/MetaCubeX/meta-rules-dat （sing 分支 geo/geoip/cn.srs）
+   许可：GPL-3.0-or-later
+
+3) cncidr-mihomo.srs
+   来源：https://github.com/HenryChiao/mihomo_yamls （ruleset 分支 singbox/version4/cncidr.srs）
+   许可：AGPL-3.0-or-later
+
+4) must-direct.srs / ads-extra.srs
+   来源：本包自带源文件（must-direct.json / ads-extra.json），随 PKGBUILD 一同维护。
+   许可：MIT（与本仓库其余自制内容一致）
+
+转换方式
+--------
+- anti-ad.srs        : sing-box rule-set convert anti-ad.txt -t adguard
+- must-direct.srs    : sing-box rule-set compile must-direct.json
+- ads-extra.srs      : sing-box rule-set compile ads-extra.json
+- geoip-cn-fresh.srs : 直接使用上游 .srs（仅改名）
+- cncidr-mihomo.srs  : 直接使用上游 .srs（仅改名）
