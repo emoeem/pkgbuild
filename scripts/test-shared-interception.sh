@@ -180,7 +180,11 @@ probe = r"""
   echo "ENV_PROXY"; env | grep -i proxy || echo none
   echo "ROUTE_GET"; ip route get 104.26.13.205 2>&1 | head -2
   echo "LINKSTAT"; ip -s link show sbveth-c | tail -3
-  echo "CURLV"; curl -4 -v -m 10 https://api.ipify.org 2>&1 | tail -14
+  echo "CURLV_CN"; curl -4 -v -m 8 https://myip.ipip.net 2>&1 | grep -aE "Trying|connect to|from |Failed|error|refused" | tail -5
+  echo "CURLV_FOREIGN"; curl -4 -v -m 8 https://api.ipify.org 2>&1 | grep -aE "Trying|connect to|from |Failed|error|refused" | tail -5
+  echo "CURLRC"; ls -la /root/.curlrc /etc/curlrc 2>/dev/null || echo none; echo "---"; cat /root/.curlrc 2>/dev/null || true
+  echo "CURLV_CLEANENV"; env -i /usr/bin/curl -4 -v -m 8 https://api.ipify.org 2>&1 | grep -aE "Trying|connect to|from |Failed|error|refused" | tail -5
+  echo "CURLV_BIND"; env -i /usr/bin/curl -4 -v --interface 192.168.122.250 -m 8 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org 2>&1 | tail -4
 } > /tmp/sb-ns-diag.txt 2>&1
 """
 subprocess.run(["ip","netns","exec",ns,"sh","-c",probe], capture_output=True, timeout=90)
@@ -204,7 +208,12 @@ NS_NEIGH="$(field NEIGH)"
 NS_ENVPROXY="$(field ENV_PROXY)"
 NS_ROUTEGET="$(field ROUTE_GET)"
 NS_LINKSTAT="$(field LINKSTAT | tr -s ' ')"
-NS_CURLV="$(printf '%s' "$NS_DIAG" | awk '/^CURLV$/{f=1;next} /^[A-Z0-9_]+$/{f=0} f')"
+block() { printf '%s' "$NS_DIAG" | awk -v k="$1" '$0==k{f=1;next} /^[A-Z0-9_]+$/{f=0} f'; }
+NS_CURLV_CN="$(block CURLV_CN)"
+NS_CURLV_FOREIGN="$(block CURLV_FOREIGN)"
+NS_CURLRC="$(block CURLRC)"
+NS_CURLV_CLEAN="$(block CURLV_CLEANENV)"
+NS_CURLV_BIND="$(block CURLV_BIND)"
 PROXY_EXIT="$(curl -s -m 10 -x http://127.0.0.1:7892 https://api.ipify.org 2>/dev/null || true)"
 HOST_DIRECT="$(curl -s -m 10 https://api.ipify.org 2>/dev/null || true)"
 
@@ -223,8 +232,12 @@ printf '   netns 邻居表           : %s\n' "${NS_NEIGH:-空}"
 printf '   netns 代理环境变量     : %s\n' "${NS_ENVPROXY:-none}"
 printf '   netns 去 104.26.13.205 的路由: %s\n' "${NS_ROUTEGET:-?}"
 printf '   netns 接口计数         : %s\n' "${NS_LINKSTAT:-?}"
-echo "   netns curl -4 -v 尾部（关键：看它卡在哪一步）:"
-printf '%s\n' "${NS_CURLV:-（空）}" | sed 's/^/     /' | tail -14
+echo "   A/B 对照（这是关键）:"
+printf '     国内(可用)  : %s\n' "$(printf '%s' "${NS_CURLV_CN:-?}" | tr '\n' ' ' | cut -c1-150)"
+printf '     境外(失败)  : %s\n' "$(printf '%s' "${NS_CURLV_FOREIGN:-?}" | tr '\n' ' ' | cut -c1-150)"
+printf '     curl 配置   : %s\n' "$(printf '%s' "${NS_CURLRC:-none}" | tr '\n' ' ' | cut -c1-120)"
+printf '     干净环境    : %s\n' "$(printf '%s' "${NS_CURLV_CLEAN:-?}" | tr '\n' ' ' | cut -c1-150)"
+printf '     指定源地址  : %s\n' "$(printf '%s' "${NS_CURLV_BIND:-?}" | tr '\n' ' ' | cut -c1-150)"
 python3 - "$CLASH_JSON" <<'PY'
 import json, sys
 try: d = json.loads(sys.argv[1])
