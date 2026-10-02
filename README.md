@@ -86,13 +86,14 @@ MetaCubeX `geoip/cn` / mihomo_yamls `cncidr`）的 sha256，**有变化才**更�
 
 ## sing-box 运维脚本
 
-`scripts/` 下有三个配合 `sing-box-ebpf` / `sing-box-rule-sets` 使用的运维脚本（都可重复执行、都走
+`scripts/` 下有四个配合 `sing-box-ebpf` / `sing-box-rule-sets` 使用的运维脚本（都可重复执行、都走
 "改配置 → `sing-box check` → 备份 → 原子替换 → 重启 → 健康检查 → 失败自动回滚" 的安全管线）：
 
 | 脚本 | 用途 |
 | --- | --- |
 | `apply-audit-fixes.sh` | 审计修复：加 anti-AD 规则集、刷新 geoip/cn、清理冗余规则与 `dns-local`。可选开关：`--with-cncidr`（mihomo 国内 IP 表）、`--with-direct-list`（STUN/主机/LAN cache 直连）、`--with-extra-ads`（国内广告端点补漏）、`--with-dns-groups`（DNS 故障转移组）、`--use-package-paths`（规则集走 `/usr/share`）、`--nxdomain-ads`（把 DNS 广告拦截从 REFUSED 改成 NXDOMAIN，避免应用卡 5 秒） |
 | `switch-to-ebpf.sh` | 把 TUN 入站切换为 eBPF 入站（`--shared <接口>` 可同时接管下游）。健康判据用 `sing-box api ebpf` 附件状态 + "不设代理的请求是否走代理"，失败自动回滚到 TUN |
+| `switch-to-tun.sh` | 从 eBPF 切回 TUN（TUN 靠 `auto_route` 覆盖转发流量，容器/虚拟机也能被代理）。TUN 定义取自最近的 `config.*.pre-ebpf.json` 备份，当前配置里的 DNS 组/广告规则/规则集全部保留；`--from <备份>` 可指定 |
 | `enable-container-proxy.sh` | 让 **rootful** podman 容器也走代理：在 podman 网桥上开启 eBPF `shared` 数据面，并用真实容器验证；`--disable` 关闭 |
 
 > 背景：rootless podman 默认的 pasta 把容器数据包 splice 进宿主栈、不创建宿主 socket，
