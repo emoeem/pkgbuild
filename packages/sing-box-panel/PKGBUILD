@@ -1,0 +1,99 @@
+# Maintainer: emoeem
+#
+# sing-box 本地面板：把「改配置 → 校验 → 重启 → 失败回滚」变成可点按钮的东西，
+# 并补上 Clash 类面板（MetaCubeXD / zashboard）做不到的三块：
+#   1. 订阅抓取与转换（ss/vmess/vless/trojan/hysteria2/tuic 链接 + Clash YAML）
+#   2. 分应用策略（写 eBPF 入站的 include_uid / exclude_uid）
+#   3. 服务控制与配置安全应用（备份 / sing-box check / 原子替换 / 健康检查 / 自动回滚）
+# 运行状态页内嵌 zashboard（MIT，随包分发，无需联网加载）。
+#
+# 后端只用 Python3 标准库；Clash YAML 解析若装了 python-yaml 则用它，否则退化为内置子集解析器。
+#
+# namcap 已知误报（实测 `namcap <包>` 退出码仍为 0，不会中断 CI）：
+#   1) "Referenced library 'python3' is an uninstalled dependency" —— Arch 的 `python` 包
+#      本身就 Provides: python3（`pacman -Qi python` 可证），namcap 只按字面名字找包。
+#   2) "Dependency included, but may not be needed ('sing-box')" —— 面板通过
+#      `sing-box check` / `sing-box tools ebpf status` 调用它，namcap 看不到这种依赖关系。
+#
+# 升级 zashboard：改 _zash_ver 与 sha256sums 里对应的哈希（下载对应版本 dist-no-fonts.zip 后 sha256sum 得到）。
+
+_zash_ver=3.29.1
+
+pkgname=sing-box-panel
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Local web panel for sing-box: service control, subscriptions/nodes, per-app eBPF policy, safe config pipeline'
+arch=('any')
+url='https://github.com/emoeem/pkgbuild'
+license=('MIT')
+# python：后端解释器；python-yaml：解析 Clash YAML 订阅（代码里有内置子集解析器兜底）
+# sing-box：面板要调用 `sing-box check` / `tools ebpf status`
+depends=('python' 'python-yaml' 'sing-box')
+makedepends=()
+options=('!strip')
+source=(
+    'singbox-panel'
+    'sing-box-panel.service'
+    'panel.json.example'
+    'panel-index.html'
+    'panel-app.js'
+    'panel-style.css'
+    "zashboard-${_zash_ver}.zip::https://github.com/Zephyruso/zashboard/releases/download/v${_zash_ver}/dist-no-fonts.zip"
+)
+sha256sums=(
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    '21371cd111b6b3d87774f3ea3ddeacdcb0f6aff8690a16d652daa3ea6e3b0145'
+)
+
+package() {
+    install -Dm755 "$srcdir/singbox-panel" "$pkgdir/usr/bin/sing-box-panel"
+    install -Dm644 "$srcdir/sing-box-panel.service" \
+        "$pkgdir/usr/lib/systemd/system/sing-box-panel.service"
+
+    install -Dm644 "$srcdir/panel-index.html" "$pkgdir/usr/share/sing-box-panel/ui/index.html"
+    install -Dm644 "$srcdir/panel-app.js" "$pkgdir/usr/share/sing-box-panel/ui/app.js"
+    install -Dm644 "$srcdir/panel-style.css" "$pkgdir/usr/share/sing-box-panel/ui/style.css"
+
+    # zashboard（zip 顶层目录是 dist/），MIT 许可，运行时页直接用本地文件，不联网
+    install -d "$pkgdir/usr/share/sing-box-panel/zashboard"
+    cp -a "$srcdir/dist/." "$pkgdir/usr/share/sing-box-panel/zashboard/"
+
+    # 默认配置只作为示例放 share，不往 /etc 里塞东西；面板在缺少它时用同样的内置默认值
+    install -Dm644 "$srcdir/panel.json.example" \
+        "$pkgdir/usr/share/sing-box-panel/panel.json.example"
+    install -Dm644 "$srcdir/zashboard-${_zash_ver}.zip" \
+        "$pkgdir/usr/share/licenses/$pkgname/zashboard-${_zash_ver}-dist-no-fonts.zip"
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<'EOF'
+sing-box-panel — MIT License
+
+Copyright (c) 2026 emoeem
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-------------------------------------------------------------------------------
+本包分发的 zashboard 静态资源来自 https://github.com/Zephyruso/zashboard
+（MIT License，版本 v${_zash_ver}，dist-no-fonts.zip），原始许可证见
+https://github.com/Zephyruso/zashboard/blob/main/LICENSE
+EOF
+}

@@ -25,6 +25,8 @@
 | `llama.cpp-cuda` | `x86_64` | CUDA 优化的 llama.cpp stable 构建 |
 | `llama.cpp-cuda-git` | `x86_64` | CUDA 优化的 llama.cpp development 构建 |
 | `scx-scheds-git` | `x86_64` | sched_ext 调度器集合 |
+| `sing-box-ebpf` | `x86_64` | 带实验性 eBPF 入站的 sing-box（reF1nd 分支，`with_ebpf`，替换官方 `sing-box`） |
+| `sing-box-panel` | `any` | sing-box 本地面板：服务控制、订阅/节点、分应用 eBPF 策略、配置安全管线（内嵌 zashboard） |
 | `vapoursynth-plugin-mlrt-ncnn-runtime` | `x86_64` | VapourSynth MLRT NCNN runtime |
 | `mpeghdec` | `x86_64` | Fraunhofer MPEG-H 解码器 |
 | `quirc` | `i686`, `x86_64` | QR 解码库 |

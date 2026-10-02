@@ -1,0 +1,17 @@
+{
+  "listen": "127.0.0.1",
+  "port": 9096,
+  "sing_box_config": "/etc/sing-box/config.json",
+  "service": "sing-box",
+  "sing_box_bin": "/usr/bin/sing-box",
+  "clash_api": "http://127.0.0.1:9090",
+  "state_dir": "/var/lib/sing-box-panel",
+  "ui_dir": "/usr/share/sing-box-panel/ui",
+  "zashboard_dir": "/usr/share/sing-box-panel/zashboard",
+  "subscription_proxy": "http://127.0.0.1:7892",
+  "managed_group": "Proxy",
+  "managed_urltest": "Auto",
+  "restart_timeout": 20,
+  "health_probe_url": "",
+  "backup_keep": 30
+}

@@ -1,0 +1,24 @@
+pkgbase = sing-box-ebpf
+	pkgdesc = The universal proxy platform with the experimental eBPF inbound (reF1nd fork, x86-64-v3 static build)
+	pkgver = 1.14.2.ref1nd
+	pkgrel = 1
+	url = https://github.com/reF1nd/sing-box
+	arch = x86_64
+	license = GPL-3.0-or-later
+	license = LicenseRef-sing-box-exception
+	makedepends = base-devel
+	makedepends = git
+	makedepends = go
+	optdepends = sing-geosite-rule-set: GeoSite rule sets for domain matching
+	optdepends = sing-geoip-rule-set: GeoIP rule sets for IP matching
+	optdepends = networkmanager: Wi-Fi SSID/BSSID routing rule support via NetworkManager
+	optdepends = iwd: Wi-Fi SSID/BSSID routing rule support via iwd
+	provides = sing-box
+	conflicts = sing-box
+	conflicts = sing-box-git
+	conflicts = sing-box-bin
+	options = !debug
+	source = git+https://github.com/reF1nd/sing-box.git#tag=v1.14.2-reF1nd
+	sha256sums = SKIP
+
+pkgname = sing-box-ebpf

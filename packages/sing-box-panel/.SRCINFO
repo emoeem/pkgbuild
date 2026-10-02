@@ -1,0 +1,27 @@
+pkgbase = sing-box-panel
+	pkgdesc = Local web panel for sing-box: service control, subscriptions/nodes, per-app eBPF policy, safe config pipeline
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/emoeem/pkgbuild
+	arch = any
+	license = MIT
+	depends = python
+	depends = python-yaml
+	depends = sing-box
+	options = !strip
+	source = singbox-panel
+	source = sing-box-panel.service
+	source = panel.json.example
+	source = panel-index.html
+	source = panel-app.js
+	source = panel-style.css
+	source = zashboard-3.29.1.zip::https://github.com/Zephyruso/zashboard/releases/download/v3.29.1/dist-no-fonts.zip
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = 21371cd111b6b3d87774f3ea3ddeacdcb0f6aff8690a16d652daa3ea6e3b0145
+
+pkgname = sing-box-panel

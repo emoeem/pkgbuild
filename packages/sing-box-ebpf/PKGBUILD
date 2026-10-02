@@ -1,0 +1,167 @@
+# Maintainer: emoeem
+#
+# sing-box + 实验性 eBPF 入站（reF1nd 分支）
+# ==========================================
+# 为什么需要自建包：`"type": "ebpf"` 入站**只存在于 reF1nd/sing-box 分支**，
+# 上游 SagerNet/sing-box 没有这个功能，而且必须带 `with_ebpf` 编译标签才会编进去。
+# 该分支在 GitHub 上**没有任何 release 产物**（只有 tag），所以二进制只能自己编 ——
+# 这个包就是把「自编」固化成 pacman 可管理、可回滚的一步。
+#
+# 包与官方 `sing-box` 互斥（conflicts + provides），因为两者都提供 /usr/bin/sing-box
+# 和同名 systemd 单元；两个透明代理也绝不能同时运行。
+#
+# 升级步骤：
+#   1. 在 https://github.com/reF1nd/sing-box/tags 选新 tag（稳定基线优先，例如 v1.15.x-reF1nd）
+#   2. 改 _tag、_commit（git rev-parse <tag>）、pkgver（用「上游版本.ref1nd」形式）
+#   3. cd packages/sing-box-ebpf && makepkg --printsrcinfo > .SRCINFO
+
+_tag=v1.14.2-reF1nd
+_commit=7c1ffd271cbc84fed23eaabdcd7e1cefb42a778e   # git rev-parse v1.14.2-reF1nd，用于拦住被移动的 tag
+
+pkgname=sing-box-ebpf
+pkgver=1.14.2.ref1nd
+pkgrel=1
+pkgdesc='The universal proxy platform with the experimental eBPF inbound (reF1nd fork, x86-64-v3 static build)'
+arch=('x86_64')
+url='https://github.com/reF1nd/sing-box'
+license=('GPL-3.0-or-later' 'LicenseRef-sing-box-exception')
+# CGO_ENABLED=0 编出的是静态链接二进制，运行时不需要任何共享库（实测 `ldd` = 非动态可执行文件）
+depends=()
+optdepends=(
+    'sing-geosite-rule-set: GeoSite rule sets for domain matching'
+    'sing-geoip-rule-set: GeoIP rule sets for IP matching'
+    'networkmanager: Wi-Fi SSID/BSSID routing rule support via NetworkManager'
+    'iwd: Wi-Fi SSID/BSSID routing rule support via iwd'
+)
+makedepends=('base-devel' 'git' 'go')
+provides=('sing-box')
+conflicts=('sing-box' 'sing-box-git' 'sing-box-bin')
+# 只打包主程序，不额外产出空的 -debug 包
+options=('!debug')
+# 说明：namcap 会对产物报两条 "lacks FULL RELRO" / "lacks PIE" —— 这是 Go 静态二进制的
+# 常态（官方 sing-box 包同样如此）。实测 `namcap <包>` 在有这两条 W: 时退出码仍为 0，
+# 不会中断 CI；换成 -buildmode=pie -bindnow 可以消掉，代价是引入 glibc(ld.so) 运行时依赖，
+# 得不偿失。这里选择「零运行时依赖的静态二进制 + 已知告警」。
+source=("git+https://github.com/reF1nd/sing-box.git#tag=${_tag}")
+sha256sums=('SKIP')
+
+# 构建标签 = 该 tag 的 release/DEFAULT_BUILD_TAGS，去掉 with_naive_outbound（Linux + CGO_ENABLED=0
+# 下编不过：cronet-go/lib/linux_amd64 无可用文件），再加上本包存在的理由 with_ebpf。
+_tags=(
+    with_gvisor
+    with_quic
+    with_dhcp
+    with_wireguard
+    with_utls
+    with_acme
+    with_clash_api
+    with_tailscale
+    with_ccm
+    with_ocm
+    with_cloudflared
+    with_usbip
+    with_openvpn
+    with_openconnect
+    badlinkname
+    tfogo_checklinkname0
+    with_ebpf
+)
+
+prepare() {
+    cd "$srcdir/sing-box"
+
+    # tag 被 force-push / 移动时立刻失败，而不是静默编出别的东西
+    local actual_commit
+    actual_commit="$(git rev-parse HEAD)"
+    if [[ "$actual_commit" != "$_commit" ]]; then
+        printf 'sing-box-ebpf: tag %s 指向 %s，预期 %s\n' \
+            "$_tag" "$actual_commit" "$_commit" >&2
+        return 1
+    fi
+
+    # 确认 eBPF 入站源码真的在这个 tag 里 —— 否则会编出一个「名叫 ebpf 却没有 ebpf」的包
+    [[ -f include/ebpf.go && -d protocol/ebpf && -f option/ebpf.go ]] ||
+        { printf 'sing-box-ebpf: %s 里找不到 eBPF 入站源码\n' "$_tag" >&2; return 1; }
+    grep -q 'with_ebpf' include/ebpf.go ||
+        { printf 'sing-box-ebpf: include/ebpf.go 的构建约束不含 with_ebpf\n' >&2; return 1; }
+
+    printf '%s\n' "Verified ${_tag} (${_commit}) ships the eBPF inbound."
+}
+
+build() {
+    cd "$srcdir/sing-box"
+
+    # CGO_ENABLED=0：全纯 Go，产出静态二进制，与容器/宿主 libc 解耦（与 Android 端 NetProxy 的做法一致）
+    # GOAMD64=v3：本仓库目标机是 CachyOS x86-64-v3（AVX2/FMA/BMI2）
+    export CGO_ENABLED=0 GOAMD64=v3
+
+    local build_tags
+    build_tags="$(IFS=,; printf '%s' "${_tags[*]}")"
+    printf 'build tags: %s\n' "$build_tags"
+
+    go build -trimpath -buildvcs=false \
+        -ldflags "-s -w -X github.com/sagernet/sing-box/constant.Version=${_tag}" \
+        -tags "$build_tags" \
+        -o sing-box ./cmd/sing-box
+
+    # 编译标签兜底：编出来的东西必须真的带 with_ebpf
+    go version -m sing-box | grep -q 'with_ebpf' ||
+        { printf 'sing-box-ebpf: 产物缺少 with_ebpf 标签\n' >&2; return 1; }
+}
+
+package() {
+    cd "$srcdir/sing-box"
+
+    install -Dm755 sing-box "$pkgdir/usr/bin/sing-box"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+    # 主单元：与官方单元同构，但按 eBPF 的需要调整。
+    # eBPF 入站要加载 BPF 程序与 map、往 cgroup v2 根层级挂 socket hook、建 veth、
+    # 装策略路由、改网卡 sysctl、绑定透明 socket —— 以 root 运行兼容性最好（reF1nd 文档原话），
+    # 也与当年 daed 的做法一致。想收窄权限可以把 User=root 换成 User=sing-box 并加：
+    #   AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+    # 注意：/var/lib/sing-box/cache.db 的属主必须和运行用户一致，否则会
+    #   FATAL: initialize cache-file: permission denied（切回官方包时记得 chown 回去）。
+    install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/system/sing-box.service" <<'EOF'
+[Unit]
+Description=sing-box service (eBPF build)
+Documentation=https://github.com/reF1nd/sing-box
+After=network.target nss-lookup.target network-online.target
+
+[Service]
+# eBPF 需要：BPF 程序/map、cgroup v2 socket hook、veth、策略路由、透明 socket、网卡 sysctl
+User=root
+StateDirectory=sing-box
+# BPF map 与透明 socket 需要较大的锁定内存；上限留足，避免 "MEMLOCK may be too low"
+LimitMEMLOCK=infinity
+LimitNOFILE=infinity
+ExecStart=/usr/bin/sing-box -D /var/lib/sing-box -C /etc/sing-box run
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # 多实例模板：与官方 sing-box@.service 对齐，避免替换官方包后丢功能
+    install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/system/sing-box@.service" <<'EOF'
+[Unit]
+Description=sing-box service (eBPF build, instance %i)
+Documentation=https://github.com/reF1nd/sing-box
+After=network.target nss-lookup.target network-online.target
+
+[Service]
+User=root
+StateDirectory=sing-box-%i
+LimitMEMLOCK=infinity
+LimitNOFILE=infinity
+ExecStart=/usr/bin/sing-box -D /var/lib/sing-box-%i -c /etc/sing-box/%i.json run
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}

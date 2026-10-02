@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sing-box 控制台</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🧭</text></svg>">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<div id="gate" class="gate hidden">
+  <form class="gate-card" id="gateForm">
+    <h1>sing-box 控制台</h1>
+    <p class="muted">本面板只监听本机。首次使用请填入访问令牌（root 终端执行
+      <code>cat /var/lib/sing-box-panel/token</code>）。</p>
+    <input id="gateToken" type="password" placeholder="访问令牌" autocomplete="off" autofocus>
+    <button class="btn primary" type="submit">进入</button>
+    <p id="gateErr" class="err"></p>
+  </form>
+</div>
+
+<header class="topbar">
+  <div class="brand"><span class="logo">🧭</span><span>sing-box 控制台</span>
+    <span id="modePill" class="pill">–</span>
+    <span id="dryPill" class="pill warn hidden">dry-run</span>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="status">运行状态</button>
+    <button class="tab" data-view="nodes">节点与订阅</button>
+    <button class="tab" data-view="apps">分应用策略</button>
+    <button class="tab" data-view="config">配置与服务</button>
+  </nav>
+  <div class="top-actions">
+    <a id="dashLink" class="btn ghost" href="/dash/" target="_blank" rel="noreferrer">zashboard ↗</a>
+    <button class="btn ghost" id="lockBtn">锁定</button>
+  </div>
+</header>
+
+<main>
+  <!-- 运行状态 -->
+  <section class="view" id="view-status">
+    <div class="grid cards">
+      <div class="card">
+        <div class="card-title">服务</div>
+        <div class="kv"><span>状态</span><b id="svcState">–</b></div>
+        <div class="kv"><span>开机自启</span><b id="svcEnabled">–</b></div>
+        <div class="kv"><span>PID / 启动时间</span><b id="svcPid">–</b></div>
+        <div class="btn-row">
+          <button class="btn" data-svc="start">启动</button>
+          <button class="btn" data-svc="restart">重启</button>
+          <button class="btn" data-svc="reload">重载</button>
+          <button class="btn danger" data-svc="stop">停止</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">核心</div>
+        <div class="kv"><span>内核版本</span><b id="sbVersion">–</b></div>
+        <div class="kv"><span>入站模式</span><b id="sbMode">–</b></div>
+        <div class="kv"><span>配置文件</span><b id="cfgPath" class="mono small">–</b></div>
+        <div class="kv"><span>配置大小 / 修改时间</span><b id="cfgMeta">–</b></div>
+      </div>
+      <div class="card">
+        <div class="card-title">实时流量<span class="muted small">（来自 Clash API）</span></div>
+        <div class="kv"><span>连接数</span><b id="connCount">–</b></div>
+        <div class="kv"><span>累计上行</span><b id="upTotal">–</b></div>
+        <div class="kv"><span>累计下行</span><b id="downTotal">–</b></div>
+        <div class="kv"><span>Clash API</span><b id="clashState">–</b></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">eBPF 内核能力预检
+        <span class="muted small">不改动任何状态，只做能力探测与对象加载</span></div>
+      <div class="btn-row">
+        <input id="probeIface" class="input" placeholder="下游接口（可选，例如 virbr0）">
+        <button class="btn primary" id="probeBtn">运行预检</button>
+        <span id="probeSummary" class="muted"></span>
+      </div>
+      <div id="probeResult" class="probe"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">日志 <button class="btn ghost small" id="logRefresh">刷新</button></div>
+      <pre id="logBox" class="log"></pre>
+    </div>
+  </section>
+
+  <!-- 节点与订阅 -->
+  <section class="view hidden" id="view-nodes">
+    <div class="card">
+      <div class="card-title">订阅
+        <span class="muted small">拉取 → 转换 → 写入配置（走安全管线）</span></div>
+      <div class="btn-row wrap">
+        <input id="subName" class="input" placeholder="名称（可空）">
+        <input id="subUrl" class="input grow" placeholder="订阅 URL（ss/vmess/vless/trojan/hysteria2/tuic 链接或 Clash YAML）">
+        <button class="btn primary" id="subAdd">添加并拉取</button>
+        <button class="btn" id="subUpdateAll">全部更新</button>
+        <button class="btn primary" id="subApply">写入配置</button>
+      </div>
+      <table class="table" id="subTable">
+        <thead><tr><th>名称</th><th>节点</th><th>最后更新</th><th>状态</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-title">策略组与节点
+        <span class="muted small">延迟测试与切换都通过 Clash API 实时生效</span>
+        <button class="btn ghost small" id="nodeRefresh">刷新</button>
+        <button class="btn ghost small" id="delayAll">测速全部</button>
+      </div>
+      <div id="groups" class="groups"></div>
+    </div>
+  </section>
+
+  <!-- 分应用 -->
+  <section class="view hidden" id="view-apps">
+    <div class="card">
+      <div class="card-title">分应用代理（eBPF UID 策略）</div>
+      <div class="btn-row wrap">
+        <label class="seg">
+          <input type="radio" name="polmode" value="off"><span>关闭</span>
+        </label>
+        <label class="seg">
+          <input type="radio" name="polmode" value="blacklist"><span>黑名单（选中的不走代理）</span>
+        </label>
+        <label class="seg">
+          <input type="radio" name="polmode" value="whitelist"><span>白名单（只有选中的走代理）</span>
+        </label>
+        <input id="appSearch" class="input grow" placeholder="搜索应用 / 可执行文件 / UID">
+        <button class="btn ghost" id="appRefresh">刷新列表</button>
+        <button class="btn primary" id="policyApply">应用策略</button>
+      </div>
+      <p class="muted small">写入 <code>ebpf-in.local.include_uid / exclude_uid</code>，会重启核心并走校验+回滚管线。
+        Linux 下按 <b>UID</b> 生效；同一 UID 的多个进程会一起生效。</p>
+      <div id="appList" class="applist"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">手动添加 UID</div>
+      <div class="btn-row"><input id="uidInput" class="input" placeholder="例如 1000">
+        <button class="btn" id="uidAdd">添加</button></div>
+      <div id="policyUids" class="chips"></div>
+    </div>
+  </section>
+
+  <!-- 配置与服务 -->
+  <section class="view hidden" id="view-config">
+    <div class="card">
+      <div class="card-title">配置编辑
+        <span class="muted small">应用流程：JSON 校验 → <code>sing-box check</code> → 备份 → 原子替换 → 重启 → 健康检查，失败自动回滚</span>
+      </div>
+      <textarea id="cfgText" class="editor mono" spellcheck="false"></textarea>
+      <div class="btn-row">
+        <button class="btn" id="cfgValidate">仅校验</button>
+        <button class="btn primary" id="cfgApply">应用并重启</button>
+        <button class="btn ghost" id="cfgReload">重新载入文件</button>
+        <button class="btn ghost" id="cfgBackup">手动备份</button>
+        <span id="cfgMsg" class="muted"></span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">备份与回滚</div>
+      <table class="table" id="backupTable">
+        <thead><tr><th>文件</th><th>大小</th><th>时间</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div id="toasts"></div>
+<script src="./app.js"></script>
+</body>
+</html>

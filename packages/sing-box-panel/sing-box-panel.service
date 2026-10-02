@@ -1,0 +1,19 @@
+[Unit]
+Description=sing-box local management panel
+Documentation=https://github.com/emoeem/pkgbuild
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+# 需要 root 的原因：写 /etc/sing-box/config.json、systemctl restart sing-box、
+# 以及跑 `sing-box check`（eBPF 入站会真的创建 BPF map，非 root 必然失败）。
+# 面板只监听 127.0.0.1，并且所有 /api 请求都要求令牌（/var/lib/sing-box-panel/token，0600）。
+User=root
+StateDirectory=sing-box-panel
+ExecStart=/usr/bin/sing-box-panel
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

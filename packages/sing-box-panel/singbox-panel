@@ -1,0 +1,1408 @@
+#!/usr/bin/env python3
+"""sing-box panel — 本地管理面板后端
+
+设计目标：把「改配置 → 校验 → 重启 → 失败回滚」这条安全管线做成可点按钮的东西，
+并补上 Clash 类面板做不到的三块：订阅/节点生成、eBPF 分应用策略、服务与配置管理。
+
+只用 Python3 标准库（Clash YAML 解析若装了 python-yaml 则用它，否则退化为内置子集解析器）。
+所有写操作都走 apply_config()：备份 → sing-box check → 原子替换 → 重启 → 健康检查 → 失败自动回滚。
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import binascii
+import json
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+try:  # 可选：解析 Clash YAML 订阅
+    import yaml  # type: ignore
+except ImportError:  # pragma: no cover
+    yaml = None
+
+VERSION = "0.1.0"
+
+DEFAULT_CONFIG = {
+    "listen": "127.0.0.1",
+    "port": 9096,
+    "sing_box_config": "/etc/sing-box/config.json",
+    "service": "sing-box",
+    "sing_box_bin": "/usr/bin/sing-box",
+    "clash_api": "http://127.0.0.1:9090",
+    "state_dir": "/var/lib/sing-box-panel",
+    "ui_dir": "/usr/share/sing-box-panel/ui",
+    "zashboard_dir": "/usr/share/sing-box-panel/zashboard",
+    "subscription_proxy": "http://127.0.0.1:7892",
+    "managed_group": "Proxy",
+    "managed_urltest": "Auto",
+    "restart_timeout": 20,
+    "health_probe_url": "",
+    "backup_keep": 30,
+}
+
+
+# --------------------------------------------------------------------------- 基础工具
+
+
+def log(msg: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def run(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout.strip(), p.stderr.strip()
+    except FileNotFoundError:
+        return 127, "", f"命令不存在: {cmd[0]}"
+    except subprocess.TimeoutExpired:
+        return 124, "", f"超时({timeout}s): {' '.join(cmd)}"
+
+
+def ok(msg: str) -> dict:
+    return {"ok": True, "message": msg}
+
+
+def err(msg: str) -> dict:
+    return {"ok": False, "message": msg}
+
+
+# --------------------------------------------------------------------------- 面板设置
+
+
+class Settings:
+    def __init__(self, path: str | None, dry_run: bool = False):
+        self.dry_run = dry_run
+        file_data: dict = {}
+        paths = [path] if path else ["/etc/sing-box/panel.json"]
+        for cand in paths:
+            if cand and os.path.exists(cand):
+                try:
+                    file_data = json.loads(Path(cand).read_text("utf-8"))
+                except (OSError, ValueError) as exc:
+                    log(f"读取面板配置 {cand} 失败：{exc}，使用默认值")
+        base = dict(DEFAULT_CONFIG)
+        base.update(file_data)
+        # dry-run 只在配置**没有显式指定** state_dir 时才改用临时目录
+        if dry_run and "state_dir" not in file_data:
+            base["state_dir"] = os.environ.get("PANEL_STATE_DIR", "/tmp/sing-box-panel-state")
+        self.data = base
+        os.makedirs(self.data["state_dir"], exist_ok=True)
+        self.token_file = Path(self.data["state_dir"]) / "token"
+        self._secret_cache: tuple[int, str] | None = None
+
+    def __getitem__(self, key: str):
+        return self.data[key]
+
+    def get(self, key: str, default=None):
+        return self.data.get(key, default)
+
+    # token -----------------------------------------------------------------
+    def token(self) -> str:
+        env = os.environ.get("PANEL_TOKEN")
+        if env:
+            return env
+        if self.token_file.exists():
+            value = self.token_file.read_text("utf-8").strip()
+            if value:
+                return value
+        value = secrets.token_urlsafe(24)
+        self.token_file.write_text(value + "\n", encoding="utf-8")
+        os.chmod(self.token_file, 0o600)
+        log(f"已生成面板访问令牌：{self.token_file}")
+        return value
+
+    # sing-box 配置路径 ------------------------------------------------------
+    @property
+    def sing_box_config(self) -> Path:
+        return Path(self.data["sing_box_config"])
+
+    def load_sing_box_config(self) -> dict:
+        raw = self.sing_box_config.read_text("utf-8")
+        raw = re.sub(r",(\s*[}\]])", r"\1", raw)  # sing-box 容忍尾随逗号，json 模块不容忍
+        return json.loads(raw)
+
+    def dump_sing_box_config(self, obj: dict) -> str:
+        return json.dumps(obj, ensure_ascii=False, indent=2) + "\n"
+
+    def clash_secret(self) -> str:
+        """从 sing-box 配置里读 Clash API 密钥；按文件 mtime 缓存，避免前端轮询时反复解析配置。"""
+        try:
+            mtime = self.sing_box_config.stat().st_mtime_ns
+        except OSError:
+            return ""
+        if self._secret_cache and self._secret_cache[0] == mtime:
+            return self._secret_cache[1]
+        try:
+            cfg = self.load_sing_box_config()
+            value = str((cfg.get("experimental", {}).get("clash_api", {}) or {}).get("secret", ""))
+        except Exception:
+            value = ""
+        self._secret_cache = (mtime, value)
+        return value
+
+    # 面板状态 ---------------------------------------------------------------
+    @property
+    def subs_file(self) -> Path:
+        return Path(self.data["state_dir"]) / "subscriptions.json"
+
+    @property
+    def managed_file(self) -> Path:
+        return Path(self.data["state_dir"]) / "managed.json"
+
+    def read_json(self, path: Path, default):
+        try:
+            return json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return default
+
+    def write_json(self, path: Path, obj) -> None:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+
+    def subscriptions(self) -> list:
+        return self.read_json(self.subs_file, [])
+
+    def managed(self) -> dict:
+        return self.read_json(self.managed_file, {"outbound_tags": [], "group_members": {}})
+
+
+# --------------------------------------------------------------------------- 服务控制
+
+
+class Service:
+    def __init__(self, settings: Settings):
+        self.s = settings
+
+    def status(self) -> dict:
+        unit = self.s["service"]
+        if self.s.dry_run:
+            return {"active": False, "enabled": False, "since": "", "pid": "", "dry_run": True}
+        _, active, _ = run(["systemctl", "is-active", unit])
+        _, enabled, _ = run(["systemctl", "is-enabled", unit])
+        rc, out, _ = run(["systemctl", "show", "-p", "ActiveEnterTimestamp", "-p", "MainPID", unit])
+        fields = dict(
+            line.split("=", 1) for line in out.splitlines() if "=" in line
+        )
+        return {
+            "active": active == "active",
+            "enabled": enabled in ("enabled", "enabled-runtime"),
+            "since": fields.get("ActiveEnterTimestamp", ""),
+            "pid": fields.get("MainPID", ""),
+            "raw": active,
+        }
+
+    def control(self, action: str) -> dict:
+        if action not in ("start", "stop", "restart", "reload"):
+            return err(f"不支持的操作：{action}")
+        if self.s.dry_run:
+            return ok(f"[dry-run] 跳过 systemctl {action} {self.s['service']}")
+        rc, _, e = run(["systemctl", action, self.s["service"]], timeout=60)
+        if rc != 0:
+            return err(f"systemctl {action} 失败：{e or rc}")
+        return ok(f"已执行 systemctl {action} {self.s['service']}")
+
+    def journal(self, lines: int = 200) -> str:
+        if self.s.dry_run:
+            return "(dry-run：无日志)"
+        _, out, _ = run(
+            ["journalctl", "-u", self.s["service"], "-n", str(lines), "--no-pager", "-o", "short-iso"],
+            timeout=20,
+        )
+        return out
+
+    def wait_healthy(self) -> tuple[bool, str]:
+        """重启后等它真的可用：is-active（TUN 模式再等 tun0，eBPF 模式等 eBPF 挂载迹象）。"""
+        if self.s.dry_run:
+            return True, "[dry-run] 跳过健康检查"
+        unit = self.s["service"]
+        deadline = time.time() + float(self.s["restart_timeout"])
+        last = ""
+        while time.time() < deadline:
+            _, active, _ = run(["systemctl", "is-active", unit])
+            last = active
+            if active == "active":
+                break
+            time.sleep(0.5)
+        if last != "active":
+            return False, f"服务未在 {self.s['restart_timeout']}s 内 active（当前：{last or 'unknown'}）"
+        try:
+            cfg = self.s.load_sing_box_config()
+        except Exception as exc:
+            return False, f"配置无法读取：{exc}"
+        types = {i.get("type") for i in cfg.get("inbounds", [])}
+        if "tun" in types:
+            while time.time() < deadline:
+                if Path("/sys/class/net/tun0").exists() or run(["ip", "link", "show", "tun0"])[0] == 0:
+                    break
+                time.sleep(0.5)
+            else:
+                return False, "服务 active 但 tun0 未出现"
+        probe = self.s.get("health_probe_url") or ""
+        if probe:
+            proxy = self._mixed_proxy(cfg)
+            if proxy:
+                rc, _, _ = run(["curl", "-s", "-m", "10", "-x", proxy, "-o", "/dev/null", probe], timeout=20)
+                if rc != 0:
+                    return False, f"经代理探测 {probe} 失败"
+        return True, "服务已恢复健康"
+
+    @staticmethod
+    def _mixed_proxy(cfg: dict) -> str:
+        for i in cfg.get("inbounds", []):
+            if i.get("type") in ("mixed", "http"):
+                host = i.get("listen", "127.0.0.1")
+                port = i.get("listen_port")
+                if port:
+                    return f"http://{host}:{port}"
+        return ""
+
+
+# --------------------------------------------------------------------------- 配置安全管线
+
+
+class ConfigManager:
+    def __init__(self, settings: Settings, service: Service):
+        self.s = settings
+        self.service = service
+        self.lock = threading.Lock()
+
+    # 备份 -------------------------------------------------------------------
+    def backup_dir(self) -> Path:
+        d = self.s.sing_box_config.parent / "backups"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def backup(self, reason: str) -> str:
+        src = self.s.sing_box_config
+        if not src.exists():
+            return ""
+        name = f"config.{time.strftime('%Y%m%d-%H%M%S')}.{re.sub(r'[^a-zA-Z0-9_-]', '-', reason)[:24]}.json"
+        dst = self.backup_dir() / name
+        shutil.copy2(src, dst)
+        self.prune_backups()
+        return name
+
+    def prune_backups(self) -> None:
+        keep = int(self.s.get("backup_keep", 30))
+        files = sorted(self.backup_dir().glob("config.*.json"))
+        for old in files[:-keep] if keep > 0 else []:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+    def list_backups(self) -> list:
+        out = []
+        for f in sorted(self.backup_dir().glob("config.*.json"), reverse=True):
+            st = f.stat()
+            out.append({"name": f.name, "size": st.st_size, "mtime": int(st.st_mtime)})
+        return out
+
+    # check ------------------------------------------------------------------
+    def check(self, cfg: dict) -> tuple[bool, str]:
+        """用 sing-box check 校验。副本里把 cache_file 指到 /tmp，避免污染服务自己的 cache.db。"""
+        probe = json.loads(json.dumps(cfg))
+        cache = (probe.get("experimental", {}) or {}).get("cache_file")
+        if isinstance(cache, dict) and cache.get("path"):
+            cache["path"] = "/tmp/sing-box-panel-check-cache.db"
+        tmp = Path("/tmp/sing-box-panel-check.json")
+        tmp.write_text(json.dumps(probe, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        rc, out, e = run([self.s["sing_box_bin"], "check", "-c", str(tmp)], timeout=60)
+        tmp.unlink(missing_ok=True)
+        if rc == 0:
+            return True, e or out or "check 通过"
+        return False, (e or out or f"check 退出码 {rc}").strip()
+
+    # 应用 -------------------------------------------------------------------
+    def apply(self, new_cfg: dict, reason: str, restart: bool = True) -> dict:
+        with self.lock:
+            okc, msg = self.check(new_cfg)
+            if not okc:
+                return err(f"配置校验未通过，未做任何改动：{msg}")
+
+            backup_name = ""
+            if not self.s.dry_run:
+                backup_name = self.backup(reason)
+            target = self.s.sing_box_config
+            if self.s.dry_run:
+                Path("/tmp/sing-box-panel-dryrun-config.json").write_text(
+                    self.s.dump_sing_box_config(new_cfg), encoding="utf-8"
+                )
+                return ok(f"[dry-run] 校验通过，已写入 /tmp/sing-box-panel-dryrun-config.json（未重启）")
+
+            previous = target.read_text("utf-8") if target.exists() else ""
+            tmp = target.with_suffix(".json.panel-tmp")
+            tmp.write_text(self.s.dump_sing_box_config(new_cfg), encoding="utf-8")
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, target)
+
+            if not restart:
+                return {"ok": True, "message": "配置已写入（未重启）", "backup": backup_name}
+
+            rc, _, e = run(["systemctl", "restart", self.s["service"]], timeout=60)
+            if rc != 0:
+                return self._rollback(previous, f"重启失败：{e or rc}", backup_name)
+
+            healthy, why = self.service.wait_healthy()
+            if not healthy:
+                return self._rollback(previous, why, backup_name)
+
+            return {"ok": True, "message": f"配置已应用并重启成功（{why}）", "backup": backup_name}
+
+    def _rollback(self, previous: str, why: str, backup_name: str) -> dict:
+        if previous:
+            self.s.sing_box_config.write_text(previous, encoding="utf-8")
+            run(["systemctl", "restart", self.s["service"]], timeout=60)
+        return err(f"{why}；已回滚到应用前的配置（备份 {backup_name or '无'}）")
+
+    def restore(self, name: str) -> dict:
+        src = self.backup_dir() / name
+        if not src.exists():
+            return err(f"找不到备份 {name}")
+        try:
+            cfg = json.loads(src.read_text("utf-8"))
+        except ValueError as exc:
+            return err(f"备份内容不是合法 JSON：{exc}")
+        return self.apply(cfg, f"restore-{name}", restart=True)
+
+
+# --------------------------------------------------------------------------- eBPF
+
+
+class Ebpf:
+    def __init__(self, settings: Settings, configs: ConfigManager):
+        self.s = settings
+        self.configs = configs
+
+    def inbound(self, cfg: dict | None = None) -> dict | None:
+        cfg = cfg if cfg is not None else self.s.load_sing_box_config()
+        for i in cfg.get("inbounds", []):
+            if i.get("type") == "ebpf":
+                return i
+        return None
+
+    def policy(self) -> dict:
+        cfg = self.s.load_sing_box_config()
+        inbound = self.ebpf_inbound(cfg)
+        if not inbound:
+            return {"present": False, "mode": "none", "uids": [], "local": {}}
+        local = inbound.get("local", {}) or {}
+        include = list(local.get("include_uid", []) or [])
+        exclude = list(local.get("exclude_uid", []) or [])
+        if include:
+            mode, uids = "whitelist", include
+        elif exclude:
+            mode, uids = "blacklist", exclude
+        else:
+            mode, uids = "off", []
+        return {
+            "present": True,
+            "mode": mode,
+            "uids": sorted(set(int(u) for u in uids)),
+            "include": include,
+            "exclude": exclude,
+            "data_plane": local.get("data_plane", "cgroup"),
+            "dns_mode": local.get("dns_mode", "hijack"),
+            "ipv6": local.get("ipv6", True),
+            "shared": inbound.get("shared", {}),
+        }
+
+    def set_policy(self, mode: str, uids: list[int]) -> dict:
+        if mode not in ("off", "blacklist", "whitelist"):
+            return err(f"未知模式：{mode}")
+        cfg = self.s.load_sing_box_config()
+        inbound = self.ebpf_inbound(cfg)
+        if not inbound:
+            return err("当前配置里没有 ebpf 入站（面板只支持在 eBPF 模式下管理分应用策略）")
+        local = inbound.setdefault("local", {})
+        uids = sorted({int(u) for u in uids if 0 <= int(u) < 2**32})
+        local.pop("include_uid", None)
+        local.pop("exclude_uid", None)
+        if mode == "whitelist" and uids:
+            local["include_uid"] = uids
+        elif mode == "blacklist" and uids:
+            local["exclude_uid"] = uids
+        elif mode != "off":
+            mode = "off"
+        return self.configs.apply(cfg, f"ebpf-policy-{mode}")
+
+    def probe(self, interface: str | None = None) -> dict:
+        if self.s.dry_run:
+            return {"ok": True, "result": "dry-run", "findings": []}
+        cmd = [self.s["sing_box_bin"], "tools", "ebpf", "status", "--mode", "all", "--json"]
+        if interface:
+            cmd += ["--interface", interface]
+        rc, out, e = run(cmd, timeout=120)
+        try:
+            data = json.loads(out)
+        except ValueError:
+            data = {"findings": [], "raw": out, "stderr": e}
+        data["exit_code"] = rc
+        summary = data.get("summary") or {}
+        data["ok"] = rc == 0 and not summary.get("required_issues")
+        return data
+
+    # 兼容不同版本的字段名
+    def ebpf_inbound(self, cfg: dict) -> dict | None:
+        return self.inbound(cfg)
+
+
+# --------------------------------------------------------------------------- Clash API
+
+
+class Clash:
+    def __init__(self, settings: Settings):
+        self.s = settings
+
+    def _request(self, path: str, method: str = "GET", body: dict | None = None) -> tuple[bool, object]:
+        base = self.s["clash_api"].rstrip("/")
+        url = f"{base}{path}"
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method)
+        secret = self.s.clash_secret()
+        if secret:
+            req.add_header("Authorization", f"Bearer {secret}")
+        if data:
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = resp.read().decode("utf-8", "replace")
+                try:
+                    return True, json.loads(raw)
+                except ValueError:
+                    return True, raw
+        except urllib.error.HTTPError as exc:
+            return False, f"HTTP {exc.code}"
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
+
+    def proxies(self) -> dict:
+        okc, data = self._request("/proxies")
+        if not okc:
+            return {"ok": False, "message": data, "proxies": {}}
+        proxies = data.get("proxies", {}) if isinstance(data, dict) else {}
+        groups, nodes = [], []
+        for name, item in proxies.items():
+            entry = {
+                "name": name,
+                "type": item.get("type"),
+                "now": item.get("now", ""),
+                "members": item.get("all", []) or [],
+                "history": (item.get("history") or [{}])[-1].get("delay") if item.get("history") else None,
+                "alive": item.get("alive"),
+            }
+            (groups if entry["members"] else nodes).append(entry)
+        return {"ok": True, "groups": sorted(groups, key=lambda x: x["name"]), "nodes": nodes}
+
+    def select(self, group: str, name: str) -> dict:
+        okc, data = self._request(f"/proxies/{urllib.parse.quote(group)}", "PUT", {"name": name})
+        return ok(f"已切换到 {name}") if okc else err(f"切换失败：{data}")
+
+    def delay(self, name: str, url: str, timeout: int = 5000) -> dict:
+        path = (
+            f"/proxies/{urllib.parse.quote(name)}/delay"
+            f"?url={urllib.parse.quote(url, safe='')}&timeout={int(timeout)}"
+        )
+        okc, data = self._request(path)
+        if not okc:
+            return {"ok": False, "message": str(data)}
+        delay = data.get("delay") if isinstance(data, dict) else None
+        return {"ok": True, "delay": delay, "message": (data.get("message") if isinstance(data, dict) else "")}
+
+    def connections(self) -> dict:
+        okc, data = self._request("/connections")
+        return {"ok": okc, "data": data if okc else {}, "message": "" if okc else str(data)}
+
+    def version(self) -> dict:
+        okc, data = self._request("/version")
+        return {"ok": okc, "data": data if okc else {}}
+
+
+# --------------------------------------------------------------------------- 订阅
+
+
+class Subscriptions:
+    def __init__(self, settings: Settings, configs: ConfigManager):
+        self.s = settings
+        self.configs = configs
+
+    # 抓取 -------------------------------------------------------------------
+    def fetch(self, url: str) -> tuple[bool, str]:
+        proxy = self.s.get("subscription_proxy") or ""
+        handlers = []
+        if proxy:
+            handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+        opener = urllib.request.build_opener(*handlers)
+        req = urllib.request.Request(url, headers={"User-Agent": "sing-box-panel/" + VERSION})
+        try:
+            with opener.open(req, timeout=45) as resp:
+                return True, resp.read().decode("utf-8", "replace")
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
+
+    # 列表操作 ---------------------------------------------------------------
+    def list(self) -> list:
+        subs = self.s.subscriptions()
+        for sub in subs:
+            sub["node_count"] = len(sub.get("nodes", []))
+            sub.pop("nodes", None)
+        return subs
+
+    def add(self, name: str, url: str, enabled: bool = True) -> dict:
+        subs = self.s.subscriptions()
+        host = urllib.parse.urlparse(url).netloc or "订阅"
+        sub = {
+            "id": secrets.token_hex(4),
+            "name": name or host,
+            "url": url,
+            "enabled": enabled,
+            "last_update": 0,
+            "last_error": "",
+            "nodes": [],
+        }
+        subs.append(sub)
+        self.s.write_json(self.s.subs_file, subs)
+        return self.update(sub["id"])
+
+    def remove(self, sub_id: str) -> dict:
+        subs = [x for x in self.s.subscriptions() if x.get("id") != sub_id]
+        self.s.write_json(self.s.subs_file, subs)
+        return ok("已删除订阅")
+
+    def update(self, sub_id: str) -> dict:
+        subs = self.s.subscriptions()
+        target = next((x for x in subs if x.get("id") == sub_id), None)
+        if not target:
+            return err("找不到该订阅")
+        okc, text = self.fetch(target["url"])
+        if not okc:
+            target["last_error"] = text
+            self.s.write_json(self.s.subs_file, subs)
+            return err(f"下载失败：{text}")
+        nodes, skipped = parse_subscription(text)
+        target["nodes"] = nodes
+        target["last_update"] = int(time.time())
+        target["last_error"] = "" if nodes else "未解析出任何节点"
+        self.s.write_json(self.s.subs_file, subs)
+        msg = f"更新成功：{len(nodes)} 个节点"
+        if skipped:
+            msg += f"，{len(skipped)} 个暂不支持（{'、'.join(sorted(set(skipped))[:6])}…）"
+        return {"ok": bool(nodes), "message": msg, "nodes": len(nodes), "skipped": sorted(set(skipped))}
+
+    def update_all(self) -> dict:
+        results = []
+        for sub in self.list():
+            if sub.get("enabled"):
+                results.append({"name": sub["name"], **self.update(sub["id"])})
+        return {"ok": all(r.get("ok") for r in results) if results else False, "results": results}
+
+    # 写入配置 ---------------------------------------------------------------
+    def apply(self) -> dict:
+        subs = [x for x in self.s.subscriptions() if x.get("enabled")]
+        cfg = self.s.load_sing_box_config()
+        managed = self.s.managed()
+        old_tags = set(managed.get("outbound_tags", []))
+
+        outbounds = [o for o in cfg.get("outbounds", []) if o.get("tag") not in old_tags]
+        new_tags: list[str] = []
+        per_sub: dict[str, list[str]] = {}
+
+        existing = {o.get("tag") for o in outbounds}
+        for sub in subs:
+            tags = []
+            for node in sub.get("nodes", []):
+                tag = str(node.get("tag", "")).strip() or "node"
+                base = tag
+                i = 2
+                while tag in existing or tag in new_tags:
+                    tag = f"{base} #{i}"
+                    i += 1
+                node = dict(node)
+                node["tag"] = tag
+                outbounds.append(node)
+                new_tags.append(tag)
+                tags.append(tag)
+            per_sub[sub["id"]] = tags
+
+        # 组：默认托管 Proxy（selector）与 Auto（urltest），另外每个订阅各建一组
+        members_map: dict[str, list[str]] = {}
+        group_tag = self.s.get("managed_group") or ""
+        if group_tag and new_tags:
+            members_map[group_tag] = new_tags
+        urltest_tag = self.s.get("managed_urltest") or ""
+        if urltest_tag and new_tags:
+            members_map[urltest_tag] = new_tags
+
+        by_tag = {o.get("tag"): o for o in outbounds}
+        for tag, members in members_map.items():
+            node = by_tag.get(tag)
+            if node is None:
+                continue
+            previous = set(managed.get("group_members", {}).get(tag, []))
+            kept = [m for m in node.get("outbounds", []) if m not in previous]
+            node["outbounds"] = kept + members
+
+        cfg["outbounds"] = outbounds
+        result = self.configs.apply(cfg, "subscriptions-apply")
+        if result.get("ok"):
+            self.s.write_json(
+                self.s.managed_file,
+                {
+                    "outbound_tags": new_tags,
+                    "group_members": members_map,
+                    "updated": int(time.time()),
+                    "by_subscription": per_sub,
+                },
+            )
+        return result
+
+
+# --------------------------------------------------------------------------- 订阅解析
+
+
+def b64decode_safe(text: str) -> str:
+    text = text.strip().replace("-", "+").replace("_", "/")
+    text += "=" * (-len(text) % 4)
+    try:
+        return base64.b64decode(text).decode("utf-8", "replace")
+    except (binascii.Error, ValueError):
+        return ""
+
+
+def parse_subscription(text: str) -> tuple[list[dict], list[str]]:
+    """返回 (outbounds, 跳过的类型)。支持 base64 链接列表、纯链接列表、Clash YAML。"""
+    text = text.strip()
+    if not text:
+        return [], []
+    head = text.lstrip()
+    if head.startswith("proxies:") or "\nproxies:" in head[:2000]:
+        return parse_clash_yaml(text)
+    decoded = b64decode_safe(text) if "://" not in text.split("\n", 1)[0] else ""
+    if decoded and "://" in decoded:
+        text = decoded
+    nodes, skipped = [], []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        node, kind = parse_link(line)
+        if node:
+            nodes.append(node)
+        elif kind:
+            skipped.append(kind)
+    return nodes, skipped
+
+
+def parse_link(link: str) -> tuple[dict | None, str]:
+    scheme = link.split("://", 1)[0].lower() if "://" in link else ""
+    handlers = {
+        "ss": parse_ss,
+        "vmess": parse_vmess,
+        "vless": parse_vless,
+        "trojan": parse_trojan,
+        "hysteria2": parse_hysteria2,
+        "hy2": parse_hysteria2,
+        "tuic": parse_tuic,
+    }
+    handler = handlers.get(scheme)
+    if not handler:
+        return None, scheme or "unknown"
+    try:
+        return handler(link), ""
+    except Exception:  # noqa: BLE001
+        return None, scheme
+
+
+def _split_tag(link: str) -> tuple[str, str]:
+    if "#" in link:
+        body, frag = link.split("#", 1)
+        return body, urllib.parse.unquote(frag)
+    return link, ""
+
+
+def _transport(query: dict) -> dict | None:
+    net = (query.get("type") or query.get("net") or "tcp").lower()
+    if net in ("ws", "websocket"):
+        opts = {"type": "ws", "path": query.get("path", "/")}
+        host = query.get("host") or query.get("sni")
+        if host:
+            opts["headers"] = {"Host": host}
+        return opts
+    if net == "grpc":
+        return {"type": "grpc", "service_name": query.get("serviceName") or query.get("servicename") or ""}
+    if net in ("http", "h2"):
+        return {"type": "http", "host": [query["host"]] if query.get("host") else []}
+    return None
+
+
+def _tls(query: dict, server: str, force: bool = False) -> dict | None:
+    security = (query.get("security") or "").lower()
+    if not security and (
+        force
+        or query.get("sni")
+        or query.get("peer")
+        or query.get("tls") in ("1", "true")
+        or query.get("allowInsecure") in ("1", "true")
+        or query.get("insecure") in ("1", "true")
+    ):
+        security = "tls"
+    if security not in ("tls", "reality", "xtls"):
+        return None
+    tls: dict = {"enabled": True, "server_name": query.get("sni") or query.get("peer") or server}
+    if query.get("fp") or query.get("fingerprint"):
+        tls["utls"] = {"enabled": True, "fingerprint": query.get("fp") or query.get("fingerprint")}
+    if query.get("alpn"):
+        tls["alpn"] = [a for a in query["alpn"].split(",") if a]
+    if query.get("allowInsecure") in ("1", "true") or query.get("insecure") in ("1", "true"):
+        tls["insecure"] = True
+    if security == "reality":
+        tls["reality"] = {
+            "enabled": True,
+            "public_key": query.get("pbk", ""),
+            "short_id": query.get("sid", ""),
+        }
+    return tls
+
+
+def parse_ss(link: str) -> dict:
+    body, tag = _split_tag(link)
+    rest = body[len("ss://"):]
+    query: dict = {}
+    if "?" in rest:
+        rest, qs = rest.split("?", 1)
+        query = dict(urllib.parse.parse_qsl(qs))
+    if "@" in rest:
+        userinfo, hostport = rest.rsplit("@", 1)
+        creds = b64decode_safe(userinfo) or urllib.parse.unquote(userinfo)
+    else:
+        decoded = b64decode_safe(rest)
+        if "@" not in decoded:
+            raise ValueError("bad ss link")
+        creds, hostport = decoded.rsplit("@", 1)
+    method, _, password = creds.partition(":")
+    host, _, port = hostport.rpartition(":")
+    node = {
+        "type": "shadowsocks",
+        "tag": tag or f"{host}:{port}",
+        "server": host.strip("[]"),
+        "server_port": int(port),
+        "method": method,
+        "password": password,
+    }
+    plugin = query.get("plugin", "")
+    if plugin:
+        name, _, opts = plugin.partition(";")
+        node["plugin"] = name
+        if opts:
+            node["plugin_opts"] = opts
+    return node
+
+
+def parse_vmess(link: str) -> dict:
+    raw = link[len("vmess://"):]
+    data = json.loads(b64decode_safe(raw.split("#", 1)[0]) or "{}")
+    if not data:
+        raise ValueError("bad vmess")
+    node = {
+        "type": "vmess",
+        "tag": data.get("ps") or f"{data.get('add')}:{data.get('port')}",
+        "server": data.get("add"),
+        "server_port": int(data.get("port", 443)),
+        "uuid": data.get("id"),
+        "security": data.get("scy") or "auto",
+        "alter_id": int(data.get("aid", 0) or 0),
+    }
+    tls = (data.get("tls") or "").lower() == "tls"
+    if tls:
+        node["tls"] = {"enabled": True, "server_name": data.get("sni") or data.get("host") or data.get("add")}
+    net = (data.get("net") or "tcp").lower()
+    if net == "ws":
+        node["transport"] = {"type": "ws", "path": data.get("path", "/")}
+        if data.get("host"):
+            node["transport"]["headers"] = {"Host": data["host"]}
+    elif net == "grpc":
+        node["transport"] = {"type": "grpc", "service_name": data.get("path", "")}
+    return node
+
+
+def _url_node(link: str, scheme: str) -> tuple[str, str, int, str, dict]:
+    body, tag = _split_tag(link)
+    rest = body[len(scheme) + 3:]
+    query: dict = {}
+    if "?" in rest:
+        rest, qs = rest.split("?", 1)
+        query = dict(urllib.parse.parse_qsl(qs))
+    userinfo, _, hostport = rest.rpartition("@")
+    host, _, port = hostport.rpartition(":")
+    return urllib.parse.unquote(userinfo), host.strip("[]"), int(port), tag, query
+
+
+def parse_vless(link: str) -> dict:
+    uuid, host, port, tag, query = _url_node(link, "vless")
+    node = {"type": "vless", "tag": tag or f"{host}:{port}", "server": host, "server_port": port, "uuid": uuid}
+    if query.get("flow"):
+        node["flow"] = query["flow"]
+    if query.get("encryption") and query["encryption"] != "none":
+        node["encryption"] = query["encryption"]
+    tls = _tls(query, host)
+    if tls:
+        node["tls"] = tls
+    transport = _transport(query)
+    if transport:
+        node["transport"] = transport
+    return node
+
+
+def parse_trojan(link: str) -> dict:
+    password, host, port, tag, query = _url_node(link, "trojan")
+    node = {"type": "trojan", "tag": tag or f"{host}:{port}", "server": host, "server_port": port, "password": password}
+    tls = _tls(query, host, force=True) or {"enabled": True, "server_name": host}
+    node["tls"] = tls
+    transport = _transport(query)
+    if transport:
+        node["transport"] = transport
+    return node
+
+
+def parse_hysteria2(link: str) -> dict:
+    scheme = "hysteria2" if link.startswith("hysteria2://") else "hy2"
+    password, host, port, tag, query = _url_node(link, scheme)
+    node = {
+        "type": "hysteria2",
+        "tag": tag or f"{host}:{port}",
+        "server": host,
+        "server_port": port,
+        "password": password or query.get("password", ""),
+    }
+    tls = {"enabled": True, "server_name": query.get("sni") or host}
+    if query.get("insecure") in ("1", "true"):
+        tls["insecure"] = True
+    node["tls"] = tls
+    if query.get("obfs"):
+        node["obfs"] = {"type": query["obfs"], "password": query.get("obfs-password", "")}
+    return node
+
+
+def parse_tuic(link: str) -> dict:
+    userinfo, host, port, tag, query = _url_node(link, "tuic")
+    uuid, _, password = userinfo.partition(":")
+    node = {
+        "type": "tuic",
+        "tag": tag or f"{host}:{port}",
+        "server": host,
+        "server_port": port,
+        "uuid": uuid,
+        "password": password,
+    }
+    tls = {"enabled": True, "server_name": query.get("sni") or host}
+    if query.get("alpn"):
+        tls["alpn"] = [a for a in query["alpn"].split(",") if a]
+    if query.get("allow_insecure") in ("1", "true"):
+        tls["insecure"] = True
+    node["tls"] = tls
+    if query.get("congestion_control"):
+        node["congestion_control"] = query["congestion_control"]
+    return node
+
+
+CLASH_TYPE_MAP = {
+    "ss": "shadowsocks",
+    "shadowsocks": "shadowsocks",
+    "vmess": "vmess",
+    "vless": "vless",
+    "trojan": "trojan",
+    "hysteria2": "hysteria2",
+    "tuic": "tuic",
+}
+
+
+def parse_clash_yaml(text: str) -> tuple[list[dict], list[str]]:
+    nodes, skipped = [], []
+    proxies = []
+    if yaml is not None:
+        try:
+            data = yaml.safe_load(text) or {}
+            proxies = data.get("proxies") or []
+        except Exception:  # noqa: BLE001
+            proxies = []
+    if not proxies:  # 内置极简解析：只认 proxies 下的 "- {…}" / "- key: value" 块
+        proxies = _minimal_yaml_proxies(text)
+    for item in proxies:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type", "")).lower()
+        target = CLASH_TYPE_MAP.get(kind)
+        if not target:
+            skipped.append(kind or "unknown")
+            continue
+        node = _clash_to_outbound(target, item)
+        if node:
+            nodes.append(node)
+        else:
+            skipped.append(kind)
+    return nodes, skipped
+
+
+def _minimal_yaml_proxies(text: str) -> list[dict]:
+    """不依赖 pyyaml 的兜底：解析 `proxies:` 下形如 `- {k: v, ...}` 或 `- k: v` 的块。"""
+    out: list[dict] = []
+    in_proxies = False
+    current: dict | None = None
+    for line in text.splitlines():
+        if re.match(r"^proxies:\s*$", line):
+            in_proxies = True
+            continue
+        if not in_proxies:
+            continue
+        if re.match(r"^\S", line):
+            break
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            current = {}
+            out.append(current)
+            stripped = stripped[2:]
+            if stripped.startswith("{"):
+                for k, v in re.findall(r"([\w-]+):\s*([^,}]+)", stripped):
+                    current[k] = v.strip().strip("'\"")
+                current = None
+                continue
+        if current is None:
+            continue
+        m = re.match(r"([\w-]+):\s*(.*)$", stripped)
+        if m:
+            current[m.group(1)] = m.group(2).strip().strip("'\"")
+    return out
+
+
+def _clash_to_outbound(kind: str, item: dict) -> dict | None:
+    try:
+        host = str(item["server"])
+        port = int(item["port"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    node: dict = {"type": kind, "tag": str(item.get("name") or f"{host}:{port}"), "server": host, "server_port": port}
+    tls: dict = {}
+    if kind == "shadowsocks":
+        node["method"] = item.get("cipher", "aes-128-gcm")
+        node["password"] = item.get("password", "")
+        if item.get("plugin"):
+            node["plugin"] = item["plugin"]
+            node["plugin_opts"] = item.get("plugin-opts") or item.get("plugin_opts") or ""
+    elif kind == "vmess":
+        node["uuid"] = item.get("uuid", "")
+        node["security"] = item.get("cipher", "auto")
+        node["alter_id"] = int(item.get("alterId", 0) or 0)
+    elif kind == "vless":
+        node["uuid"] = item.get("uuid", "")
+        node["flow"] = item.get("flow", "")
+    elif kind == "trojan":
+        node["password"] = item.get("password", "")
+    elif kind == "hysteria2":
+        node["password"] = item.get("password", "")
+    elif kind == "tuic":
+        node["uuid"] = item.get("uuid", "")
+        node["password"] = item.get("password", "")
+        node["congestion_control"] = item.get("congestion-controller") or "bbr"
+
+    if item.get("tls") or kind in ("trojan", "hysteria2", "tuic"):
+        tls["enabled"] = True
+        tls["server_name"] = item.get("sni") or item.get("servername") or host
+        if str(item.get("skip-cert-verify", "")).lower() in ("true", "1"):
+            tls["insecure"] = True
+        if item.get("alpn"):
+            alpn = item["alpn"]
+            tls["alpn"] = alpn if isinstance(alpn, list) else [a for a in str(alpn).split(",") if a]
+        if item.get("client-fingerprint"):
+            tls["utls"] = {"enabled": True, "fingerprint": item["client-fingerprint"]}
+        if item.get("reality-opts"):
+            ro = item["reality-opts"] or {}
+            tls["reality"] = {"enabled": True, "public_key": ro.get("public-key", ""), "short_id": ro.get("short-id", "")}
+        node["tls"] = tls
+
+    network = str(item.get("network", "tcp")).lower()
+    if network == "ws":
+        opts = item.get("ws-opts") or {}
+        node["transport"] = {"type": "ws", "path": opts.get("path", "/")}
+        headers = opts.get("headers") or {}
+        if headers:
+            node["transport"]["headers"] = {str(k): str(v) for k, v in headers.items()}
+    elif network == "grpc":
+        opts = item.get("grpc-opts") or {}
+        node["transport"] = {"type": "grpc", "service_name": opts.get("grpc-service-name", "")}
+    return node
+
+
+# --------------------------------------------------------------------------- 分应用（UID）
+
+
+def list_apps(settings: Settings) -> list[dict]:
+    """把 .desktop 条目与 /proc 里跑着的进程按 UID 聚合。"""
+    apps: dict[int, dict] = {}
+
+    def ensure(uid: int) -> dict:
+        return apps.setdefault(uid, {"uid": uid, "names": [], "execs": [], "pids": [], "icon": ""})
+
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            uid = proc.stat().st_uid
+            cmdline = (proc / "cmdline").read_bytes().split(b"\0")
+            exe = os.path.basename((proc / "exe").resolve().name) if (proc / "exe").exists() else ""
+        except (OSError, PermissionError):
+            continue
+        entry = ensure(uid)
+        entry["pids"].append(int(proc.name))
+        first = cmdline[0].decode("utf-8", "replace") if cmdline and cmdline[0] else exe
+        if first:
+            entry["execs"].append(os.path.basename(first))
+
+    for desktop in list(Path("/usr/share/applications").glob("*.desktop")) + list(
+        Path("/usr/local/share/applications").glob("*.desktop")
+    ):
+        try:
+            text = desktop.read_text("utf-8", "replace")
+        except OSError:
+            continue
+        name = exec_line = icon = ""
+        for line in text.splitlines():
+            if line.startswith("Name=") and not name:
+                name = line[5:].strip()
+            elif line.startswith("Exec=") and not exec_line:
+                exec_line = line[5:].strip()
+            elif line.startswith("Icon=") and not icon:
+                icon = line[7:].strip()
+        binary = re.split(r"\s+", re.sub(r"%[a-zA-Z]", "", exec_line))[0] if exec_line else ""
+        binary = os.path.basename(binary)
+        if not binary:
+            continue
+        for uid, entry in apps.items():
+            if binary in entry["execs"] or any(binary in e for e in entry["execs"]):
+                if name and name not in entry["names"]:
+                    entry["names"].append(name)
+                entry["icon"] = entry["icon"] or icon
+
+    result = []
+    for uid, entry in apps.items():
+        entry["execs"] = sorted(set(entry["execs"]))[:6]
+        entry["pids"] = sorted(set(entry["pids"]))[:30]
+        entry["label"] = " / ".join(entry["names"]) if entry["names"] else (entry["execs"][0] if entry["execs"] else f"UID {uid}")
+        result.append(entry)
+    return sorted(result, key=lambda x: (x["uid"], x["label"]))
+
+
+# --------------------------------------------------------------------------- HTTP
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = f"sing-box-panel/{VERSION}"
+    settings: Settings
+    service: Service
+    configs: ConfigManager
+    ebpf: Ebpf
+    clash: Clash
+    subs: Subscriptions
+
+    # --- 基础 ---------------------------------------------------------------
+    def log_message(self, fmt: str, *args) -> None:  # 静音默认访问日志
+        pass
+
+    def _send(self, code: int, body: bytes, ctype: str = "application/json; charset=utf-8") -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _json(self, obj, code: int = 200) -> None:
+        self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+    def _body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        if not length:
+            return {}
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8"))
+        except ValueError:
+            return {}
+
+    def _authorized(self) -> bool:
+        supplied = self.headers.get("X-Panel-Token") or ""
+        if not supplied:
+            cookie = self.headers.get("Cookie") or ""
+            for part in cookie.split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == "panel_token":
+                    supplied = v
+        return bool(supplied) and secrets.compare_digest(supplied, self.settings.token())
+
+    # --- 路由 ---------------------------------------------------------------
+    def do_GET(self) -> None:  # noqa: N802
+        self._route("GET")
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._route("POST")
+
+    def do_PUT(self) -> None:  # noqa: N802
+        self._route("PUT")
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        self._route("DELETE")
+
+    def _route(self, method: str) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        path = urllib.parse.unquote(parsed.path)
+        query = dict(urllib.parse.parse_qsl(parsed.query))
+
+        if not path.startswith("/api/"):
+            return self._static(path)
+
+        if path == "/api/ping":
+            return self._json({"ok": True, "version": VERSION, "auth_required": True})
+        if not self._authorized():
+            return self._json({"ok": False, "message": "未授权：请在面板里填入访问令牌", "auth": False}, 401)
+
+        try:
+            result = self._api(method, path, query)
+        except Exception as exc:  # noqa: BLE001
+            log(f"API {method} {path} 出错：{exc!r}")
+            return self._json({"ok": False, "message": f"内部错误：{exc}"}, 500)
+        if result is None:
+            return self._json({"ok": False, "message": f"未知接口：{method} {path}"}, 404)
+        return self._json(result)
+
+    def _api(self, method: str, path: str, query: dict):
+        s = self.settings
+        # 状态
+        if path == "/api/state" and method == "GET":
+            cfg = None
+            cfg_error = ""
+            try:
+                cfg = s.load_sing_box_config()
+            except Exception as exc:  # noqa: BLE001
+                cfg_error = str(exc)
+            inbounds = [i.get("type") for i in (cfg or {}).get("inbounds", [])]
+            mode = "ebpf" if "ebpf" in inbounds else ("tun" if "tun" in inbounds else "mixed")
+            st = s.sing_box_config.stat() if s.sing_box_config.exists() else None
+            if s.dry_run:
+                version = f"{VERSION} (dry-run)"
+            else:
+                rc, out, _ = run([s["sing_box_bin"], "version"], timeout=10)
+                version = out.splitlines()[0].replace("sing-box version ", "").strip() if rc == 0 and out else ""
+            return {
+                "ok": True,
+                "version": version,
+                "panel_version": VERSION,
+                "mode": mode,
+                "inbounds": inbounds,
+                "service": self.service.status(),
+                "config_path": str(s.sing_box_config),
+                "config_mtime": int(st.st_mtime) if st else 0,
+                "config_bytes": st.st_size if st else 0,
+                "config_error": cfg_error,
+                "dry_run": s.dry_run,
+                "clash_api": s["clash_api"],
+                "managed_group": s.get("managed_group"),
+                "managed_urltest": s.get("managed_urltest"),
+                "token_file": str(s.token_file),
+            }
+
+        if path == "/api/service" and method == "POST":
+            return self.service.control(str(self._body().get("action", "")))
+
+        if path == "/api/logs" and method == "GET":
+            return {"ok": True, "lines": self.service.journal(int(query.get("n", 200)))}
+
+        # 配置
+        if path == "/api/config" and method == "GET":
+            return {
+                "ok": True,
+                "path": str(s.sing_box_config),
+                "text": s.sing_box_config.read_text("utf-8") if s.sing_box_config.exists() else "",
+                "backups": self.configs.list_backups(),
+            }
+        if path == "/api/config" and method == "POST":
+            body = self._body()
+            try:
+                cfg = json.loads(body.get("text", ""))
+            except ValueError as exc:
+                return err(f"JSON 语法错误：{exc}")
+            return self.configs.apply(cfg, "manual-edit")
+        if path == "/api/config/validate" and method == "POST":
+            try:
+                cfg = json.loads(self._body().get("text", ""))
+            except ValueError as exc:
+                return err(f"JSON 语法错误：{exc}")
+            okc, msg = self.configs.check(cfg)
+            return {"ok": okc, "message": msg}
+        if path == "/api/config/backup" and method == "POST":
+            name = self.configs.backup("manual")
+            return ok(f"已备份为 {name}") if name else err("线上配置不存在")
+        if path == "/api/config/restore" and method == "POST":
+            return self.configs.restore(str(self._body().get("name", "")))
+
+        # eBPF
+        if path == "/api/ebpf/policy" and method == "GET":
+            return {"ok": True, **self.ebpf.policy()}
+        if path == "/api/ebpf/policy" and method == "POST":
+            body = self._body()
+            return self.ebpf.set_policy(str(body.get("mode", "off")), list(body.get("uids", [])))
+        if path == "/api/ebpf/probe" and method == "POST":
+            return {"ok": True, "data": self.ebpf.probe(self._body().get("interface") or None)}
+
+        # 应用列表
+        if path == "/api/apps" and method == "GET":
+            return {"ok": True, "apps": list_apps(s)}
+
+        # Clash API 透传
+        if path == "/api/clash/proxies" and method == "GET":
+            return self.clash.proxies()
+        if path == "/api/clash/connections" and method == "GET":
+            return self.clash.connections()
+        if path == "/api/clash/version" and method == "GET":
+            return self.clash.version()
+        m = re.fullmatch(r"/api/clash/proxies/(.+)/delay", path)
+        if m and method == "GET":
+            return self.clash.delay(
+                m.group(1), query.get("url", "http://www.gstatic.com/generate_204"), int(query.get("timeout", 5000))
+            )
+        m = re.fullmatch(r"/api/clash/proxies/(.+)", path)
+        if m and method == "PUT":
+            return self.clash.select(m.group(1), str(self._body().get("name", "")))
+
+        # 订阅
+        if path == "/api/subscriptions" and method == "GET":
+            return {"ok": True, "subscriptions": self.subs.list()}
+        if path == "/api/subscriptions" and method == "POST":
+            body = self._body()
+            return self.subs.add(str(body.get("name", "")), str(body.get("url", "")), bool(body.get("enabled", True)))
+        if path == "/api/subscriptions/update_all" and method == "POST":
+            return self.subs.update_all()
+        if path == "/api/subscriptions/apply" and method == "POST":
+            return self.subs.apply()
+        m = re.fullmatch(r"/api/subscriptions/([0-9a-f]+)/update", path)
+        if m and method == "POST":
+            return self.subs.update(m.group(1))
+        m = re.fullmatch(r"/api/subscriptions/([0-9a-f]+)", path)
+        if m and method == "DELETE":
+            return self.subs.remove(m.group(1))
+        return None
+
+    # --- 静态文件 -----------------------------------------------------------
+    def _static(self, path: str) -> None:
+        if path == "/dash":
+            self.send_response(302)
+            self.send_header("Location", "/dash/")
+            self.end_headers()
+            return
+        if path.startswith("/dash/"):
+            base = Path(self.settings["zashboard_dir"])
+            rel = path[len("/dash/"):] or "index.html"
+            return self._serve(base, rel, spa=True)
+        base = Path(self.settings["ui_dir"])
+        rel = path.lstrip("/") or "index.html"
+        if rel.startswith("ui/"):
+            rel = rel[3:]
+        return self._serve(base, rel, spa=False)
+
+    def _serve(self, base: Path, rel: str, spa: bool) -> None:
+        target = (base / rel).resolve()
+        try:
+            target.relative_to(base.resolve())
+        except ValueError:
+            return self._send(403, b"forbidden", "text/plain")
+        if not target.is_file():
+            if spa:
+                target = base / "index.html"
+            if not target.is_file():
+                return self._send(404, b"not found", "text/plain")
+        ctype = {
+            ".html": "text/html; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".mjs": "application/javascript; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+            ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".ico": "image/x-icon",
+            ".webmanifest": "application/manifest+json",
+            ".jpg": "image/jpeg",
+            ".woff2": "font/woff2",
+            ".txt": "text/plain; charset=utf-8",
+            ".md": "text/plain; charset=utf-8",
+        }.get(target.suffix, "application/octet-stream")
+        self._send(200, target.read_bytes(), ctype)
+
+
+# --------------------------------------------------------------------------- main
+
+
+def build_server(settings: Settings) -> ThreadingHTTPServer:
+    service = Service(settings)
+    configs = ConfigManager(settings, service)
+    handler = type(
+        "BoundHandler",
+        (Handler,),
+        {
+            "settings": settings,
+            "service": service,
+            "configs": configs,
+            "ebpf": Ebpf(settings, configs),
+            "clash": Clash(settings),
+            "subs": Subscriptions(settings, configs),
+        },
+    )
+    return ThreadingHTTPServer((settings["listen"], int(settings["port"])), handler)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="sing-box panel backend")
+    parser.add_argument("--config", help="面板配置文件（默认 /etc/sing-box/panel.json）")
+    parser.add_argument("--port", type=int, help="覆盖监听端口")
+    parser.add_argument("--listen", help="覆盖监听地址")
+    parser.add_argument("--dry-run", action="store_true", help="不动 systemd，配置写到 /tmp（用于本地测试）")
+    parser.add_argument("--print-token", action="store_true", help="打印访问令牌后退出")
+    parser.add_argument("--version", action="version", version=f"sing-box-panel {VERSION}")
+    args = parser.parse_args()
+
+    settings = Settings(args.config, dry_run=args.dry_run)
+    if args.port:
+        settings.data["port"] = args.port
+    if args.listen:
+        settings.data["listen"] = args.listen
+
+    if args.print_token:
+        print(settings.token())
+        return 0
+
+    server = build_server(settings)
+    log(f"sing-box panel {VERSION} 监听 http://{settings['listen']}:{settings['port']}/（令牌：{settings.token_file}）")
+    if settings.dry_run:
+        log("dry-run 模式：不调用 systemctl，配置写 /tmp/sing-box-panel-dryrun-config.json")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        log("退出")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
