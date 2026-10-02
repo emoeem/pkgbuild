@@ -96,13 +96,21 @@ p = sys.argv[1]
 d = json.load(open(p, encoding="utf-8"))
 for i in d.get("inbounds", []):
     if i.get("type") == "ebpf":
-        i.setdefault("local", {})["enabled"] = False
-        (i.get("shared") or {}).setdefault("enabled", True)
+        # 关键：不能只把 enabled 改 false —— 留着 data_plane 会让 sing-box 启动直接 FATAL
+        # （实测：initialize inbound: local.data_plane requires local interception）
+        i["local"] = {"enabled": False}
+        i["shared"] = dict(i.get("shared") or {}, enabled=True)
 json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
+    if ! "$BIN" check -c "$CONF" >/tmp/sb-conf-check.log 2>&1; then
+        tail -3 /tmp/sb-conf-check.log | sed 's/^/     /'
+        warn "改完的配置 check 不通过 —— 立刻还原，服务不动"
+        restore_conf
+        exit 1
+    fi
     systemctl restart sing-box
     sleep 2
-    printf '   local 已关闭，shared 保持启用\n'
+    printf '   local 已关闭，shared 保持启用（check 已通过）\n'
 fi
 
 if (( DEBUG_LOG )); then
@@ -116,9 +124,15 @@ d = json.load(open(p, encoding="utf-8"))
 d.setdefault("log", {})["level"] = "debug"
 json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
+    if ! "$BIN" check -c "$CONF" >/tmp/sb-conf-check.log 2>&1; then
+        tail -3 /tmp/sb-conf-check.log | sed 's/^/     /'
+        warn "check 不通过 —— 立刻还原"
+        restore_conf
+        exit 1
+    fi
     systemctl restart sing-box
     sleep 2
-    printf '   log.level=debug，服务已重启\n'
+    printf '   log.level=debug，服务已重启（check 已通过）\n'
 fi
 
 say "① 建 netns + veth，并把宿主端接进 $IFACE"
