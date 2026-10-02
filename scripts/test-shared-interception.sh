@@ -20,10 +20,12 @@ BIN="${BIN:-sing-box}"
 CLASH="${CLASH:-http://127.0.0.1:9090}"
 KEEP=0
 DEBUG_LOG=0
+SHARED_ONLY=0
 for a in "$@"; do
     case "$a" in
         --keep) KEEP=1 ;;
         --debug-log) DEBUG_LOG=1 ;;
+        --shared-only) SHARED_ONLY=1 ;;
         -h|--help) printf '用法：sudo %s [--keep] [--debug-log]\n  --keep       保留 netns/veth 现场\n  --debug-log  临时把 log.level 调到 debug、跑完自动还原（看清 sing-box 的判定）\n' "$0"; exit 0 ;;
         *) printf '不认识的参数：%s\n' "$a" >&2; exit 2 ;;
     esac
@@ -62,7 +64,7 @@ NS=sb-shared-test; VH=sbveth-h; VC=sbveth-c
 PCAP=/tmp/sb-shared-test.pcap
 TCPDUMP_PID=""
 cleanup() {
-    restore_log 2>/dev/null || true
+    restore_conf 2>/dev/null || true
     [[ -n $TCPDUMP_PID ]] && kill "$TCPDUMP_PID" 2>/dev/null || true
     [[ -n $TCPDUMP_PID ]] && wait "$TCPDUMP_PID" 2>/dev/null || true
     ip netns del "$NS" 2>/dev/null || true
@@ -74,7 +76,7 @@ cleanup   # 先清一遍，避免上次残留
 sleep 0.5
 
 CONF_BAK=""
-restore_log() {
+restore_conf() {
     if [[ -n $CONF_BAK && -f $CONF_BAK ]]; then
         cp -a "$CONF_BAK" "$CONF"
         systemctl restart sing-box
@@ -83,6 +85,26 @@ restore_log() {
         CONF_BAK=""
     fi
 }
+if (( SHARED_ONLY )); then
+    say "⓪ 临时关掉 local 路径（只留 shared）—— 这样 netns 客户端的流量**只可能**走 shared"
+    warn "期间宿主自身流量不被代理（约 20 秒），脚本跑完会自动还原并重启"
+    CONF_BAK="$(mktemp /tmp/sb-conf-bak.XXXXXX)"
+    cp -a "$CONF" "$CONF_BAK"
+    python3 - "$CONF" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+for i in d.get("inbounds", []):
+    if i.get("type") == "ebpf":
+        i.setdefault("local", {})["enabled"] = False
+        (i.get("shared") or {}).setdefault("enabled", True)
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PY
+    systemctl restart sing-box
+    sleep 2
+    printf '   local 已关闭，shared 保持启用\n'
+fi
+
 if (( DEBUG_LOG )); then
     say "⓪ 临时把 log.level 调到 debug（跑完自动还原）"
     CONF_BAK="$(mktemp /tmp/sb-conf-bak.XXXXXX)"
@@ -287,7 +309,7 @@ if (( DEBUG_LOG )); then
     say "⑤ debug 日志已存到 $DBG"
     printf '   与 eBPF/TC/分配相关的行（前 12 条）:\n'
     grep -iE "ebpf|tc |assign|token|rewrite|shared|packet" "$DBG" | tail -12 | sed 's/.*sing-box\[[0-9]*\]: //' | sed 's/^/     /' || true
-    restore_log
+    restore_conf
 fi
 
 if (( KEEP )); then
