@@ -1,0 +1,21 @@
+_sing_box_ebpf_restore_config() {
+    # 本包 provides/conflicts 官方 `sing-box`，pacman 替换时会**先移除**官方包。
+    # 而官方包拥有 /etc/sing-box/config.json（且它是 backup 文件），于是用户改过的配置
+    # 会被 ALPM 存成 /etc/sing-box/config.json.pacsave，sing-box 再启动就找不到配置。
+    # 这里在安装/升级后自动还原一次：只在 config.json 缺失、pacsave 存在时动手，幂等安全。
+    local dir=/etc/sing-box
+    if [[ -f "${dir}/config.json.pacsave" && ! -e "${dir}/config.json" ]]; then
+        if mv -f "${dir}/config.json.pacsave" "${dir}/config.json"; then
+            printf 'sing-box-ebpf: 已把官方包替换时留下的 %s/config.json.pacsave 还原为 config.json\n' "$dir"
+            printf 'sing-box-ebpf: 如果你的 sing-box 服务正在运行，请执行 systemctl restart sing-box 让它读到新内核\n'
+        fi
+    fi
+}
+
+post_install() {
+    _sing_box_ebpf_restore_config
+}
+
+post_upgrade() {
+    _sing_box_ebpf_restore_config
+}

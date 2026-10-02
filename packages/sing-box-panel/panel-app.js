@@ -79,6 +79,20 @@ async function loadStatus() {
   $('#modePill').textContent = s.mode === 'ebpf' ? 'eBPF 模式' : `${s.mode} 模式`;
   $('#dryPill').classList.toggle('hidden', !s.dry_run);
   if (s.version) document.title = `sing-box ${s.version} · 控制台`;
+
+  // 集成入口：zashboard 深链带密钥，点开即配置完成
+  setText('#clashApi', s.clash_api || '–');
+  setText('#clashSecret', s.clash_secret ? s.clash_secret : '(未设置)');
+  const zash = $('#zashLink');
+  if (zash) zash.href = s.zash_setup_url || '/dash/';
+  const official = $('#officialLink');
+  if (official) official.href = s.official_dashboard_url || '#';
+  const mcd = $('#mcdLink');
+  if (mcd) {
+    // 只有 sing-box 配置里启用了 external_ui 才显示；用 zashboard 作为唯一运行时面板时它自动消失
+    if (s.metacubexd_url) { mcd.href = s.metacubexd_url; mcd.classList.remove('hidden'); }
+    else { mcd.classList.add('hidden'); }
+  }
   if (s.config_error) toast(`配置读取失败：${s.config_error}`, 'err');
 }
 
@@ -306,6 +320,13 @@ function bind() {
     toast(r.message, r.ok ? 'ok' : 'err');
     setTimeout(loadStatus, 800);
   }));
+
+  $('#copySecret').addEventListener('click', async () => {
+    const text = $('#clashSecret').textContent.trim();
+    if (!text || text === '(未设置)') return toast('没有配置 Clash 密钥', 'warn');
+    try { await navigator.clipboard.writeText(text); toast('密钥已复制', 'ok'); }
+    catch { toast('复制失败，请手动选择复制', 'warn'); }
+  });
 
   $('#probeBtn').addEventListener('click', runProbe);
   $('#logRefresh').addEventListener('click', loadLogs);

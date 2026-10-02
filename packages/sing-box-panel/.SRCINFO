@@ -1,7 +1,7 @@
 pkgbase = sing-box-panel
 	pkgdesc = Local web panel for sing-box: service control, subscriptions/nodes, per-app eBPF policy, safe config pipeline
 	pkgver = 0.1.0
-	pkgrel = 1
+	pkgrel = 4
 	url = https://github.com/emoeem/pkgbuild
 	arch = any
 	license = MIT

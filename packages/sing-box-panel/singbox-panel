@@ -102,6 +102,7 @@ class Settings:
         os.makedirs(self.data["state_dir"], exist_ok=True)
         self.token_file = Path(self.data["state_dir"]) / "token"
         self._secret_cache: tuple[int, str] | None = None
+        self.token_created = False
 
     def __getitem__(self, key: str):
         return self.data[key]
@@ -121,7 +122,7 @@ class Settings:
         value = secrets.token_urlsafe(24)
         self.token_file.write_text(value + "\n", encoding="utf-8")
         os.chmod(self.token_file, 0o600)
-        log(f"已生成面板访问令牌：{self.token_file}")
+        self.token_created = True
         return value
 
     # sing-box 配置路径 ------------------------------------------------------
@@ -1152,7 +1153,8 @@ class Handler(BaseHTTPRequestHandler):
                 k, _, v = part.strip().partition("=")
                 if k == "panel_token":
                     supplied = v
-        return bool(supplied) and secrets.compare_digest(supplied, self.settings.token())
+        expected = self.settings.token()          # 必须先调用：首次启动时它会创建令牌文件
+        return bool(supplied) and secrets.compare_digest(supplied, expected)
 
     # --- 路由 ---------------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802
@@ -1220,6 +1222,11 @@ class Handler(BaseHTTPRequestHandler):
                 "config_error": cfg_error,
                 "dry_run": s.dry_run,
                 "clash_api": s["clash_api"],
+                "clash_secret": s.clash_secret(),
+                "zash_setup_url": _zash_setup_url(s),
+                "official_dashboard_url": s.get("official_dashboard_url",
+                                                "http://127.0.0.1:9091/dashboard/"),
+                "metacubexd_url": _metacubexd_url(s, cfg),
                 "managed_group": s.get("managed_group"),
                 "managed_urltest": s.get("managed_urltest"),
                 "token_file": str(s.token_file),
@@ -1352,6 +1359,34 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, target.read_bytes(), ctype)
 
 
+def _zash_setup_url(settings: Settings) -> str:
+    """zashboard 的 #/setup 深链：带上主机/端口/密钥，点开即完成配置。"""
+    parsed = urllib.parse.urlparse(settings["clash_api"])
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 9090
+    query = urllib.parse.urlencode({
+        "hostname": host,
+        "port": port,
+        "secret": settings.clash_secret(),
+        "protocol": parsed.scheme or "http",
+    })
+    return f"/dash/#/setup?{query}"
+
+
+
+def _metacubexd_url(settings: Settings, cfg: dict | None) -> str:
+    """只有当 sing-box 配置里启用 external_ui 时才返回 MetaCubeXD 入口（由 sing-box 在 9090/ui/ 伺服）。"""
+    if not cfg:
+        return ""
+    clash = (cfg.get("experimental", {}) or {}).get("clash_api", {}) or {}
+    if not clash.get("external_ui"):
+        return ""
+    parsed = urllib.parse.urlparse(settings["clash_api"])
+    origin = f"{parsed.scheme or 'http'}://{parsed.netloc}"
+    return f"{origin}/ui/"
+
+
+
 # --------------------------------------------------------------------------- main
 
 
@@ -1393,8 +1428,13 @@ def main() -> int:
         print(settings.token())
         return 0
 
+    settings.token()   # 启动即确保令牌文件存在，避免"要令牌才能生成令牌"的死锁
     server = build_server(settings)
-    log(f"sing-box panel {VERSION} 监听 http://{settings['listen']}:{settings['port']}/（令牌：{settings.token_file}）")
+    log(f"sing-box panel {VERSION} 监听 http://{settings['listen']}:{settings['port']}/")
+    if settings.token_created:
+        log(f"首次运行，已生成访问令牌，请执行： sudo cat {settings.token_file}")
+    else:
+        log(f"访问令牌文件：{settings.token_file}（sudo cat 查看）")
     if settings.dry_run:
         log("dry-run 模式：不调用 systemctl，配置写 /tmp/sing-box-panel-dryrun-config.json")
     try:

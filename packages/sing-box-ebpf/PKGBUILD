@@ -20,7 +20,7 @@ _commit=7c1ffd271cbc84fed23eaabdcd7e1cefb42a778e   # git rev-parse v1.14.2-reF1n
 
 pkgname=sing-box-ebpf
 pkgver=1.14.2.ref1nd
-pkgrel=1
+pkgrel=2
 pkgdesc='The universal proxy platform with the experimental eBPF inbound (reF1nd fork, x86-64-v3 static build)'
 arch=('x86_64')
 url='https://github.com/reF1nd/sing-box'
@@ -38,6 +38,9 @@ provides=('sing-box')
 conflicts=('sing-box' 'sing-box-git' 'sing-box-bin')
 # 只打包主程序，不额外产出空的 -debug 包
 options=('!debug')
+# 替换官方 `sing-box` 时，ALPM 会把它拥有的 /etc/sing-box/config.json 存成 .pacsave，
+# 导致服务重启后找不到配置；install 脚本负责在装完后自动还原（见 sing-box-ebpf.install）。
+install=sing-box-ebpf.install
 # 说明：namcap 会对产物报两条 "lacks FULL RELRO" / "lacks PIE" —— 这是 Go 静态二进制的
 # 常态（官方 sing-box 包同样如此）。实测 `namcap <包>` 在有这两条 W: 时退出码仍为 0，
 # 不会中断 CI；换成 -buildmode=pie -bindnow 可以消掉，代价是引入 glibc(ld.so) 运行时依赖，
