@@ -84,6 +84,21 @@ MetaCubeX `geoip/cn` / mihomo_yamls `cncidr`）的 sha256，**有变化才**更�
 的校验和与 `pkgver`（日期）并推送，进而触发该包重建；没有变化就不产生提交。
 本地可随时 `./scripts/refresh-rule-sets.sh --check` 预览。
 
+## sing-box 运维脚本
+
+`scripts/` 下有三个配合 `sing-box-ebpf` / `sing-box-rule-sets` 使用的运维脚本（都可重复执行、都走
+"改配置 → `sing-box check` → 备份 → 原子替换 → 重启 → 健康检查 → 失败自动回滚" 的安全管线）：
+
+| 脚本 | 用途 |
+| --- | --- |
+| `apply-audit-fixes.sh` | 审计修复：加 anti-AD 规则集、刷新 geoip/cn、清理冗余规则与 `dns-local`。可选开关：`--with-cncidr`（mihomo 国内 IP 表）、`--with-direct-list`（STUN/主机/LAN cache 直连）、`--with-extra-ads`（国内广告端点补漏）、`--with-dns-groups`（DNS 故障转移组）、`--use-package-paths`（规则集走 `/usr/share`）、`--nxdomain-ads`（把 DNS 广告拦截从 REFUSED 改成 NXDOMAIN，避免应用卡 5 秒） |
+| `switch-to-ebpf.sh` | 把 TUN 入站切换为 eBPF 入站（`--shared <接口>` 可同时接管下游）。健康判据用 `sing-box api ebpf` 附件状态 + "不设代理的请求是否走代理"，失败自动回滚到 TUN |
+| `enable-container-proxy.sh` | 让 **rootful** podman 容器也走代理：在 podman 网桥上开启 eBPF `shared` 数据面，并用真实容器验证；`--disable` 关闭 |
+
+> 背景：rootless podman 默认的 pasta 把容器数据包 splice 进宿主栈、不创建宿主 socket，
+> 因此 eBPF 的 local cgroup 数据面看不到容器流量（容器 DNS 与国内直连正常、境外直连失败）。
+> 快速绕过：容器加 `--network=host`。
+
 ## 添加 AUR 软件包
 
 在日常使用的目录克隆 `main` 源码分支：
