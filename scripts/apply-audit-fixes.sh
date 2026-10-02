@@ -252,6 +252,9 @@ if __import__("os").environ.get("USE_PKG_PATHS") == "1":
         "cncidr-mihomo": "cncidr-mihomo.srs",
         "must-direct": "must-direct.srs",
         "ads-extra": "ads-extra.srs",
+        # 后加的：忘了把它列进来的话，--use-package-paths 会把这一份漏在 /etc 里，
+        # 于是 pacman 更新规则集时它不会跟着走（实测就是这么漏的）
+        "adblockfilters": "adblockfilters.srs",
     }
     for r in rs:
         t = r.get("tag")
