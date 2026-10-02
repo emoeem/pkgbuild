@@ -111,20 +111,42 @@ def poll():
         time.sleep(0.03)
 t = threading.Thread(target=poll, daemon=True); t.start()
 # 从 netns 里发真实请求（由外层 shell 调用）
-subprocess.run(["ip","netns","exec",ns,"sh","-c",
-                "curl -s -m 12 https://api.ipify.org > /tmp/sb-ns-exit.txt 2>/dev/null; "
-                "curl -s -m 12 https://myip.ipip.net > /tmp/sb-ns-cn.txt 2>/dev/null; "
-                "curl -s -m 12 -o /dev/null https://www.google.com 2>/dev/null; echo $? > /tmp/sb-ns-google.txt; "
-                "curl -s -m 12 https://api.ipify.org -x http://192.168.122.1:7892 >/dev/null 2>&1 || true"],
-               capture_output=True, timeout=60)
+probe = r"""
+{
+  echo "ADDR"; ip -brief addr
+  echo "ROUTE4"; ip route
+  echo "ROUTE6"; ip -6 route
+  echo "RESOLV"; cat /etc/resolv.conf
+  echo "DNS_AAAA"; getent ahostsv6 api.ipify.org | head -2
+  echo "DNS_A"; getent ahostsv4 api.ipify.org | head -2
+  echo "CURL4"; curl -4 -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org
+  echo "CURL6"; curl -6 -s -m 8  -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org
+  echo "CURLDEF"; curl -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://api.ipify.org
+  echo "EXIT4"; curl -4 -s -m 15 https://api.ipify.org
+  echo "CN"; curl -4 -s -m 12 https://myip.ipip.net
+  echo "GOOGLE4"; curl -4 -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://www.google.com
+  echo "NEIGH"; ip neigh
+  echo "PINGGW"; ping -c1 -W2 192.168.122.1 >/dev/null 2>&1 && echo ok || echo fail
+} > /tmp/sb-ns-diag.txt 2>&1
+"""
+subprocess.run(["ip","netns","exec",ns,"sh","-c",probe], capture_output=True, timeout=90)
 time.sleep(0.5); stop.set(); t.join(timeout=2)
 print(json.dumps({"hits": hits[:6], "total": len(hits)}))
 PY
 )"
-NS_EXIT="$(cat /tmp/sb-ns-exit.txt 2>/dev/null || true)"
-NS_CN="$(cat /tmp/sb-ns-cn.txt 2>/dev/null || true)"
-NS_GOOGLE="$(cat /tmp/sb-ns-google.txt 2>/dev/null || true)"
-rm -f /tmp/sb-ns-exit.txt /tmp/sb-ns-cn.txt /tmp/sb-ns-google.txt
+NS_DIAG="$(cat /tmp/sb-ns-diag.txt 2>/dev/null || true)"
+rm -f /tmp/sb-ns-diag.txt
+field() { printf '%s' "$NS_DIAG" | awk -v k="$1" '$0==k{f=1;next} /^[A-Z0-9_]+$/{f=0} f' | tr '\n' ' '; }
+NS_EXIT="$(field EXIT4 | tr -d ' ')"
+NS_CN="$(field CN)"
+NS_GOOGLE_HTTP="$(field GOOGLE4)"
+NS_CURL4="$(field CURL4)"
+NS_CURL6="$(field CURL6)"
+NS_CURLDEF="$(field CURLDEF)"
+NS_DNS_A="$(field DNS_A)"
+NS_DNS_AAAA="$(field DNS_AAAA)"
+NS_ROUTE6="$(field ROUTE6)"
+NS_NEIGH="$(field NEIGH)"
 PROXY_EXIT="$(curl -s -m 10 -x http://127.0.0.1:7892 https://api.ipify.org 2>/dev/null || true)"
 HOST_DIRECT="$(curl -s -m 10 https://api.ipify.org 2>/dev/null || true)"
 
@@ -133,7 +155,13 @@ printf '   netns 客户端出口 : %s\n' "${NS_EXIT:-（失败）}"
 printf '   经本地代理口出口 : %s\n' "${PROXY_EXIT:-（失败）}"
 printf '   宿主不设代理出口 : %s\n' "${HOST_DIRECT:-（失败）}"
 printf '   netns 查国内出口 : %s\n' "${NS_CN:0:64}"
-printf '   netns 访问 google: %s\n' "$( [[ ${NS_GOOGLE:-1} == 0 ]] && echo '成功' || echo "失败(exit=${NS_GOOGLE:-?})" )"
+printf '   netns curl -4 代理测试 : %s\n' "${NS_CURL4:-?}"
+printf '   netns curl -6 代理测试 : %s\n' "${NS_CURL6:-?}（netns 无 IPv6 则必然失败，属正常）"
+printf '   netns curl 默认        : %s\n' "${NS_CURLDEF:-?}"
+printf '   netns google(http)     : %s\n' "${NS_GOOGLE_HTTP:-?}"
+printf '   netns 解析(AAAA/A)     : %s / %s\n' "${NS_DNS_AAAA:-无}" "${NS_DNS_A:-无}"
+printf '   netns IPv6 路由        : %s\n' "${NS_ROUTE6:-（无，符合预期）}"
+printf '   netns 邻居表           : %s\n' "${NS_NEIGH:-空}"
 python3 - "$CLASH_JSON" <<'PY'
 import json, sys
 try: d = json.loads(sys.argv[1])
