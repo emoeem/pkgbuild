@@ -22,6 +22,7 @@ DATA_PLANE="cgroup"
 FORCE=0
 BYPASS_CN=-1
 NO_SHARED=0
+SHARED_PLANE="packet_rewrite"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --shared)     SHARED_IFACE="${2:-}"; shift 2 ;;
@@ -30,10 +31,12 @@ while [[ $# -gt 0 ]]; do
     --bypass-cn)  BYPASS_CN=1; shift ;;    # 让命中 CN IP 段的目标绕过 eBPF（不进 sing-box）
     --no-bypass-cn) BYPASS_CN=0; shift ;;
     --no-shared)  NO_SHARED=1; shift ;;
-    *) printf 'FATAL 未知参数：%s（可用：--shared <接口> | --data-plane cgroup|tc | --bypass-cn | --no-bypass-cn | --no-shared | --force）\n' "$1" >&2; exit 1 ;;
+    --shared-plane) SHARED_PLANE="${2:-packet_rewrite}"; shift 2 ;;   # packet_rewrite | socket_assign
+    *) printf 'FATAL 未知参数：%s（可用：--shared <接口> | --data-plane cgroup|tc | --bypass-cn | --no-bypass-cn | --no-shared | --shared-plane packet_rewrite|socket_assign | --force）\n' "$1" >&2; exit 1 ;;
   esac
 done
 case "$DATA_PLANE" in cgroup|tc) ;; *) printf 'FATAL --data-plane 只能是 cgroup 或 tc\n' >&2; exit 1 ;; esac
+case "$SHARED_PLANE" in packet_rewrite|socket_assign) ;; *) printf 'FATAL --shared-plane 只能是 packet_rewrite 或 socket_assign\n' >&2; exit 1 ;; esac
 
 WORK="$(mktemp -d /tmp/switch-ebpf.XXXXXX)"
 NEW_JSON="$WORK/new-config.json"
@@ -111,6 +114,7 @@ if (( ALREADY_EBPF )); then
 import json, sys
 conf_path, out_path, data_plane, bypass = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 shared_iface, no_shared = sys.argv[5], int(sys.argv[6])
+shared_plane = sys.argv[7] if len(sys.argv) > 7 else "packet_rewrite"
 cfg = json.load(open(conf_path, encoding="utf-8"))
 
 # 挑选规则集要非常小心：bypass_rule_set 会让命中的目标**绕过 eBPF**，
@@ -169,7 +173,7 @@ for i in cfg["inbounds"]:
                 iface_exists = any(l.split(":")[0].strip() == shared_iface for l in fh.readlines()[2:])
         except OSError:
             pass
-        i["shared"] = {"enabled": True, "data_plane": "packet_rewrite",
+        i["shared"] = {"enabled": True, "data_plane": shared_plane,
                        "interface": [shared_iface], "dns_mode": "hijack",
                        "bypass_private_address": True, "ipv6": True}
         print(f"   shared → 接口 {shared_iface}（packet_rewrite"
@@ -181,7 +185,7 @@ else
 say "③ 生成新配置（tun → ebpf${SHARED_IFACE:+，shared=$SHARED_IFACE}，data_plane=$DATA_PLANE）"
 python3 - "$CONF" "$NEW_JSON" "$SHARED_IFACE" "$DATA_PLANE" <<'PY'
 import copy, json, sys
-conf_path, out_path, shared_iface, data_plane = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+conf_path, out_path, shared_iface, data_plane, shared_plane = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 cfg = json.load(open(conf_path, encoding="utf-8"))
 local = {
     "enabled": True,
@@ -192,7 +196,7 @@ local = {
 }
 shared = {"enabled": False}
 if shared_iface:
-    shared = {"enabled": True, "data_plane": "packet_rewrite", "interface": [shared_iface],
+    shared = {"enabled": True, "data_plane": shared_plane, "interface": [shared_iface],
               "dns_mode": "hijack", "bypass_private_address": True, "ipv6": True}
 ebpf = {"type": "ebpf", "tag": "ebpf-in", "network": ["tcp", "udp"],
         "local": local, "shared": shared}
