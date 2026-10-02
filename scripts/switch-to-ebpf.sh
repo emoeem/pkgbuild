@@ -110,7 +110,7 @@ fi
 
 if (( ALREADY_EBPF )); then
   say "③ 已是 eBPF 模式：按需调整 local 选项（data_plane / bypass_rule_set）"
-  python3 - "$CONF" "$NEW_JSON" "$DATA_PLANE" "$BYPASS_CN" "$SHARED_IFACE" "$NO_SHARED" <<'PY'
+  python3 - "$CONF" "$NEW_JSON" "$DATA_PLANE" "$BYPASS_CN" "$SHARED_IFACE" "$NO_SHARED" "$SHARED_PLANE" <<'PY'
 import json, sys
 conf_path, out_path, data_plane, bypass = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 shared_iface, no_shared = sys.argv[5], int(sys.argv[6])
@@ -176,14 +176,14 @@ for i in cfg["inbounds"]:
         i["shared"] = {"enabled": True, "data_plane": shared_plane,
                        "interface": [shared_iface], "dns_mode": "hijack",
                        "bypass_private_address": True, "ipv6": True}
-        print(f"   shared → 接口 {shared_iface}（packet_rewrite"
+        print(f"   shared → 接口 {shared_iface}（{shared_plane}"
               + ("" if iface_exists else "；⚠️ 该接口当前不存在，sing-box 会持续重试")
               + "）")
 json.dump(cfg, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
 else
 say "③ 生成新配置（tun → ebpf${SHARED_IFACE:+，shared=$SHARED_IFACE}，data_plane=$DATA_PLANE）"
-python3 - "$CONF" "$NEW_JSON" "$SHARED_IFACE" "$DATA_PLANE" <<'PY'
+python3 - "$CONF" "$NEW_JSON" "$SHARED_IFACE" "$DATA_PLANE" "$SHARED_PLANE" <<'PY'
 import copy, json, sys
 conf_path, out_path, shared_iface, data_plane, shared_plane = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 cfg = json.load(open(conf_path, encoding="utf-8"))
