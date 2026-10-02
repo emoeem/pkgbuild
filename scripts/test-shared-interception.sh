@@ -177,6 +177,10 @@ probe = r"""
   echo "GOOGLE4"; curl -4 -s -m 15 -o /dev/null -w "http=%{http_code} ip=%{remote_ip}\n" https://www.google.com
   echo "NEIGH"; ip neigh
   echo "PINGGW"; ping -c1 -W2 192.168.122.1 >/dev/null 2>&1 && echo ok || echo fail
+  echo "ENV_PROXY"; env | grep -i proxy || echo none
+  echo "ROUTE_GET"; ip route get 104.26.13.205 2>&1 | head -2
+  echo "LINKSTAT"; ip -s link show sbveth-c | tail -3
+  echo "CURLV"; curl -4 -v -m 10 https://api.ipify.org 2>&1 | tail -14
 } > /tmp/sb-ns-diag.txt 2>&1
 """
 subprocess.run(["ip","netns","exec",ns,"sh","-c",probe], capture_output=True, timeout=90)
@@ -197,6 +201,10 @@ NS_DNS_A="$(field DNS_A)"
 NS_DNS_AAAA="$(field DNS_AAAA)"
 NS_ROUTE6="$(field ROUTE6)"
 NS_NEIGH="$(field NEIGH)"
+NS_ENVPROXY="$(field ENV_PROXY)"
+NS_ROUTEGET="$(field ROUTE_GET)"
+NS_LINKSTAT="$(field LINKSTAT | tr -s ' ')"
+NS_CURLV="$(printf '%s' "$NS_DIAG" | awk '/^CURLV$/{f=1;next} /^[A-Z0-9_]+$/{f=0} f')"
 PROXY_EXIT="$(curl -s -m 10 -x http://127.0.0.1:7892 https://api.ipify.org 2>/dev/null || true)"
 HOST_DIRECT="$(curl -s -m 10 https://api.ipify.org 2>/dev/null || true)"
 
@@ -212,6 +220,11 @@ printf '   netns google(http)     : %s\n' "${NS_GOOGLE_HTTP:-?}"
 printf '   netns 解析(AAAA/A)     : %s / %s\n' "${NS_DNS_AAAA:-无}" "${NS_DNS_A:-无}"
 printf '   netns IPv6 路由        : %s\n' "${NS_ROUTE6:-（无，符合预期）}"
 printf '   netns 邻居表           : %s\n' "${NS_NEIGH:-空}"
+printf '   netns 代理环境变量     : %s\n' "${NS_ENVPROXY:-none}"
+printf '   netns 去 104.26.13.205 的路由: %s\n' "${NS_ROUTEGET:-?}"
+printf '   netns 接口计数         : %s\n' "${NS_LINKSTAT:-?}"
+echo "   netns curl -4 -v 尾部（关键：看它卡在哪一步）:"
+printf '%s\n' "${NS_CURLV:-（空）}" | sed 's/^/     /' | tail -14
 python3 - "$CLASH_JSON" <<'PY'
 import json, sys
 try: d = json.loads(sys.argv[1])
@@ -224,6 +237,12 @@ for h in d.get("hits", [])[:4]:
     print(f"     {h['host'] or h['dest']}:{h['port']} 规则={h['rule'] or '-'} 链路={' → '.join(h['chains']) or '-'}")
 PY
 
+if [[ -n $TCPDUMP_PID ]]; then
+    kill "$TCPDUMP_PID" 2>/dev/null || true
+    wait "$TCPDUMP_PID" 2>/dev/null || true
+    TCPDUMP_PID=""
+    sleep 0.3   # 等它把 pcap 写完
+fi
 if [[ -s $PCAP ]]; then
     say "④ 抓包分析（$PCAP）"
     printf '   客户端发出的 SYN      : %s\n' "$(tcpdump -nn -r "$PCAP" 'tcp[tcpflags] & tcp-syn != 0 and src host '"$CLIENT_IP" 2>/dev/null | wc -l)"
