@@ -72,3 +72,17 @@ jobs:
           git diff --cached --quiet && { echo "Nothing staged."; exit 0; }
           git commit -m "chore(sing-box-rule-sets): refresh upstream rule-sets"
           git push
+
+      - name: Trigger rebuild
+        if: steps.refresh.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          # GITHUB_TOKEN 发起的 push 不会触发其它 workflow，重建必须显式
+          # 请求（与 sync.yml 同因同法），否则刷新只会躺在 git 里。
+          gh workflow run build.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            -f packages=sing-box-rule-sets \
+            -f make_jobs=4
+          printf 'Dispatched a rebuild for sing-box-rule-sets\n'
