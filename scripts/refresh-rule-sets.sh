@@ -78,7 +78,6 @@ if (( CHECK_ONLY )); then
 fi
 
 new_date="$(date -u +%Y%m%d)"
-new_pkgrel=1
 python3 - "$pkgbuild" "$new_date" "${new_sums[@]}" <<'PY'
 import re, sys, pathlib
 path, date_, *sums = sys.argv[1:]
@@ -103,10 +102,26 @@ PY
 if command -v makepkg >/dev/null 2>&1; then
     ( cd "$pkg_dir" && BUILDDIR="$(mktemp -d)" SRCDEST="$work" PKGDEST="$work" LOGDEST="$work" makepkg --printsrcinfo > "$srcinfo" )
 else
-    # 调度 runner（ubuntu）没有 makepkg：pkgver/pkgrel 是简单标量，直接
-    # 文本修补 .SRCINFO；一致性由 check-package.sh 在 builder 容器里用
-    # 真正的 makepkg --printsrcinfo 把关。
-    sed -i -E "s/^(\tpkgver = ).*/\1${new_date}/" "$srcinfo"
-    sed -i -E "s/^(\tpkgrel = ).*/\1${new_pkgrel}/" "$srcinfo"
+    # 调度 runner（ubuntu）没有 makepkg：pkgver/pkgrel 是标量，sha256sums
+    # 是多值键——前 N 行（N = 远程源个数）换成新哈希，本地源（SKIP）原样
+    # 保留。不补这个的话 PKGBUILD 与 .SRCINFO 的哈希会错开，被 builder
+    # 容器里的 check-package.sh 正确拦下（2026-10-05 实测翻过车）。
+    python3 - "$srcinfo" "$new_date" "${new_sums[@]}" <<'PY'
+import re, sys, pathlib
+path, date_, *sums = sys.argv[1:]
+p = pathlib.Path(path)
+s = p.read_text(encoding="utf-8")
+s = re.sub(r"^(\tpkgver = ).*$", rf"\g<1>{date_}", s, count=1, flags=re.M)
+s = re.sub(r"^(\tpkgrel = ).*$", r"\g<1>1", s, count=1, flags=re.M)
+state = {"i": 0}
+
+def repl(m):
+    i = state["i"]
+    state["i"] += 1
+    return f"\tsha256sums = {sums[i]}" if i < len(sums) else m.group(0)
+
+s = re.sub(r"^\tsha256sums = .*$", repl, s, flags=re.M)
+p.write_text(s, encoding="utf-8")
+PY
 fi
 printf 'Updated %s\n' "${srcinfo#"$repo_root"/}"
