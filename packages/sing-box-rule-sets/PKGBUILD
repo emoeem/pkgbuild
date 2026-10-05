@@ -21,8 +21,8 @@
 # 升级方式：`pkgver` 用日期；改了远程源就用 `scripts/refresh-rule-sets.sh` 自动比对 sha256 并提交。
 
 pkgname=sing-box-rule-sets
-pkgver=20261002
-pkgrel=2
+pkgver=20261005
+pkgrel=1
 pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, always-direct list, CN ad-SDK extras'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
@@ -44,10 +44,10 @@ source=(
     'LICENSE-anti-AD'
 )
 sha256sums=(
-    '5b0f507dce4446e173c4a43bb51b410753f2793af8b5d2223daccf687eb2666f'
+    '103d157a4e0a67e69a34dd00c8b54c532668a116656bd1b5db790ed8ecdfe3ac'
     'ac82bac86a7f9f873b4e016765f9ee5afe0152da52049b72c16f459572c317ee'
     'df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f'
-    '9d2029366331ba218e5a3508bb1ae963d83575c3e49b424d10eeb9db0c4a1934'
+    'de0623e95f0577423e480242b16e08f0d89c003511b617b3b366e591dd24e8f0'
     'SKIP'
     'SKIP'
     'SKIP'
