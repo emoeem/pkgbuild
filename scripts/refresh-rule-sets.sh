@@ -12,7 +12,21 @@ readonly pkg_dir="${repo_root}/packages/sing-box-rule-sets"
 readonly pkgbuild="${pkg_dir}/PKGBUILD"
 readonly srcinfo="${pkg_dir}/.SRCINFO"
 CHECK_ONLY=0
-[[ "${1:-}" == "--check" ]] && CHECK_ONLY=1
+# 不认识的参数必须拒绝：这个脚本会改写 PKGBUILD 并触发发布，拼错参数
+# 静默跑下去比直接失败危险得多。
+case "${1:-}" in
+    "") ;;
+    --check) CHECK_ONLY=1 ;;
+    -h|--help)
+        printf 'usage: %s [--check]\n' "${0##*/}"
+        printf '  --check  只报告是否有变化，不写文件\n'
+        exit 0
+        ;;
+    *)
+        printf 'unknown argument: %s (supported: --check)\n' "$1" >&2
+        exit 2
+        ;;
+esac
 
 readonly -a urls=(
     "https://anti-ad.net/adguard.txt"
@@ -64,6 +78,7 @@ if (( CHECK_ONLY )); then
 fi
 
 new_date="$(date -u +%Y%m%d)"
+new_pkgrel=1
 python3 - "$pkgbuild" "$new_date" "${new_sums[@]}" <<'PY'
 import re, sys, pathlib
 path, date_, *sums = sys.argv[1:]
@@ -71,19 +86,27 @@ p = pathlib.Path(path)
 s = p.read_text(encoding="utf-8")
 s = re.sub(r"^pkgver=.*$", f"pkgver={date_}", s, count=1, flags=re.M)
 s = re.sub(r"^pkgrel=\d+$", "pkgrel=1", s, count=1, flags=re.M)
+m = re.search(r"sha256sums=\(\n(.*?)\n\)", s, flags=re.S)
+lines = [line for line in m.group(1).splitlines() if line.strip()]
+# 前 len(sums) 行是本脚本重新计算的远程源；其余行（本地源，真实哈希或
+# SKIP）原样保留。旧的实现按 SKIP 出现次数补尾，本地源一旦改用真实
+# 哈希就会把数组截短、让 makepkg 报「完整性校验缺失」。
+tail = lines[len(sums):]
 body = "".join(f"    '{v}'\n" for v in sums)
-# SKIP 的个数 = 本地源个数：从原文件里数出来，别写死（增减本地源时会错位，
-# 后果是 makepkg 报「完整性校验缺失」而构建失败）
-skip_count = len(re.findall(r"^\s*'SKIP'", s, flags=re.M))
-s = re.sub(
-    r"sha256sums=\(\n(?:.*\n)*?\)",
-    lambda _m: "sha256sums=(\n" + body + "    'SKIP'\n" * skip_count + ")",
-    s,
-    count=1,
-)
+if tail:
+    body += "\n".join(tail) + "\n"
+s = s[:m.start()] + "sha256sums=(\n" + body + ")" + s[m.end():]
 p.write_text(s, encoding="utf-8")
 print(f"PKGBUILD updated: pkgver={date_}")
 PY
 
-( cd "$pkg_dir" && BUILDDIR="$(mktemp -d)" SRCDEST="$work" PKGDEST="$work" LOGDEST="$work" makepkg --printsrcinfo > "$srcinfo" )
-printf 'Regenerated %s\n' "${srcinfo#"$repo_root"/}"
+if command -v makepkg >/dev/null 2>&1; then
+    ( cd "$pkg_dir" && BUILDDIR="$(mktemp -d)" SRCDEST="$work" PKGDEST="$work" LOGDEST="$work" makepkg --printsrcinfo > "$srcinfo" )
+else
+    # 调度 runner（ubuntu）没有 makepkg：pkgver/pkgrel 是简单标量，直接
+    # 文本修补 .SRCINFO；一致性由 check-package.sh 在 builder 容器里用
+    # 真正的 makepkg --printsrcinfo 把关。
+    sed -i -E "s/^(\tpkgver = ).*/\1${new_date}/" "$srcinfo"
+    sed -i -E "s/^(\tpkgrel = ).*/\1${new_pkgrel}/" "$srcinfo"
+fi
+printf 'Updated %s\n' "${srcinfo#"$repo_root"/}"
