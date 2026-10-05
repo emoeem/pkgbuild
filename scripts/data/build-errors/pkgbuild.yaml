@@ -1,0 +1,45 @@
+# PKGBuildError: the build description itself is broken.
+rules:
+  - id: pkgbuild-syntax
+    category: PKGBuildError
+    stage: prepare
+    summary: The PKGBUILD has a shell syntax error.
+    confidence: high
+    patterns:
+      - "PKGBUILD: line [0-9]+: syntax error"
+      - "syntax error near unexpected token"
+      - "unexpected EOF while looking for matching"
+    root_cause: "PKGBUILD shell syntax error"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: srcinfo-stale
+    category: PKGBuildError
+    stage: prepare
+    summary: .SRCINFO does not match the PKGBUILD.
+    confidence: high
+    patterns:
+      - "^[+]pkg(ver|rel|name) = "
+      - "PKGBUILD and [.]SRCINFO differ"
+      - "^--- packages/.*[.]SRCINFO"
+    root_cause: "generated .SRCINFO is stale"
+    action:
+      kind: regenerate_srcinfo
+      safe_auto_fix: level1
+      retry: true
+  - id: invalid-pkgbuild-field
+    category: PKGBuildError
+    stage: prepare
+    summary: A PKGBUILD field is invalid or missing.
+    confidence: medium
+    patterns:
+      - "install file .* does not exist"
+      - "is not allowed in .* array"
+      - "missing package metadata"
+      - "Unable to read package metadata"
+    root_cause: "invalid PKGBUILD metadata"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

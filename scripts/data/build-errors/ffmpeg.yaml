@@ -1,0 +1,43 @@
+# Project-specific known issues for the packages maintained here.
+rules:
+  - id: ffmpeg-openvino-soname
+    category: SONAMEError
+    stage: link
+    summary: openvino changed the libopenvino_c SONAME while ffmpeg-full still links the old one.
+    confidence: high
+    patterns:
+      - "libopenvino_c[.]so[.][0-9]+"
+    extract:
+      soname: "(libopenvino_c[.]so[.][0-9]+)"
+    root_cause: "the {soname} provider (openvino / CachyOS) drifted"
+    action:
+      inspect_provider: true
+      find_dependents: true
+      trigger_rebuild: true
+      safe_auto_fix: level3
+      retry: true
+  - id: ffmpeg-whisper-pkgconfig
+    category: DependencyError
+    stage: configure
+    summary: whisper.cpp installed its pkg-config file where the overlay does not expect it.
+    confidence: medium
+    patterns:
+      - "whisper[.]pc"
+      - "Package ['][^']*whisper[^']*['] not found"
+    root_cause: "whisper.cpp pkg-config layout changed; overlay patch 070 is stale"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: ffmpeg-lensfun-pkgconfig
+    category: DependencyError
+    stage: configure
+    summary: lensfun pkg-config metadata mismatch handled by overlay patch 060.
+    confidence: medium
+    patterns:
+      - "Package ['][^']*lensfun[^']*['] not found"
+    root_cause: "lensfun pkg-config layout changed; overlay patch 060 is stale"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

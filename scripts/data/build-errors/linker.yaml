@@ -1,0 +1,60 @@
+# LinkerError: the link step failed.
+rules:
+  - id: undefined-reference
+    category: LinkerError
+    stage: link
+    summary: The linker found undefined symbols.
+    confidence: high
+    patterns:
+      - "undefined reference to"
+      - "ld: undefined symbol"
+    extract:
+      symbol: "undefined reference to [']([^']+)[']"
+      library: "undefined reference to [']([A-Za-z0-9_]+)"
+    root_cause: "undefined reference to {symbol}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: missing-link-library
+    category: LinkerError
+    stage: link
+    summary: A library passed to the linker cannot be found.
+    confidence: high
+    patterns:
+      - "cannot find -l[A-Za-z0-9_+-]+"
+      - "ld: cannot find -l"
+    extract:
+      library: "cannot find (-l[A-Za-z0-9_+-]+)"
+    root_cause: "linker cannot find {library}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: collect2-error
+    category: LinkerError
+    stage: link
+    summary: collect2 failed; the real error is above it in the log.
+    confidence: low
+    patterns:
+      - "collect2: error:"
+      - "ld returned [0-9]+ exit status"
+    root_cause: "link failure (the first error above this line is the cause)"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: multiple-definition
+    category: LinkerError
+    stage: link
+    summary: A symbol is defined twice at link time.
+    confidence: medium
+    patterns:
+      - "multiple definition of"
+    extract:
+      symbol: "multiple definition of [']([^']+)[']"
+    root_cause: "duplicate symbol {symbol}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

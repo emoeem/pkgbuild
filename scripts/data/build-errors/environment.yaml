@@ -1,0 +1,59 @@
+# EnvironmentError: the build machine itself is the problem.
+rules:
+  - id: disk-full
+    category: EnvironmentError
+    stage: build
+    summary: The runner or container ran out of disk space.
+    confidence: high
+    patterns:
+      - "No space left on device"
+      - "write error: No space left"
+      - "Cannot write: No space left on device"
+    root_cause: "out of disk space"
+    action:
+      kind: infrastructure
+      safe_auto_fix: level1
+      retry: false
+  - id: out-of-memory
+    category: EnvironmentError
+    stage: build
+    summary: A compiler or linker process was killed by the OOM killer.
+    confidence: high
+    patterns:
+      - "virtual memory exhausted"
+      - 'c\+\+: internal compiler error: Killed'
+      - "gcc: fatal error: Killed"
+      - "cc1plus: out of memory"
+      - "Killed"
+    root_cause: "out of memory"
+    action:
+      kind: reduce_parallelism
+      safe_auto_fix: level3
+      retry: true
+  - id: permission-denied
+    category: EnvironmentError
+    stage: build
+    summary: A path used by the build is not writable by the builder user.
+    confidence: medium
+    patterns:
+      - "Permission denied"
+      - "Operation not permitted"
+      - "dubious ownership in repository"
+    root_cause: "permission or ownership problem in the build tree"
+    action:
+      kind: infrastructure
+      safe_auto_fix: level1
+      retry: true
+  - id: toolchain-missing
+    category: EnvironmentError
+    stage: configure
+    summary: A tool the PKGBUILD expects is missing from the builder image.
+    confidence: medium
+    patterns:
+      - "(cmake|meson|ninja|nvcc): command not found"
+      - "command not found: (cmake|meson|ninja|gcc|rustc|cargo|go|nvcc)"
+    root_cause: "builder image is missing a required tool"
+    action:
+      kind: rebuild_builder
+      safe_auto_fix: none
+      retry: false

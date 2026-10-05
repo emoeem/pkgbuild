@@ -1,0 +1,57 @@
+# PackagingError: makepkg could not produce a valid package.
+rules:
+  - id: file-conflict
+    category: PackagingError
+    stage: package
+    summary: The package would overwrite a file owned by another package.
+    confidence: high
+    patterns:
+      - "exists in filesystem"
+      - "conflicting files"
+    root_cause: "file conflict with another package"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: missing-install-file
+    category: PackagingError
+    stage: package
+    summary: package() referenced a file that was not produced.
+    confidence: medium
+    patterns:
+      - "install: cannot stat"
+      - "cp: cannot stat"
+      - "Not found in archive"
+    extract:
+      path: "(?:cannot stat|Not found in archive)[:]? ?(.*)"
+    root_cause: "package() referenced a missing file {path}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: empty-package
+    category: PackagingError
+    stage: package
+    summary: makepkg produced no package file.
+    confidence: high
+    patterns:
+      - "No package files were produced"
+      - "package is empty"
+      - "ERROR: Package contains reference"
+    root_cause: "no package artifact was produced"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: namcap-findings
+    category: PackagingError
+    stage: verify
+    summary: namcap reported packaging errors.
+    confidence: low
+    patterns:
+      - "^[A-Za-z0-9@._+-]+ [EW]: "
+    root_cause: "namcap findings"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

@@ -1,0 +1,39 @@
+# SONAMEError: a shared object disappeared or its ABI changed.
+rules:
+  - id: soname-missing
+    category: SONAMEError
+    stage: link
+    summary: A shared object required by a dependency is no longer provided.
+    confidence: high
+    patterns:
+      - "lib[A-Za-z0-9+._-]*[.]so([.][0-9]+)+.*(not found|cannot open shared object)"
+      - "cannot open shared object file: No such file or directory"
+      - "error while loading shared libraries"
+    extract:
+      soname: "(lib[A-Za-z0-9+._-]*[.]so([.][0-9]+)+)"
+    root_cause: "missing shared object {soname}"
+    action:
+      inspect_provider: true
+      find_dependents: true
+      trigger_rebuild: true
+      safe_auto_fix: level3
+      retry: true
+  - id: symbol-version-missing
+    category: SONAMEError
+    stage: link
+    summary: A versioned symbol moved out of a shared library.
+    confidence: high
+    patterns:
+      - "symbol [A-Za-z0-9_]+ version [A-Za-z0-9_.]+ not defined"
+      - "version [A-Z_0-9.]+ not found"
+      - "symbol lookup error"
+    extract:
+      symbol: "symbol ([A-Za-z0-9_]+) version"
+      version: "version ([A-Z_0-9.]+) not found"
+    root_cause: "ABI break: {symbol} version {version} missing"
+    action:
+      inspect_provider: true
+      find_dependents: true
+      trigger_rebuild: true
+      safe_auto_fix: level3
+      retry: true

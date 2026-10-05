@@ -1,0 +1,5 @@
+# The builder Dockerfile only COPYs config/emo-native-flags.conf. Excluding
+# everything else keeps the ~400 MB context (packages/ build trees, .git)
+# out of every builder image build.
+*
+!config/

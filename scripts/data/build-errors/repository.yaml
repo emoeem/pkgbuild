@@ -1,0 +1,44 @@
+# RepositoryError: publishing and integrity gate failures.
+rules:
+  - id: repository-missing-asset
+    category: RepositoryError
+    stage: publish
+    summary: The database references a package asset that is not published.
+    confidence: high
+    patterns:
+      - "database references missing asset"
+      - "Repository databases are missing"
+      - "SHA256SUMS verification failed"
+      - "Repository integrity verification found"
+    root_cause: "inconsistent published repository"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: true
+  - id: repository-duplicate-soname
+    category: RepositoryError
+    stage: publish
+    summary: Two packages in the repository ship the same SONAME.
+    confidence: high
+    patterns:
+      - "duplicate SONAME"
+    extract:
+      soname: "duplicate SONAME (lib[A-Za-z0-9+._-]*[.]so([.][0-9]+)*)"
+    root_cause: "duplicate SONAME {soname} across packages"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: publish-mismatch
+    category: RepositoryError
+    stage: publish
+    summary: The artifact version does not match the source metadata.
+    confidence: high
+    patterns:
+      - "Publication mismatch for"
+      - "Published package has no source metadata"
+    root_cause: "artifact and source version mismatch"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

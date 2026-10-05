@@ -1,0 +1,84 @@
+# Per-package resource profile used by the DAG scheduler.
+#
+# Weights are 1 (light) .. 3 (very heavy) and are deliberately coarse: the
+# scheduler only needs to know which packages must not run next to each other.
+# Measured values from state/timing-history.jsonl override this table; these
+# entries exist so the first run (and any package without history) is already
+# scheduled sanely instead of being treated as weightless.
+defaults:
+  cpu: 2
+  ram: 2
+  disk: 2
+  gpu: 0
+
+packages:
+  ffmpeg-full:
+    cpu: 3
+    ram: 3
+    disk: 3
+    gpu: 1
+    note: "full CUDA/LTO build; historically the slowest package by an order of magnitude"
+  daed-emo:
+    cpu: 3
+    ram: 3
+    disk: 2
+    gpu: 0
+    note: "Go build with -march=x86-64-v3"
+  scx-scheds-git:
+    cpu: 3
+    ram: 2
+    disk: 2
+    gpu: 0
+    note: "Rust workspace over many sched_ext schedulers"
+  sing-box-ebpf:
+    cpu: 3
+    ram: 3
+    disk: 2
+    gpu: 0
+    note: "Go build with eBPF toolchain"
+  mpeghdec:
+    cpu: 2
+    ram: 2
+    disk: 2
+    gpu: 0
+  svt-jpeg-xs-git:
+    cpu: 2
+    ram: 2
+    disk: 2
+    gpu: 0
+  vapoursynth-plugin-mlrt-ncnn-runtime:
+    cpu: 2
+    ram: 2
+    disk: 3
+    gpu: 1
+    note: "ships large NCNN model blobs"
+  quirc:
+    cpu: 1
+    ram: 1
+    disk: 1
+    gpu: 0
+  xclip-git:
+    cpu: 1
+    ram: 1
+    disk: 1
+    gpu: 0
+  linuxqq-wayland-fix-git:
+    cpu: 1
+    ram: 1
+    disk: 1
+    gpu: 0
+  linuxqq-clipsync-git:
+    cpu: 1
+    ram: 1
+    disk: 1
+    gpu: 0
+  sing-box-panel:
+    cpu: 1
+    ram: 1
+    disk: 1
+    gpu: 0
+  sing-box-rule-sets:
+    cpu: 1
+    ram: 1
+    disk: 1
+    gpu: 0

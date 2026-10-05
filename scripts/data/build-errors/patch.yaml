@@ -1,0 +1,20 @@
+# PatchError: a repository patch no longer applies.
+rules:
+  - id: patch-failed
+    category: PatchError
+    stage: prepare
+    summary: A patch could not be applied to the upstream source.
+    confidence: high
+    patterns:
+      - "Hunk #[0-9]+ (FAILED|succeeded)"
+      - "patch unexpectedly ends in middle of line"
+      - "can't find file to patch"
+      - "previously applied patch detected"
+      - "A failure occurred in prepare"
+    extract:
+      patch: 'patching file (.+?)(?:\s|$)'
+    root_cause: "patch {patch} failed to apply against the upstream source"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

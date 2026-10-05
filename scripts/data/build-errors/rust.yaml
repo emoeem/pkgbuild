@@ -1,0 +1,47 @@
+# Rust: cargo and rustc failures.
+rules:
+  - id: cargo-dependency
+    category: DependencyError
+    stage: configure
+    summary: cargo could not fetch or resolve a crate.
+    confidence: high
+    patterns:
+      - "error: failed to (get|select|load|fetch|download)"
+      - "error: no matching package named"
+      - "error: failed to parse manifest"
+      - "Unable to update registry"
+    root_cause: "cargo dependency resolution or fetch failure"
+    action:
+      kind: retry
+      safe_auto_fix: level1
+      retry: true
+  - id: cargo-compile
+    category: CompilerError
+    stage: compile
+    summary: rustc rejected the crate.
+    confidence: medium
+    patterns:
+      - 'error\[E[0-9]+\]:'
+      - "error: aborting due to"
+      - "error: could not compile"
+    extract:
+      code: '(error[E[0-9]+])'
+    root_cause: "rustc compilation failure {code}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: rust-version-too-old
+    category: EnvironmentError
+    stage: configure
+    summary: The installed Rust toolchain is older than the crate requires.
+    confidence: high
+    patterns:
+      - "requires rustc [0-9.]+ or newer"
+      - "package .* requires rustc"
+      - "rustc [0-9.]+ is not supported"
+    root_cause: "rustc is too old for this crate"
+    action:
+      kind: rebuild_builder
+      safe_auto_fix: none
+      retry: false
