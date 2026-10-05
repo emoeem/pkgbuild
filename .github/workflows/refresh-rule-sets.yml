@@ -53,8 +53,11 @@ jobs:
           set -Eeuo pipefail
           # builder 容器里有 makepkg：真正校验 PKGBUILD 与 .SRCINFO 的一致
           # 性（调度 runner 上脚本只能文本修补 .SRCINFO）。
+          # --user builder：makepkg 拒绝以 root 运行（镜像里的 builder 用户
+          # 与 build-in-arch.sh 用的同一个）。
           docker run --pull always --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --user builder \
             ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
             bash /workspace/scripts/check-package.sh sing-box-rule-sets
 
