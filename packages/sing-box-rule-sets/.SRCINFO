@@ -1,6 +1,6 @@
 pkgbase = sing-box-rule-sets
 	pkgdesc = Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, always-direct list, CN ad-SDK extras
-	pkgver = 20261005
+	pkgver = 20261006
 	pkgrel = 1
 	url = https://github.com/emoeem/pkgbuild
 	arch = any
@@ -20,7 +20,7 @@ pkgbase = sing-box-rule-sets
 	sha256sums = 103d157a4e0a67e69a34dd00c8b54c532668a116656bd1b5db790ed8ecdfe3ac
 	sha256sums = ac82bac86a7f9f873b4e016765f9ee5afe0152da52049b72c16f459572c317ee
 	sha256sums = df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f
-	sha256sums = de0623e95f0577423e480242b16e08f0d89c003511b617b3b366e591dd24e8f0
+	sha256sums = fe5feb1f5da5a7019ea56e9a8cc60d9e47a5033fb58333ded0a4df43f3d87d8f
 	sha256sums = SKIP
 	sha256sums = SKIP
 	sha256sums = SKIP
