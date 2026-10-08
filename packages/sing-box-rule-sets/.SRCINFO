@@ -1,7 +1,7 @@
 pkgbase = sing-box-rule-sets
 	pkgdesc = Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, Loyalsoldier enhanced geosite (cn/non-cn), always-direct list, CN ad-SDK extras
 	pkgver = 20261008
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/emoeem/pkgbuild
 	arch = any
 	license = GPL-3.0-or-later
