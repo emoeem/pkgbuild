@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 每天检查 sing-box-rule-sets 的三个远程源是否有变化，有变化就更新 PKGBUILD（pkgver 用日期 + 新 sha256）
+# 每天检查 sing-box-rule-sets 的远程源是否有变化，有变化就更新 PKGBUILD（pkgver 用日期 + 新 sha256）
 # 并生成 .SRCINFO，供 CI 提交后自动重建包。没有变化则什么都不做（退出码 0）。
 #
 # 用法：scripts/refresh-rule-sets.sh [--check]
@@ -33,6 +33,9 @@ readonly -a urls=(
     "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs"
     "https://raw.githubusercontent.com/HenryChiao/mihomo_yamls/ruleset/singbox/version4/cncidr.srs"
     "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblocksingbox.srs"
+    # 顺序必须与 PKGBUILD 里远程 source 的顺序一致（前 N 行换新哈希，SKIP 的本地源原样保留）
+    "https://raw.githubusercontent.com/lyc8503/sing-box-rules/rule-set-geosite/geosite-cn.srs"
+    "https://raw.githubusercontent.com/lyc8503/sing-box-rules/rule-set-geosite/geosite-geolocation-!cn.srs"
 )
 
 [[ -f "$pkgbuild" ]] || { printf 'missing %s\n' "$pkgbuild" >&2; exit 1; }

@@ -5,6 +5,9 @@
 #   P2 : 删 dns-local（无人引用的潜在泄露面）、删两条与 final 重复的路由规则、
 #        去掉 external_ui*（同时消掉 1.14→1.16 的弃用告警，MetaCubeXD 一并下线）
 #   --with-dns-groups: 可选 P3，把闲置的 dns-proxy-google / dns-direct-tencent 变成故障转移组
+#   --with-lyc-geosite: 可选，把 lyc8503/sing-box-rules（Loyalsoldier 移植的增强 geosite）的
+#                       geosite/cn 与 geosite/geolocation-!cn 作为官方同名表的**补充**一起匹配
+#                       （并集不是替换：官方 cn 约 8.7k 后缀，这份约 11 万，国内分流更准）
 #
 # 安全管线：全部改动先在内存里做 → sing-box check（root）→ 备份 → 原子替换 → 重启 →
 #           健康检查（is-active + tun0 + 经代理出口 + 新拦域名）→ 任一失败自动回滚重启。
@@ -33,6 +36,7 @@ WITH_EXTRA_ADS=0
 USE_PKG_PATHS=0
 NXDOMAIN_ADS=0
 WITH_ABF=0
+WITH_LYC=0
 for arg in "$@"; do
   case "$arg" in
     --with-dns-groups)  WITH_DNS_GROUPS=1 ;;
@@ -42,7 +46,8 @@ for arg in "$@"; do
     --use-package-paths) USE_PKG_PATHS=1 ;; # 指向 sing-box-rule-sets 包提供的 /usr/share 路径（规则集随 pacman 更新）
     --nxdomain-ads)     NXDOMAIN_ADS=1 ;;   # DNS 广告拦截由 reject(REFUSED) 改为 predefined(NXDOMAIN)：应用立刻失败，不再卡 ~5s
     --with-abf)         WITH_ABF=1 ;;       # 加 adblockfilters 聚合广告表（215k 条域名后缀，与 anti-AD 互补）
-    *) printf 'FATAL 未知参数：%s（可用：--with-dns-groups --with-cncidr --with-direct-list --with-extra-ads --use-package-paths --nxdomain-ads --with-abf）\n' "$arg" >&2; exit 1 ;;
+    --with-lyc-geosite) WITH_LYC=1 ;;       # 加 lyc8503 的增强 geosite/cn + geolocation-!cn 作补充（国内分流更准）
+    *) printf 'FATAL 未知参数：%s（可用：--with-dns-groups --with-cncidr --with-direct-list --with-extra-ads --use-package-paths --nxdomain-ads --with-abf --with-lyc-geosite）\n' "$arg" >&2; exit 1 ;;
   esac
 done
 
@@ -63,6 +68,11 @@ die()  { printf '\033[1;31mFATAL\033[0m %s\n' "$*" >&2; exit 1; }
 [[ -f $CONF ]] || die "找不到配置 $CONF"
 [[ -f $RULESET_SRC/anti-ad.srs ]] || die "找不到 $RULESET_SRC/anti-ad.srs（先生成规则集）"
 [[ -f $RULESET_SRC/geoip-cn-fresh.srs ]] || die "找不到 $RULESET_SRC/geoip-cn-fresh.srs"
+if (( WITH_LYC )); then
+  for _f in lyc-geosite-cn lyc-geosite-geolocation-!cn; do
+    [[ -f $RULESET_SRC/$_f.srs ]] || die "找不到 $RULESET_SRC/$_f.srs（先装/刷新 sing-box-rule-sets 包）"
+  done
+fi
 command -v python3 >/dev/null || die "需要 python3"
 
 say "① 前置检查"
@@ -86,13 +96,15 @@ install -m 644 "$RULESET_SRC/geoip-cn-fresh.srs" "$RULE_DIR/geoip-cn-fresh.srs"
 [[ $WITH_DIRECT -eq 1 ]] && install -m 644 "$RULESET_SRC/must-direct.srs"   "$RULE_DIR/must-direct.srs" || true
 [[ $WITH_EXTRA_ADS -eq 1 ]] && install -m 644 "$RULESET_SRC/ads-extra.srs"  "$RULE_DIR/ads-extra.srs" || true
 [[ $WITH_ABF -eq 1 ]] && install -m 644 "$RULESET_SRC/adblockfilters.srs" "$RULE_DIR/adblockfilters.srs" || true
+[[ $WITH_LYC -eq 1 ]] && install -m 644 "$RULESET_SRC/lyc-geosite-cn.srs"              "$RULE_DIR/lyc-geosite-cn.srs" || true
+[[ $WITH_LYC -eq 1 ]] && install -m 644 "$RULESET_SRC/lyc-geosite-geolocation-!cn.srs" "$RULE_DIR/lyc-geosite-geolocation-!cn.srs" || true
 fi
 ls -la "$RULE_DIR"/*.srs 2>/dev/null | awk '{print "   ",$5,$9}'
 
 say "③ 生成新配置（内存里改，不落盘）"
 OUT_JSON="$NEW_JSON" RULE_DIR="$RULE_DIR" USE_PKG_PATHS="$USE_PKG_PATHS" NXDOMAIN_ADS="$NXDOMAIN_ADS" WITH_ABF="$WITH_ABF" \
 WITH_DNS_GROUPS="$WITH_DNS_GROUPS" WITH_CNCIDR="$WITH_CNCIDR" \
-WITH_DIRECT="$WITH_DIRECT" WITH_EXTRA_ADS="$WITH_EXTRA_ADS" python3 - "$CONF" <<'PY'
+WITH_DIRECT="$WITH_DIRECT" WITH_EXTRA_ADS="$WITH_EXTRA_ADS" WITH_LYC="$WITH_LYC" python3 - "$CONF" <<'PY'
 import json, sys, copy
 conf_path = sys.argv[1]
 RULE_DIR = __import__("os").environ.get("RULE_DIR", "/etc/sing-box/rule-set")
@@ -205,6 +217,28 @@ if __import__("os").environ.get("WITH_ABF") == "1":
                 r["rule_set"] = list(r.get("rule_set", [])) + ["adblockfilters"]
                 report.append(f"{label} 广告规则 += adblockfilters")
 
+# ---- 可选: lyc8503（Loyalsoldier 移植）的增强 geosite 作为**补充** ----
+# 只并入靠 geosite/cn、geosite/geolocation-!cn 命中的规则（DNS + 路由都改），官方表原样保留：
+# 是并集，不是替换。官方 cn 约 8.7k 域名后缀，这份约 11 万，国内分流更准。
+if __import__("os").environ.get("WITH_LYC") == "1":
+    lyc_sets = {
+        "lyc/cn": "lyc-geosite-cn.srs",
+        "lyc/geolocation-!cn": "lyc-geosite-geolocation-!cn.srs",
+    }
+    for tag, fn in lyc_sets.items():
+        if not any(r.get("tag") == tag for r in rs):
+            rs.append({"type": "local", "tag": tag, "format": "binary",
+                       "path": f"{RULE_DIR}/{fn}"})
+            report.append(f"route.rule_set += {tag}")
+    for tag, anchor in (("lyc/cn", "geosite/cn"),
+                        ("lyc/geolocation-!cn", "geosite/geolocation-!cn")):
+        for container, label in ((dns.get("rules", []), "dns.rules"), (route.get("rules", []), "route.rules")):
+            for r in container:
+                rset = r.get("rule_set")
+                if isinstance(rset, list) and anchor in rset and tag not in rset:
+                    r["rule_set"] = rset + [tag]
+                    report.append(f"{label} {anchor} 规则 += {tag}")
+
 # ---- 可选: DNS 广告拦截改用 predefined/NXDOMAIN ----
 # 背景：sing-box 的 DNS `reject` 返回 REFUSED，而 systemd-resolved 不会把 REFUSED 转告客户端
 # （它当成"上游坏了"去重试其他上游），于是走系统解析器的应用每个广告域名要等 ~5s 才失败。
@@ -255,6 +289,8 @@ if __import__("os").environ.get("USE_PKG_PATHS") == "1":
         # 后加的：忘了把它列进来的话，--use-package-paths 会把这一份漏在 /etc 里，
         # 于是 pacman 更新规则集时它不会跟着走（实测就是这么漏的）
         "adblockfilters": "adblockfilters.srs",
+        "lyc/cn": "lyc-geosite-cn.srs",
+        "lyc/geolocation-!cn": "lyc-geosite-geolocation-!cn.srs",
     }
     for r in rs:
         t = r.get("tag")

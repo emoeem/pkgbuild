@@ -3,12 +3,14 @@
 # 补充规则集包：把审计(2026-10-02)里验证过的几份规则数据固化成「跟着 pacman 更新」的资产。
 #
 # 内容（装到 /usr/share/sing-box-rule-sets/）：
-#   anti-ad.srs         ← anti-AD 广告/追踪表（AdGuard 语法，构建时用 sing-box 自带转换器转 .srs）
-#   geoip-cn-fresh.srs  ← MetaCubeX 最新 geoip/cn（本地 sing-geoip-rule-set 常年偏旧，实测缺段）
-#   cncidr-mihomo.srs   ← HenryChiao/mihomo_yamls 的国内 IP 表（第三份独立来源）
-#   adblockfilters.srs  ← 217heidai/adblockfilters 聚合广告表（215k 条域名后缀，8 小时更新）
-#   must-direct.srs     ← 自制：STUN/游戏主机/LAN cache/NCSI 必须直连（走代理会坏功能）
-#   ads-extra.srs       ← 自制：anti-AD 漏掉的国内广告端点（精确域名，不动 apex）
+#   anti-ad.srs                    ← anti-AD 广告/追踪表（AdGuard 语法，构建时用 sing-box 自带转换器转 .srs）
+#   geoip-cn-fresh.srs             ← MetaCubeX 最新 geoip/cn（本地 sing-geoip-rule-set 常年偏旧，实测缺段）
+#   cncidr-mihomo.srs              ← HenryChiao/mihomo_yamls 的国内 IP 表（第三份独立来源）
+#   adblockfilters.srs             ← 217heidai/adblockfilters 聚合广告表（215k 条域名后缀，8 小时更新）
+#   lyc-geosite-cn.srs             ← lyc8503/sing-box-rules（Loyalsoldier/v2ray-rules-dat 移植）的 geosite/cn
+#   lyc-geosite-geolocation-!cn.srs← 同上，geosite/geolocation-!cn
+#   must-direct.srs                ← 自制：STUN/游戏主机/LAN cache/NCSI 必须直连（走代理会坏功能）
+#   ads-extra.srs                  ← 自制：anti-AD 漏掉的国内广告端点（精确域名，不动 apex）
 #
 # 为什么单独打包：这些数据每天都在变，而 sing-geoip-rule-set / sing-geosite-rule-set 更新很慢；
 # 放在这里就能跟着本仓库的 CI 一起滚动重建（见 scripts/refresh-rule-sets.sh + 定时工作流）。
@@ -17,13 +19,15 @@
 #   MetaCubeX/meta-rules-dat → GPL-3.0-or-later
 #   HenryChiao/mihomo_yamls  → AGPL-3.0-or-later
 #   anti-AD (prprpi/anti-AD) → 仓库未附许可证文件，个人使用；此处标注 LicenseRef-anti-AD
+#   lyc8503/sing-box-rules   → 仓库未附许可证文件，数据移植自 Loyalsoldier/v2ray-rules-dat（GPL-3.0），
+#                              故归入本包的 GPL-3.0-or-later；用它的理由见下方注释。
 #
 # 升级方式：`pkgver` 用日期；改了远程源就用 `scripts/refresh-rule-sets.sh` 自动比对 sha256 并提交。
 
 pkgname=sing-box-rule-sets
 pkgver=20261008
 pkgrel=1
-pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, always-direct list, CN ad-SDK extras'
+pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, Loyalsoldier enhanced geosite (cn/non-cn), always-direct list, CN ad-SDK extras'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
 license=('GPL-3.0-or-later' 'AGPL-3.0-or-later' 'LicenseRef-anti-AD')
@@ -39,6 +43,11 @@ source=(
     # DNS-Blocklists PRO / StevenBlack / AWAvenue …，每 8 小时更新，并会先用 3+3 组 DNS 验证
     # 上游域名是否还有效（去掉失效的）。上游**直接提供 sing-box 1.12+ 的 .srs**，无需转换。
     'adblockfilters.srs::https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblocksingbox.srs'
+    # lyc8503/sing-box-rules：把 Loyalsoldier/v2ray-rules-dat 的地理数据移植成 sing-box .srs，日更。
+    # 用它做国内分流的**补充**：官方 sing-geosite 的 cn 只有 ~8.7k 域名后缀，这份 ~11 万，
+    # 国内直连判得更准（放在 geosite/cn 旁边一起匹配即可，不是替换）。上游直接给 .srs。
+    'lyc-geosite-cn.srs::https://raw.githubusercontent.com/lyc8503/sing-box-rules/rule-set-geosite/geosite-cn.srs'
+    'lyc-geosite-geolocation-!cn.srs::https://raw.githubusercontent.com/lyc8503/sing-box-rules/rule-set-geosite/geosite-geolocation-!cn.srs'
     'must-direct.json'
     'ads-extra.json'
     'LICENSE-anti-AD'
@@ -48,6 +57,8 @@ sha256sums=(
     'd5a12d61f726d63c0835fd7233de1b3186204aed51c07167f9650936224293ec'
     'df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f'
     'f7248f2cc87adfa89af51b7c34f9c41bf1b561a3daea7a27c4a8fb829b6df378'
+    '60fa2f8f94e42f20f7cd57d3b11d818ec483b1971d1357d9b6114ca07152db4d'
+    '055b1ac5ce1d8b9f6267d66eb1ede7a05feae7f578ff85f2df1d1d7fc6c1be8e'
     'SKIP'
     'SKIP'
     'SKIP'
@@ -58,6 +69,8 @@ _rule_sets=(
     geoip-cn-fresh
     cncidr-mihomo
     adblockfilters
+    lyc-geosite-cn
+    lyc-geosite-geolocation-!cn
     must-direct
     ads-extra
 )
@@ -75,8 +88,9 @@ build() {
     # 上游直接给的 .srs 改个更明确的名字
     install -m 644 geoip-cn.srs   geoip-cn-fresh.srs
     install -m 644 cncidr.srs     cncidr-mihomo.srs
+    # lyc-*.srs 已经是带 SRS magic 的成品，文件名即最终名，无需转换/改名
 
-    # 兜底断言：五份产物都必须是合法 rule-set（magic = "SRS"）
+    # 兜底断言：全部产物都必须是合法 rule-set（magic = "SRS"）
     local f
     for f in "${_rule_sets[@]}"; do
         [[ -s "$f.srs" ]] || { printf 'sing-box-rule-sets: %s.srs 为空\n' "$f" >&2; return 1; }
@@ -111,6 +125,8 @@ package() {
 | `geoip-cn-fresh.srs` | MetaCubeX 最新 `geoip/cn` | 国内 IP 判定（比 `sing-geoip-rule-set` 新） |
 | `cncidr-mihomo.srs` | mihomo_yamls 的国内 IP 表（独立来源，17958 条） | 与上面互为补充 |
 | `adblockfilters.srs` | 217heidai/adblockfilters 聚合表（215248 条域名后缀，8 小时更新） | 广告/追踪拦截的国际表覆盖更广（EasyPrivacy / AdGuard 全家桶 / OISD…） |
+| `lyc-geosite-cn.srs` | lyc8503/sing-box-rules 的 `geosite/cn`（~110k 域名后缀，日更） | **国内分流补充**：官方 `sing-geosite` 的 `cn` 只有 ~8.7k 后缀，这份更全，放在 `geosite/cn` 旁一起匹配 |
+| `lyc-geosite-geolocation-!cn.srs` | 同上仓库的 `geosite/geolocation-!cn`（~26k 后缀，日更） | 境外域名判定补充（与官方 `geolocation-!cn` 并集） |
 | `must-direct.srs` | ① STUN / 游戏主机 / LAN cache / NCSI ② **Steam 国服 CDN** | ① 走代理会坏功能（NAT 类型、Steam 局域网缓存）；② 直连明显更快 —— 只取国内 CDN 端点（`st.dl.eccdnx.com`、`dl.steam.clngaa.com`、`csgo.com.cn`…，来自 lingqiqi5211/sing-box-rules 的 `steam-cn`），**刻意不含** `steamcontent.com` / `steamusercontent.com` / `cm.steampowered.com` 等全球域名（强制直连有风险） |
 | `ads-extra.srs` | `ad.duowan.com` / `sdkmob.com` / `ads.wps.cn` | 补 anti-AD 漏掉的国内广告端点（只用精确域名，不拦 apex） |
 
@@ -123,10 +139,18 @@ package() {
 { "type": "local", "tag": "cncidr-mihomo",  "format": "binary", "path": "/usr/share/sing-box-rule-sets/cncidr-mihomo.srs" },
 { "type": "local", "tag": "must-direct",    "format": "binary", "path": "/usr/share/sing-box-rule-sets/must-direct.srs" },
 { "type": "local", "tag": "ads-extra",      "format": "binary", "path": "/usr/share/sing-box-rule-sets/ads-extra.srs" },
-{ "type": "local", "tag": "adblockfilters", "format": "binary", "path": "/usr/share/sing-box-rule-sets/adblockfilters.srs" }
+{ "type": "local", "tag": "adblockfilters", "format": "binary", "path": "/usr/share/sing-box-rule-sets/adblockfilters.srs" },
+{ "type": "local", "tag": "lyc/cn",              "format": "binary", "path": "/usr/share/sing-box-rule-sets/lyc-geosite-cn.srs" },
+{ "type": "local", "tag": "lyc/geolocation-!cn", "format": "binary", "path": "/usr/share/sing-box-rule-sets/lyc-geosite-geolocation-!cn.srs" }
 
 // DNS 与路由的 reject 规则都要带上广告表（浏览器自带 DoH 会绕过 DNS 规则，连接层才是兜底）
 { "rule_set": ["geosite/category-ads-all", "Ads_AWAvenue", "anti-AD", "ads-extra", "adblockfilters"], "action": "reject" }
+
+// 国内域名：官方 geosite/cn + lyc 增强表一起匹配（并集，不是替换）
+{ "rule_set": ["geosite/cn", "lyc/cn"], "action": "route", "server": "dns-direct" }
+
+// 境外域名：官方 geolocation-!cn + lyc 增强表一起匹配
+{ "rule_set": ["geosite/geolocation-!cn", "lyc/geolocation-!cn"], "action": "route", "outbound": "Proxy" }
 
 // 国内 IP：三份表一起匹配
 { "rule_set": ["geoip/cn", "geoip/cn-fresh", "cncidr-mihomo"], "action": "route", "outbound": "direct" }
@@ -141,6 +165,7 @@ package() {
 - `cncidr-mihomo.srs`：HenryChiao/mihomo_yamls，AGPL-3.0-or-later
 - `anti-ad.srs`：prprpi/anti-AD（仓库未附许可证文件，个人使用）
 - `adblockfilters.srs`：217heidai/adblockfilters，GPL-3.0（聚合上游各表，上游许可见其仓库）
+- `lyc-geosite-*.srs`：lyc8503/sing-box-rules（数据移植自 Loyalsoldier/v2ray-rules-dat，GPL-3.0；该仓未附许可证文件）
 - `must-direct.srs` / `ads-extra.srs`：本仓库自制
 EOF
 }

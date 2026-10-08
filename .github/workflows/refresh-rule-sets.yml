@@ -1,7 +1,7 @@
 name: Refresh sing-box rule-sets
 
-# sing-box-rule-sets 的数据每天都在变（anti-AD / MetaCubeX / mihomo_yamls），
-# 这里每天比对三个远程源的 sha256：有变化才更新 PKGBUILD 并推送，推送会触发 build.yml 重建该包；
+# sing-box-rule-sets 的数据每天都在变（anti-AD / MetaCubeX / mihomo_yamls / 217heidai / lyc8503），
+# 这里每天比对各个远程源的 sha256：有变化才更新 PKGBUILD 并推送，推送会触发 build.yml 重建该包；
 # 没有变化就什么都不做，不浪费 CI。
 on:
   schedule:

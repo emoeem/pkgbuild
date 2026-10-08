@@ -27,7 +27,7 @@
 | `scx-scheds-git` | `x86_64` | sched_ext 调度器集合 |
 | `sing-box-ebpf` | `x86_64` | 带实验性 eBPF 入站的 sing-box（reF1nd 分支，`with_ebpf`，替换官方 `sing-box`） |
 | `sing-box-panel` | `any` | sing-box 本地面板：服务控制、订阅/节点、分应用 eBPF 策略、配置安全管线（内嵌 zashboard） |
-| `sing-box-rule-sets` | `any` | sing-box 补充规则集：anti-AD 广告表、最新 geoip/cn、mihomo 国内 IP 表、必须直连清单、国内广告补漏（每日自动比对上游） |
+| `sing-box-rule-sets` | `any` | sing-box 补充规则集：anti-AD 广告表、最新 geoip/cn、mihomo 国内 IP 表、**lyc8503 增强 geosite（国内/境外分流补充）**、必须直连清单、国内广告补漏（每日自动比对上游） |
 | `vapoursynth-plugin-mlrt-ncnn-runtime` | `x86_64` | VapourSynth MLRT NCNN runtime |
 | `mpeghdec` | `x86_64` | Fraunhofer MPEG-H 解码器 |
 | `quirc` | `i686`, `x86_64` | QR 解码库 |
@@ -79,8 +79,9 @@ PKGBUILD 重新构建，不会直接安装同名预编译包。
 对应软件包重建。
 
 **Refresh sing-box rule-sets** 工作流每天 `23:40 UTC`（次日 `07:40 CST`）运行
-`scripts/refresh-rule-sets.sh`：比对 `sing-box-rule-sets` 三个上游源（anti-AD /
-MetaCubeX `geoip/cn` / mihomo_yamls `cncidr`）的 sha256，**有变化才**更新 PKGBUILD
+`scripts/refresh-rule-sets.sh`：比对 `sing-box-rule-sets` 六个上游源（anti-AD /
+MetaCubeX `geoip/cn` / mihomo_yamls `cncidr` / 217heidai `adblockfilters` /
+lyc8503 `geosite-cn`、`geosite-geolocation-!cn`）的 sha256，**有变化才**更新 PKGBUILD
 的校验和与 `pkgver`（日期）并推送，进而触发该包重建；没有变化就不产生提交。
 本地可随时 `./scripts/refresh-rule-sets.sh --check` 预览。
 
@@ -91,7 +92,7 @@ MetaCubeX `geoip/cn` / mihomo_yamls `cncidr`）的 sha256，**有变化才**更�
 
 | 脚本 | 用途 |
 | --- | --- |
-| `apply-audit-fixes.sh` | 审计修复：加 anti-AD 规则集、刷新 geoip/cn、清理冗余规则与 `dns-local`。可选开关：`--with-cncidr`（mihomo 国内 IP 表）、`--with-direct-list`（STUN/主机/LAN cache 直连）、`--with-extra-ads`（国内广告端点补漏）、`--with-dns-groups`（DNS 故障转移组）、`--use-package-paths`（规则集走 `/usr/share`）、`--nxdomain-ads`（把 DNS 广告拦截从 REFUSED 改成 NXDOMAIN，避免应用卡 5 秒） |
+| `apply-audit-fixes.sh` | 审计修复：加 anti-AD 规则集、刷新 geoip/cn、清理冗余规则与 `dns-local`。可选开关：`--with-cncidr`（mihomo 国内 IP 表）、`--with-direct-list`（STUN/主机/LAN cache 直连）、`--with-extra-ads`（国内广告端点补漏）、`--with-lyc-geosite`（lyc8503 增强 geosite 并入 `geosite/cn`、`geosite/geolocation-!cn` 一起匹配）、`--with-dns-groups`（DNS 故障转移组）、`--use-package-paths`（规则集走 `/usr/share`）、`--nxdomain-ads`（把 DNS 广告拦截从 REFUSED 改成 NXDOMAIN，避免应用卡 5 秒） |
 | `switch-to-ebpf.sh` | 把 TUN 入站切换为 eBPF 入站（`--shared <接口>` 可同时接管下游）。健康判据用 `sing-box api ebpf` 附件状态 + "不设代理的请求是否走代理"，失败自动回滚到 TUN |
 | `switch-to-tun.sh` | 从 eBPF 切回 TUN（TUN 靠 `auto_route` 覆盖转发流量，容器/虚拟机也能被代理）。TUN 定义取自最近的 `config.*.pre-ebpf.json` 备份，当前配置里的 DNS 组/广告规则/规则集全部保留；`--from <备份>` 可指定 |
 | `enable-container-proxy.sh` | 让 **rootful** podman 容器也走代理：在 podman 网桥上开启 eBPF `shared` 数据面，并用真实容器验证；`--disable` 关闭 |
