@@ -28,7 +28,7 @@ while IFS=$'\t' read -r run_id _status _conclusion _created; do
   [[ -n "$run_id" ]] || continue
   gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" \
     --jq '.jobs[] | select(.name | startswith("Build ")) |
-          [.name | sub("^Build "; ""), .status, (.conclusion // "")] | @tsv' |
+          [(.name | sub("^Build "; "")), .status, (.conclusion // "")] | @tsv' |
     while IFS=$'\t' read -r pkg job_status job_conclusion; do
       printf '%s\t%s\t%s\t%s\n' "$run_id" "$pkg" "$job_status" "$job_conclusion"
     done
