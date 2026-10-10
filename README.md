@@ -273,7 +273,10 @@ AUR + 私人仓库包（本机实测约 2 秒），也能发现由传递依赖�
 - 推送 `packages/**` 或 `scripts/overlays/**` 时，`build.yml` 只重建变化的
   包及其依赖者。
 - `dependency-drift.yml` 每 4 小时比对 `.BUILDINFO` 里记录的依赖版本与仓库
-  当前版本，自动 dispatch 重建。
+  当前版本，自动 dispatch 重建。比对的是 `<version>-<pkgrel>`（依赖只是重打包
+  也可能换了 SONAME），对象既有当前 `.SRCINFO` 的依赖，也有 `.rebuild-on` 里
+  `package <name>` 声明的名字——依赖从 `.SRCINFO` 消失后仍被盯住；只在容器仓库
+  之外提供的声明名（如 archlinuxcn 的 `shine`）留一行 `NOTE`，不算漂移。
 - `maintenance.yml` 每天扫描已发布包的 ELF `NEEDED`，确认每个 SONAME 仍由
   当前仓库提供；只有源码树里仍存在的包才会被 dispatch 重建，已下架却仍在
   发布的包记为 `ORPHAN`。容器仓库看不到的库（chaotic-aur / archlinuxcn /

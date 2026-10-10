@@ -9,6 +9,7 @@ The last test points the linter at *this* checkout: it is the regression anchor
 that fails if a real package loses its update source or its metadata drifts.
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LINTER = ROOT / "scripts" / "check-package-manifests.py"
+
+
+def git_environment():
+    """Environment for the linter and the fixture repository's git commands.
+
+    Git exports GIT_DIR/GIT_WORK_TREE/... to the hooks it runs, and a subprocess
+    that inherits them looks at the repository the hook belongs to instead of
+    the fixture below it: a pre-commit run reported the developer's real checkout
+    as "not tracked by git" and failed three cases that pass on their own.
+    Dropping every GIT_* variable keeps the linter and `git` on the fixture,
+    however the suite was started; the config files are pinned so a developer's
+    own git configuration cannot change the outcome.
+    """
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
+    return environment
 COMMIT = "0" * 40
 
 PKGBUILD = """pkgname=%(name)s
@@ -81,6 +101,7 @@ class ManifestLintTest(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            env=git_environment(),
         )
         return result.returncode, result.stdout + result.stderr
 
@@ -210,11 +231,7 @@ class ManifestLintTest(unittest.TestCase):
             text=True,
             check=True,
             input=stdin,
-            env={
-                "PATH": "/usr/bin:/bin",
-                "GIT_CONFIG_GLOBAL": "/dev/null",
-                "GIT_CONFIG_SYSTEM": "/dev/null",
-            },
+            env=git_environment(),
         )
         return result.stdout
 

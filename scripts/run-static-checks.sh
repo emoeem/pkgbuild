@@ -28,6 +28,18 @@
 
 set -Eeuo pipefail
 
+# Git exports GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/... to the hooks it runs, and
+# several checks below build throwaway repositories with `git init`/`add`/
+# `commit`.  A `git -C <fixture>` that inherits those variables ignores its
+# argument and acts on the repository the hook belongs to: a pre-commit run of
+# this suite once set `core.bare` in the developer's checkout, overwrote its
+# shared user.name/user.email and moved a branch pointer onto fixture commits.
+# Dropping the variables here protects every check at once, no matter whether
+# this script was started by the hook, by CI, or by hand.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+    GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_NAMESPACE \
+    GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CEILING_DIRECTORIES
+
 # Resolved with shell builtins only (no dirname): a PATH that has lost its
 # coreutils must not be able to turn this gate into a no-op.
 script_path="${BASH_SOURCE[0]}"

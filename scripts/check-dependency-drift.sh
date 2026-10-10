@@ -26,12 +26,67 @@ if [[ -n "${LOCAL_REPO_DIR:-}" ]]; then
 fi
 
 strip_dep() { printf '%s' "$1" | sed -E 's/[<>=].*$//'; }
-recorded_version() {
+
+# .BUILDINFO records `installed = <name>-<version>-<pkgrel>-<arch>` (for example
+# `7zip-26.03-1.1-x86_64_v3`) while `pacman -Si` prints `Version : 26.03-1.1`, so
+# both sides are reduced to `<version>-<pkgrel>` before comparing.  The pkgrel is
+# deliberately part of the comparison: a dependency rebuilt with a new pkgrel can
+# have bumped its SONAMEs, so a pkgrel-only difference is still a reason to
+# rebuild this package.
+recorded_version() { # <buildinfo> <name>; prints the recorded <version>-<pkgrel>
     local buildinfo="$1" name="$2"
-    awk -F ' = ' -v n="$name" '$1 == "installed" && $2 ~ ("^" n "-") {v=$2} END {if(v) print v}' "$buildinfo" |
-        sed -E 's/-[^-]+$//' | sed -E "s/^${name}-//"
+    awk -F ' = ' -v p="$name-" '
+        $1 == "installed" && index($2, p) == 1 {
+            rest = substr($2, length(p) + 1) # <version>-<pkgrel>-<arch>
+            arch = rest; sub(/^.*-/, "", arch)
+            body = rest; sub(/-[^-]*$/, "", body)
+            rel = body; sub(/^.*-/, "", rel)
+            ver = body; sub(/-[^-]*$/, "", ver)
+            # `<name>-` also prefixes packages called `<name>-something`, and the
+            # installed list is not sorted, so a plain prefix match can return a
+            # *different* package (looking up `nss` once returned the version of
+            # `nss-mdns`).  Keep only the candidate that really parses as
+            # version-pkgrel-arch: a pkgver never contains a dash and a pkgrel is
+            # digits and dots.
+            if (ver ~ /-/ || rel !~ /^[0-9][0-9.]*$/ || arch !~ /^[A-Za-z0-9_]+$/) next
+            if (found == "") found = ver "-" rel
+        }
+        END { if (found != "") print found }
+    ' "$buildinfo"
 }
-current_version() { pacman -Si "$1" 2>/dev/null | awk -F ': +' '$1 == "Version" {print $2; exit}'; }
+# `pacman -Si` prints `Version         : 1.0-1`.  With `-F ': +'` the first field
+# is `Version         ` — the padding *before* the colon is part of it — so the
+# old `$1 == "Version"` never matched and this lookup returned an empty version
+# for every package, which made the whole drift check a silent no-op.  Trim the
+# label before comparing.
+current_version() { # <name>; prints the repository's <version>-<pkgrel>
+    pacman -Si "$1" 2>/dev/null |
+        awk -F ': +' '{key=$1; sub(/[[:space:]]+$/, "", key); if (key == "Version") {print $2; exit}}'
+}
+
+# Compare one dependency against what the published build recorded.
+#   0 = the versions disagree (stale), 1 = in sync, 2 = not resolvable here.
+check_dep() { # <buildinfo> <package-name> <dependency> <label>
+    local buildinfo="$1" name="$2" dep="$3" label="$4" old new
+    old="$(recorded_version "$buildinfo" "$dep")"
+    new="$(current_version "$dep")"
+    if [[ -n "$old" && -n "$new" && "$old" != "$new" ]]; then
+        printf 'STALE %s: %s %s changed %s -> %s\n' "$name" "$label" "$dep" "$old" "$new"
+        [[ -n "$stale_file" ]] && printf '%s\n' "$name" >> "$stale_file"
+        return 0
+    fi
+    [[ -n "$new" ]] || return 2
+    return 1
+}
+
+# packages/<dir>/.rebuild-on is the per-package declaration of the rebuild
+# triggers .SRCINFO cannot express (`package <name>`) plus the provider of each
+# externally linked SONAME (`soname <soname> <provider>`).  archlinuxcn's
+# `update_on: - alpm:` says the same thing from lilac.yaml; here it lives next
+# to the package it belongs to.  A declaration that names a package this
+# container can resolve becomes a drift trigger even when the current .SRCINFO
+# no longer lists it, which is exactly the case that used to go silent.
+list_triggers="${root}/scripts/list-rebuild-triggers.sh"
 
 for pkg in "$repo_dir"/*.pkg.tar.zst; do
     [[ -e "$pkg" ]] || continue
@@ -39,13 +94,41 @@ for pkg in "$repo_dir"/*.pkg.tar.zst; do
     buildinfo="$(mktemp)"; bsdtar -xOf "$pkg" .BUILDINFO > "$buildinfo"
     src="${root}/packages/${name}/.SRCINFO"
     [[ -f "$src" ]] || { rm -f "$buildinfo"; continue; }
+
+    declared=()
+    if [[ -f "$list_triggers" ]]; then
+        while IFS=$'\t' read -r kind directory first second; do
+            [[ "$directory" == "$name" ]] || continue
+            case "$kind" in
+                package) declared+=("$first") ;;
+                soname) declared+=("$second") ;;
+            esac
+        done < <(bash "$list_triggers" "$root/packages" "$name")
+    fi
+
+    declare -A handled=()
     while IFS= read -r raw; do
         dep="$(strip_dep "$raw")"; [[ -n "$dep" && "$dep" != *.so* ]] || continue
-        old="$(recorded_version "$buildinfo" "$dep")"; new="$(current_version "$dep")"
-        if [[ -n "$old" && -n "$new" && "$old" != "$new" ]]; then
-            printf 'STALE %s: direct dependency %s changed %s -> %s\n' "$name" "$dep" "$old" "$new"
-            [[ -n "$stale_file" ]] && printf '%s\n' "$name" >> "$stale_file"
-        fi
+        handled["$dep"]=1
+        check_dep "$buildinfo" "$name" "$dep" "direct dependency" || true
     done < <(awk -F ' = ' '$1 ~ /^\t(depends|makedepends|checkdepends)$/ {print $2}' "$src")
+
+    unresolved=""
+    for dep in ${declared[@]+"${declared[@]}"}; do
+        [[ -n "$dep" && "$dep" != *.so* ]] || continue
+        [[ -n "${handled[$dep]:-}" ]] && continue
+        handled["$dep"]=1
+        status=0
+        check_dep "$buildinfo" "$name" "$dep" "declared dependency" || status=$?
+        (( status == 2 )) && unresolved+=" $dep"
+    done
+    if [[ -n "$unresolved" ]]; then
+        # Only declarations get this note: they are a deliberate statement about
+        # a dependency, so "cannot verify it here" is worth a line instead of a
+        # silent hole.  The same note for every external .SRCINFO dependency
+        # would be a long, unread list.
+        printf 'NOTE %s: declared dependency not resolvable in this container (external repository?):%s\n' \
+            "$name" "$unresolved"
+    fi
     rm -f "$buildinfo"
 done

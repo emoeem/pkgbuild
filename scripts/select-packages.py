@@ -50,6 +50,46 @@ def dependency_name(dependency: str) -> str:
     return match.group(1) if match else dependency
 
 
+def declared_dependencies(root: Path) -> dict[str, set[str]]:
+    """Map a package directory to the rebuild triggers declared for it.
+
+    ``packages/<dir>/.rebuild-on`` states the edges .SRCINFO cannot express:
+    ``package <name>`` for a coupling that is not a dependency, and
+    ``soname <soname> <provider>`` for the package a linked SONAME comes from
+    (archlinuxcn's lilac.yaml says the same thing with ``update_on``).  Both
+    mean "rebuild this package when that package changes".
+
+    The shell lister is the single parser -- the manifest gate and the drift
+    checker call the same one -- so a malformed declaration fails the selection
+    loudly instead of being half-understood here.
+    """
+    lister = root / "scripts/list-rebuild-triggers.sh"
+    if not lister.is_file():
+        return {}
+    result = subprocess.run(
+        ["bash", str(lister), str(root / "packages")],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"{lister.name} failed:\n{result.stderr.strip()}")
+
+    declared: dict[str, set[str]] = {}
+    for line in result.stdout.splitlines():
+        fields = line.split("\t")
+        if len(fields) == 3:
+            kind, directory, name = fields
+        elif len(fields) == 4:
+            kind, directory, _, name = fields
+        else:
+            raise SystemExit(f"unexpected {lister.name} output: {line!r}")
+        if kind not in ("package", "soname"):
+            raise SystemExit(f"unexpected trigger kind in {lister.name} output: {line!r}")
+        declared.setdefault(directory, set()).add(name)
+    return declared
+
+
 def dependency_graph(root: Path) -> dict[str, set[str]]:
     """Map each provider package to package bases which consume it.
 
@@ -59,6 +99,7 @@ def dependency_graph(root: Path) -> dict[str, set[str]]:
     """
     provider_to_consumers: dict[str, set[str]] = {}
     metadata: list[tuple[str, set[str], set[str]]] = []
+    declared = declared_dependencies(root)
     for directory in package_dirs(root):
         srcinfo = directory / ".SRCINFO"
         if not srcinfo.is_file():
@@ -66,6 +107,7 @@ def dependency_graph(root: Path) -> dict[str, set[str]]:
         names, provides, depends = parse_srcinfo(srcinfo)
         if not names:
             names = {directory.name}
+        depends |= declared.get(directory.name, set())
         metadata.append((directory.name, names | provides, depends))
 
     for package_base, provided_names, depends in metadata:

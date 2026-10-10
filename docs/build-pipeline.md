@@ -60,7 +60,7 @@
 `packages/<name>/.rebuild-on` 把「这个包因为什么需要重建」写在包目录旁边，取代原来那份全局的 `scripts/data/external-sonames.txt` 例外表。两种行：
 
 - `soname <soname> <provider-package>`：容器仓库看不到的共享库，来自 chaotic-aur / archlinuxcn / arch4edu / AUR。例如 `packages/ffmpeg-full/.rebuild-on` 的 `soname libshine.so.3 shine`（`shine` 在 archlinuxcn 提供 `libshine.so.3`，CI 容器里没有）。`maintenance.yml` 的 soname 复查把声明的名字只并入**该包**的 provider 集合，所以一个包的外部依赖不会顺带给别的包放行；声明了却不再被 `NEEDED` 的名字判为过期声明（`STALE-DECLARATION`），而不是永久豁免。过期声明由 maintenance 用 `::error::` 注解报出来但**不中止**该 workflow：重建修不了它（只有人改 `.rebuild-on` 能修），所以不该连带停掉无人值守的依赖漂移重建；本地手动跑脚本仍然以退出码 4 结束（0 干净 / 2 用法 / 3 报告不可信 / 4 声明过期）。
-- `package <repo-package>`：`.SRCINFO` 表达不出来的显式重建边，登记后与 `depends`/`provides` 一起参与重建选择。
+- `package <repo-package>`：`.SRCINFO` 表达不出来的显式重建边，登记后与 `depends`/`provides` 一起参与重建选择，也参与 `dependency-drift.yml` 的版本比对——即使这个依赖后来从 `.SRCINFO` 里消失，只要 `.rebuild-on` 还写着它，就仍然被盯住（那正是只读 `.SRCINFO` 的旧行为会静默漏掉的情况）。比对的是 `<version>-<pkgrel>`：依赖只是重打包（pkgrel 变化）也可能换了 SONAME，所以同样算漂移。声明了却在本容器的仓库里查不到的包（例如只在 archlinuxcn 提供的 `shine`）只在报告里留一行 `NOTE`，不判成漂移，也不改变退出码。
 
 声明由包自己负责维护，两边都不放行：`check-package-manifests.py` 在裸 runner 上静态校验（见上），`maintenance.yml` 在容器里用真实 ELF 校验（缺声明报 `STALE`，多声明报 `STALE-DECLARATION`）。
 
