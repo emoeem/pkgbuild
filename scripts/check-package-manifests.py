@@ -36,6 +36,29 @@ Two contracts are enforced.
    source entry.  These are the mistakes that otherwise surface as a build
    failure minutes into a container job.
 
+3. packages/<name>/.rebuild-on, when present, is well formed.
+
+   The file declares the build outputs outside the configured repositories that
+   must force a rebuild of this package when they change -- the same role as
+   lilac's per-package `update_on` list, restricted to what the repository can
+   actually observe:
+
+     soname  <soname> <provider>   a library this package links against that
+                                   comes from a repository the CI containers do
+                                   not configure (consumed by
+                                   scripts/check-repository-sonames.sh, which
+                                   also checks the declaration against the
+                                   published artifact)
+     package <name>                an external dependency whose version drift
+                                   must rebuild it (consumed by
+                                   scripts/check-dependency-drift.sh)
+
+   A malformed declaration is worse than none: it either widens an exemption or
+   hides a real staleness report, so every line is checked here -- the file must
+   parse, sonames must look like sonames, providers and package names must be
+   valid, there may be no duplicates, and a `package` trigger must be one of the
+   package's own depends/makedepends/checkdepends.
+
 Exit status is 0 when clean and 1 when any error was found.  The last line is
 always `SUMMARY packages=<n> errors=<n>`, so a failing CI step stays greppable.
 """
@@ -52,6 +75,9 @@ AUR_URL = re.compile(r"^https://aur\.archlinux\.org/(?P<name>[A-Za-z0-9@._+-]+)\
 GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 REGISTRY_KINDS = ("manual", "workflow")
 REGISTRY_PATH = Path("config/package-updates.txt")
+REBUILD_ON_KINDS = ("soname", "package")
+SONAME = re.compile(r"^[A-Za-z0-9+._-]+\.so(\.[0-9]+)*$")
+VERSION_CONSTRAINT = re.compile(r"[<>=].*$")
 
 
 def parse_srcinfo(path):
@@ -151,8 +177,110 @@ def tracked_gitlinks(root):
     ]
 
 
+def dependency_names(sections):
+    """Return the dependency names a .SRCINFO declares, without constraints."""
+    names = set()
+    for section in sections:
+        for key in ("depends", "makedepends", "checkdepends"):
+            for value in section.get(key, []):
+                name = VERSION_CONSTRAINT.sub("", value).strip()
+                if name:
+                    names.add(name)
+    return names
+
+
+def parse_rebuild_on(path, where):
+    """Parse .rebuild-on into (sonames, packages, errors).
+
+    `sonames` maps a soname to its provider package, `packages` is the set of
+    external packages whose version drift must trigger a rebuild.
+    """
+    sonames = {}
+    packages = {}
+    errors = []
+    triggers = 0
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        return sonames, packages, [f"{where}: cannot read: {exc}"]
+
+    for lineno, raw in enumerate(lines, start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        triggers += 1
+        fields = line.split()
+        kind = fields[0]
+        if kind == "soname":
+            if len(fields) != 3:
+                errors.append(
+                    f"{where}:{lineno}: expected `<soname> <provider>` "
+                    "after `soname`"
+                )
+                continue
+            soname, provider = fields[1], fields[2]
+            if not SONAME.match(soname):
+                errors.append(
+                    f"{where}:{lineno}: '{soname}' is not a shared library name"
+                )
+            if not PACKAGE_NAME.match(provider):
+                errors.append(
+                    f"{where}:{lineno}: '{provider}' is not a valid package name"
+                )
+            if soname in sonames:
+                errors.append(f"{where}:{lineno}: duplicate soname trigger '{soname}'")
+            sonames[soname] = provider
+        elif kind == "package":
+            if len(fields) != 2:
+                errors.append(
+                    f"{where}:{lineno}: expected `<name>` after `package`"
+                )
+                continue
+            name = fields[1]
+            if not PACKAGE_NAME.match(name):
+                errors.append(f"{where}:{lineno}: '{name}' is not a valid package name")
+            if name in packages:
+                errors.append(f"{where}:{lineno}: duplicate package trigger '{name}'")
+            packages[name] = lineno
+        else:
+            errors.append(
+                f"{where}:{lineno}: unknown trigger '{kind}' "
+                f"(expected one of: {', '.join(REBUILD_ON_KINDS)})"
+            )
+
+    if triggers == 0:
+        errors.append(f"{where}: declares no triggers")
+    return sonames, packages, errors
+
+
+def check_rebuild_on(package_dir, sections, errors, notes):
+    """Validate packages/<name>/.rebuild-on when the package has one."""
+    rel = f"packages/{package_dir.name}"
+    path = package_dir / ".rebuild-on"
+    if not path.is_file():
+        return
+
+    where = f"{rel}/.rebuild-on"
+    sonames, packages, problems = parse_rebuild_on(path, where)
+    errors.extend(problems)
+    if sections is None:
+        return
+
+    declared_dependencies = dependency_names(sections)
+    for name in sorted(packages):
+        if not PACKAGE_NAME.match(name):
+            continue
+        if name not in declared_dependencies:
+            errors.append(
+                f"{where}: `package {name}` is not one of this package's "
+                "depends/makedepends/checkdepends"
+            )
+    if sonames:
+        notes.append(f"{rel}: {len(sonames)} declared external soname(s)")
+
+
 def check_package(root, package_dir, errors, notes):
-    """Validate one package directory.  Returns nothing; appends to errors."""
+    """Validate one package directory.  Returns the .SRCINFO sections, or None."""
     name = package_dir.name
     rel = f"packages/{name}"
 
@@ -165,16 +293,16 @@ def check_package(root, package_dir, errors, notes):
         errors.append(f"{rel}: PKGBUILD is missing")
     if not srcinfo.is_file():
         errors.append(f"{rel}: .SRCINFO is missing")
-        return
+        return None
 
     try:
         sections = parse_srcinfo(srcinfo)
     except OSError as exc:
         errors.append(f"{rel}: cannot read .SRCINFO: {exc}")
-        return
+        return None
     if not sections:
         errors.append(f"{rel}: .SRCINFO is empty or unparseable")
-        return
+        return None
 
     base = sections[0]
     pkgbase = (base.get("pkgbase") or [""])[0]
@@ -217,6 +345,8 @@ def check_package(root, package_dir, errors, notes):
                     f"{rel}: {key} has {len(values)} entries for "
                     f"{source_count} source entries (package {owner})"
                 )
+
+    return sections
 
 
 def check_update_source(root, package_dir, registry, tracked, errors, notes):
@@ -323,8 +453,9 @@ def run(root):
     tracked = tracked_files(root)
 
     for package_dir in manifests:
-        check_package(root, package_dir, errors, notes)
+        sections = check_package(root, package_dir, errors, notes)
         check_update_source(root, package_dir, registry, tracked, errors, notes)
+        check_rebuild_on(package_dir, sections, errors, notes)
 
     check_registry_entries(
         root, {path.name for path in manifests}, registry, tracked, errors

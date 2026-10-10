@@ -302,6 +302,84 @@ class ManifestLintTest(unittest.TestCase):
         code, output = self.lint()
         self.assert_error(code, output, "committed gitlink")
 
+    # -- .rebuild-on declarations ----------------------------------------
+
+    def add_rebuild_on(self, name, text):
+        directory = self.tmp / "packages" / name
+        if not directory.is_dir():
+            directory = self.add_package(name)
+        (directory / ".rebuild-on").write_text(text, encoding="utf-8")
+        return directory
+
+    def test_rebuild_on_soname_declaration_passes(self):
+        self.add_rebuild_on(
+            "linked-outside",
+            "# a library from archlinuxcn\nsoname libshine.so.3 shine\n",
+        )
+        code, output = self.lint()
+        self.assertEqual(code, 0, output)
+        self.assertIn("1 declared external soname(s)", output)
+
+    def test_rebuild_on_package_trigger_needs_a_real_dependency(self):
+        self.add_rebuild_on("manual-dep", "package linuxqq\n")
+        code, output = self.lint()
+        self.assert_error(code, output, "is not one of this package's")
+
+    def test_rebuild_on_package_trigger_with_dependency_passes(self):
+        self.add_package(
+            "aur-dep", srcinfo=SRCINFO % {"name": "aur-dep"} + "\tdepends = linuxqq\n"
+        )
+        self.add_rebuild_on("aur-dep", "package linuxqq\n")
+        code, output = self.lint()
+        self.assertEqual(code, 0, output)
+
+    def test_rebuild_on_version_constraint_is_ignored(self):
+        self.add_package(
+            "pinned-dep",
+            srcinfo=SRCINFO % {"name": "pinned-dep"} + "\tdepends = linuxqq>=3.0\n",
+        )
+        self.add_rebuild_on("pinned-dep", "package linuxqq\n")
+        code, output = self.lint()
+        self.assertEqual(code, 0, output)
+
+    def test_rebuild_on_unknown_kind_fails(self):
+        self.add_rebuild_on("mystery", "container some/image:latest\n")
+        code, output = self.lint()
+        self.assert_error(code, output, "unknown trigger 'container'")
+
+    def test_rebuild_on_bad_soname_fails(self):
+        self.add_rebuild_on("bad-soname", "soname libshine shine\n")
+        code, output = self.lint()
+        self.assert_error(code, output, "is not a shared library name")
+
+    def test_rebuild_on_bad_provider_fails(self):
+        self.add_rebuild_on("bad-provider", "soname libshine.so.3 bad/name\n")
+        code, output = self.lint()
+        self.assert_error(code, output, "is not a valid package name")
+
+    def test_rebuild_on_short_soname_line_fails(self):
+        self.add_rebuild_on("short-soname", "soname libshine.so.3\n")
+        code, output = self.lint()
+        self.assert_error(code, output, "expected `<soname> <provider>`")
+
+    def test_rebuild_on_short_package_line_fails(self):
+        self.add_rebuild_on("short-package", "package\n")
+        code, output = self.lint()
+        self.assert_error(code, output, "expected `<name>` after `package`")
+
+    def test_rebuild_on_duplicate_soname_fails(self):
+        self.add_rebuild_on(
+            "double",
+            "soname libshine.so.3 shine\nsoname libshine.so.3 other\n",
+        )
+        code, output = self.lint()
+        self.assert_error(code, output, "duplicate soname trigger")
+
+    def test_rebuild_on_without_triggers_fails(self):
+        self.add_rebuild_on("empty-triggers", "# nothing but a comment\n")
+        code, output = self.lint()
+        self.assert_error(code, output, "declares no triggers")
+
     # -- the real tree ---------------------------------------------------
 
     def test_real_repository_is_clean(self):

@@ -90,12 +90,27 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p maintenance-out
+          # Exit 4 means a packages/<dir>/.rebuild-on declaration no longer
+          # matches the artifact (it declares a SONAME the package does not
+          # NEED).  A rebuild cannot fix that, and blocking the drift rebuilds
+          # below would turn a one-line metadata fix into a stopped pipeline, so
+          # it is surfaced as an error annotation and the run continues.  Every
+          # other non-zero exit (bad usage, unusable declarations or provider
+          # set) still fails the step: those mean the report cannot be trusted.
+          set +e
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/maintenance-out:/out" \
             "$BUILDER_IMAGE" \
             bash /workspace/scripts/check-repository-sonames.sh \
               /workspace/published/x86_64 /out /workspace/packages
+          status=$?
+          set -e
+          if ((status == 4)); then
+            printf '::error::stale .rebuild-on declaration(s); see STALE-DECLARATION in the report above\n'
+          elif ((status != 0)); then
+            exit "$status"
+          fi
 
       - name: Dispatch rebuilds for stale packages
         id: dispatch

@@ -1,0 +1,13 @@
+# 本包需要重建的「仓库外构件」声明（格式见 scripts/check-package-manifests.py，
+# 消费方见 scripts/check-repository-sonames.sh 与 scripts/check-dependency-drift.sh）。
+#
+# soname <soname> <provider>：
+#   构建产物 NEEDED 了这个 soname，但提供它的包来自 CI 容器没有配置的仓库
+#   （见 README 的依赖优先级：archlinuxcn / arch4edu / AUR），所以 pacman 的
+#   provides 里找不到它，每天一次的 maintenance 扫描必须放行。声明贴在本包里，
+#   而不是放在一张全局白名单里——全局名单会连带掩盖别的包缺同一个库的情况。
+#
+# ffmpeg-full 的 /usr/lib/libavcodec.so.63 链接了 archlinuxcn 的 shine 提供的
+# libshine.so.3（本机实测：pacman -Qoq /usr/lib/libshine.so.3 -> shine，软件库
+# archlinuxcn）。shine 升级换了 soname 之后必须重建本包。
+soname libshine.so.3 shine

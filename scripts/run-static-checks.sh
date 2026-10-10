@@ -43,6 +43,7 @@ checks=(
     "package-manifest-tests"
     "select-packages"
     "elf-soname"
+    "rebuild-triggers"
     "workflow-images"
     "aur-dependency-fallback"
     "build-regressions"
@@ -74,6 +75,12 @@ run_check() {
             ;;
         elf-soname)
             bash tests/test_elf_soname.sh
+            ;;
+        rebuild-triggers)
+            # packages/*/.rebuild-on is load bearing twice over (soname
+            # exemptions and dependency-drift triggers), so its parser and the
+            # ELF modes that consume it are covered here.
+            bash tests/test-rebuild-on-triggers.sh
             ;;
         workflow-images)
             python3 tests/test_workflow_images.py

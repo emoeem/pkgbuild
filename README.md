@@ -276,8 +276,10 @@ AUR + 私人仓库包（本机实测约 2 秒），也能发现由传递依赖�
   当前版本，自动 dispatch 重建。
 - `maintenance.yml` 每天扫描已发布包的 ELF `NEEDED`，确认每个 SONAME 仍由
   当前仓库提供；只有源码树里仍存在的包才会被 dispatch 重建，已下架却仍在
-  发布的包记为 `ORPHAN`，而来自 chaotic-aur / archlinuxcn / arch4edu / AUR
-  的库记在 `scripts/data/external-sonames.txt`（文件头部写明更新方法）。
+  发布的包记为 `ORPHAN`。容器仓库看不到的库（chaotic-aur / archlinuxcn /
+  arch4edu / AUR）由包自己声明在 `packages/<pkg>/.rebuild-on` 里
+  （`soname libshine.so.3 shine`），声明的名字只对该包放行；声明了却不再
+  `NEEDED` 的名字会被判为过期声明（`STALE-DECLARATION`），而不是继续豁免。
 
 如果依赖提供者自己没声明 `provides=('libfoo.so=N-64')`（例如 chaotic-aur 的
 `openapv`），pacman 无法阻止不兼容升级，只能依赖上面的自动检测及时重建。

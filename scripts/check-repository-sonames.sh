@@ -11,14 +11,15 @@
 # 125). Every input is a path, so the script can also be exercised by hand in
 # that container.
 #
-# Usage: check-repository-sonames.sh <published-dir> <out-dir> [packages-dir]
+# Usage: check-repository-sonames.sh <published-dir> <out-dir> <packages-dir>
 #
 #   <published-dir>  directory holding the downloaded *.pkg.tar.zst files
 #   <out-dir>        receives report.txt, stale.txt and orphans.txt
-#   [packages-dir]   repository source tree; a published package that no longer
+#   <packages-dir>   repository source tree: a published package that no longer
 #                    exists there is reported as an orphan instead of being
-#                    dispatched as a rebuild, and pkgname/pkgbase entries are
-#                    mapped back to their source directory name
+#                    dispatched as a rebuild, pkgname/pkgbase entries are mapped
+#                    back to their source directory name, and the per-package
+#                    packages/<dir>/.rebuild-on declarations are read from it
 #
 # Why the provider set is built from file inventories instead of only from
 # `expac -S '%P'`:
@@ -44,6 +45,11 @@ out_dir="${2:?usage: $0 <published-dir> <out-dir> [packages-dir]}"
 packages_dir="${3:-}"
 
 [[ -d "$published" ]] || { printf 'not a directory: %s\n' "$published" >&2; exit 2; }
+if [[ -z "$packages_dir" || ! -d "$packages_dir" ]]; then
+    printf 'packages dir required; usage: %s <published-dir> <out-dir> <packages-dir>\n' \
+        "$0" >&2
+    exit 2
+fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 check_elf="${script_dir}/check-elf-needed.sh"
@@ -105,23 +111,11 @@ fi
         sed -nE 's/^(.*[.]so)=([0-9][0-9.]*)(-[0-9]+)?$/\1.\2/p'
     # 4. libraries installed in this container
     find /usr/lib /lib -maxdepth 1 -name '*.so*' -printf '%f\n' 2>/dev/null || true
-    # 5. libraries known to come from packages outside the configured
-    #    repositories (chaotic-aur, archlinuxcn, arch4edu, AUR); see the file
-    #    header for how to refresh the list
-    if [[ -f "${script_dir}/data/external-sonames.txt" ]]; then
-        sed -e 's/#.*//' -e 's/[[:space:]]*$//' \
-            "${script_dir}/data/external-sonames.txt"
-    fi
     # Only shared libraries can satisfy a NEEDED entry; dropping the rest keeps
     # the table small (a full inventory is a few hundred thousand names).
 } | sed 's:.*/::' | sed -n '/[.]so/p' | sed '/^$/d' | sort -u > "$providers"
 provider_count="$(wc -l < "$providers")"
-external_file="${script_dir}/data/external-sonames.txt"
-external_count=0
-if [[ -f "$external_file" ]]; then
-    external_count="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$external_file" | wc -l)"
-fi
-report "providers: ${provider_count} library names (${external_count} external)"
+report "providers: ${provider_count} library names from the configured repositories"
 if (( provider_count < 100 )); then
     printf 'provider list looks empty (%s entries); refusing to report false positives\n' \
         "$provider_count" >&2
@@ -146,8 +140,37 @@ if [[ -n "$packages_dir" && -d "$packages_dir" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Per-package declarations: packages/<dir>/.rebuild-on names the sonames a
+# package links against that come from repositories the containers do not
+# configure (archlinuxcn / arch4edu / AUR).  Those names used to live in one
+# global list, and a global entry silenced the same missing library for *every*
+# package; applying a declaration only to the package that declares it keeps
+# the check honest, and lets a declaration that no longer matches the artifact
+# fail the run instead of silently widening the exemption.
+# ---------------------------------------------------------------------------
+list_triggers="${script_dir}/list-rebuild-triggers.sh"
+[[ -f "$list_triggers" ]] || { printf 'missing helper: %s\n' "$list_triggers" >&2; exit 2; }
+
+declare -A declared_sonames=()
+declared_total=0
+triggers_file="$(mktemp)"
+if ! bash "$list_triggers" "$packages_dir" > "$triggers_file"; then
+    rm -f "$triggers_file"
+    printf 'invalid .rebuild-on declarations under %s; refusing to guess\n' "$packages_dir" >&2
+    exit 3
+fi
+while IFS=$'\t' read -r kind package soname _provider; do
+    [[ "$kind" == "soname" ]] || continue
+    declared_sonames["$package"]+="${soname} "
+    declared_total=$((declared_total + 1))
+done < "$triggers_file"
+rm -f "$triggers_file"
+report "declared external sonames: ${declared_total} across ${#declared_sonames[@]} package(s)"
+
+# ---------------------------------------------------------------------------
 # Inspect every published package.
 # ---------------------------------------------------------------------------
+declared_errors=0
 for package_file in "$published"/*.pkg.tar.zst; do
     [[ -e "$package_file" ]] || continue
     pkgname="$(bsdtar -xOf "$package_file" .BUILDINFO 2>/dev/null |
@@ -158,15 +181,51 @@ for package_file in "$published"/*.pkg.tar.zst; do
         awk -F ' = ' '$1 == "depend" || $1 == "depends" { print $2 }' |
         grep '\.so=' | sort -u | tr '\n' ' ' || true)"
 
+    directory="${source_dir[$pkgname]:-}"
+    declared_for_package="${declared_sonames[$directory]:-}"
+
     tmpdir="$(mktemp -d)"
     bsdtar -xf "$package_file" -C "$tmpdir"
+
+    # A declaring package gets its own provider set: the shared table plus the
+    # sonames it declared.  Everything else keeps the strict table, so a package
+    # that never declared libshine.so.3 is still reported when it starts linking
+    # against it.
+    package_providers="$providers"
+    if [[ -n "$declared_for_package" ]]; then
+        package_providers="$(mktemp)"
+        {
+            cat "$providers"
+            tr ' ' '\n' <<<"$declared_for_package"
+        } | sed '/^$/d' | sort -u > "$package_providers"
+    fi
+
     missing_elf=""
-    if ! missing_elf="$(bash "$check_elf" "$tmpdir" "$providers")"; then
+    if ! missing_elf="$(bash "$check_elf" "$tmpdir" "$package_providers")"; then
         :
     fi
+
+    # The declaration has to match the artifact: a soname listed in .rebuild-on
+    # that the published package does not actually NEED is a stale exemption.
+    declared_mismatch=""
+    if [[ -n "$declared_for_package" ]]; then
+        declared_file="$(mktemp)"
+        tr ' ' '\n' <<<"$declared_for_package" | sed '/^$/d' > "$declared_file"
+        if ! declared_mismatch="$(bash "$check_elf" --require-needed "$tmpdir" "$declared_file")"; then
+            :
+        fi
+        rm -f "$declared_file"
+    fi
+
+    [[ "$package_providers" == "$providers" ]] || rm -f "$package_providers"
     rm -rf "$tmpdir"
 
-    directory="${source_dir[$pkgname]:-}"
+    if [[ -n "$declared_mismatch" ]]; then
+        declared_errors=$((declared_errors + 1))
+        printf 'STALE-DECLARATION %s -> %s: .rebuild-on declares sonames the artifact does not NEED: %s\n' \
+            "$pkgname" "$directory" "$declared_mismatch" >&2
+        report "STALE-DECLARATION $pkgname -> $directory: .rebuild-on declares sonames the artifact does not NEED: $declared_mismatch"
+    fi
 
     if [[ -z "$directory" ]]; then
         printf '%s\n' "$pkgname" >> "$out_dir/orphans.txt"
@@ -178,10 +237,18 @@ for package_file in "$published"/*.pkg.tar.zst; do
         printf '%s\n' "$directory" >> "$out_dir/stale.txt"
         report "STALE $pkgname -> $directory: ELF NEEDED no longer provided: $missing_elf"
     else
-        report "OK    $pkgname ($directory; declared soname deps: ${declared:-none})"
+        report "OK    $pkgname ($directory; declared soname deps: ${declared:-none}; .rebuild-on: ${declared_for_package:-none})"
     fi
 done
 
 sort -u -o "$out_dir/stale.txt" "$out_dir/stale.txt"
 sort -u -o "$out_dir/orphans.txt" "$out_dir/orphans.txt"
 cat "$out_dir/report.txt"
+# Exit codes: 0 = clean, 2 = bad usage, 3 = unusable declarations/provider set
+# (refusing to report rather than reporting nonsense), 4 = declarations that no
+# longer match the artifacts (a human has to edit .rebuild-on; no rebuild can
+# fix it).  maintenance.yml treats 4 as an annotation instead of a failure so a
+# stale declaration cannot stop the unattended drift rebuilds.
+if (( declared_errors > 0 )); then
+    exit 4
+fi

@@ -33,6 +33,7 @@ package-manifest-policy
 package-manifest-tests
 select-packages
 elf-soname
+rebuild-triggers
 workflow-images
 aur-dependency-fallback
 build-regressions
