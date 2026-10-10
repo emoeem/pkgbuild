@@ -46,15 +46,17 @@ report() {
 run() {
     local name="$1"
     shift
-    "$@" >/dev/null 2>&1
-    report $? "$name"
+    local rc=0
+    "$@" >/dev/null 2>&1 || rc=$?
+    report "$rc" "$name"
 }
 
 section 'Syntax'
 for file in manage.sh client/*.sh scripts/*.sh scripts/lib/*.sh tests/*.sh; do
     [[ -f "$file" ]] || continue
-    bash -n "$file" >/dev/null 2>&1
-    report $? "bash -n $file"
+    rc=0
+    bash -n "$file" >/dev/null 2>&1 || rc=$?
+    report "$rc" "bash -n $file"
 done
 
 section 'Lint'
@@ -73,8 +75,9 @@ else
 fi
 
 section 'Python'
-python3 -m py_compile scripts/*.py scripts/lib/*.py tests/*.py >/dev/null 2>&1
-report $? 'py_compile'
+rc=0
+python3 -m py_compile scripts/*.py scripts/lib/*.py tests/*.py >/dev/null 2>&1 || rc=$?
+report "$rc" 'py_compile'
 
 for test_file in tests/test_*.py; do
     [[ -f "$test_file" ]] || continue

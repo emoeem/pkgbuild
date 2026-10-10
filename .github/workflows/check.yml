@@ -100,13 +100,20 @@ jobs:
       - name: Run the full verification suite in the builder
         # tests/run-all.sh is the same entry point used locally, so the local
         # and CI definitions of "verified" cannot drift apart.
+        #
+        # 先复制一份再跑，而不是直接在只读挂载里跑：容器默认是 root，而
+        # /workspace 的属主是 runner（uid 1001），git 会拒绝以 root 操作别人的
+        # 仓库（fatal: detected dubious ownership in repository），凡是问 git 的
+        # 检查（tests/test_workflow_references.py 的 `git ls-files`、manifest 门禁
+        # 的 workflow 跟踪校验）都会假失败。复制到 /tmp/ws 后属主与运行用户一致，
+        # 顺带解掉只读挂载对测试夹具的限制。挂载仍然保持只读：源仓库不会被改。
         shell: bash
         run: |
           set -Eeuo pipefail
           docker run --pull always --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
-            bash -c 'set -Eeuo pipefail; cd /workspace && bash tests/run-all.sh'
+            bash -c 'set -Eeuo pipefail; cp -a /workspace /tmp/ws && cd /tmp/ws && bash tests/run-all.sh'
 
       - name: Verify CI script references are tracked
         # Runs on the runner (not in the container) because it asks git what the
