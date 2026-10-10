@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# 列出"仓库里有同名包、但依赖闭包装不上"的直接依赖。
+# 打印"仓库源装不上、必须改用 AUR 构建"的依赖名。
 #
 # README 的依赖优先级把仓库源都满足不了的依赖交给 yay 从 AUR 构建安装。这条规则
 # 必须对依赖的依赖同样成立：本仓库自己也可能收录了某个依赖的副本，而那个副本的
@@ -9,9 +9,12 @@ set -Eeuo pipefail
 # AUR，而是直接 "could not satisfy dependencies"，目标包连编译都不会开始
 # （run 38023434807 的 linuxqq-clipsync-git）。
 #
-# 判据：依赖名能在仓库里找到（pacman -Si 成功），但 pacman 算不出它的可安装事务
-# （pacman -Sp 失败）。只有这种情况才输出该依赖名，调用方据此改用 AUR 的副本；
-# 纯 AUR 依赖由 yay 自己解析，因此原样跳过。
+# 做法：对目标自己声明的每个依赖先做两次探测——
+#   * pacman -Si 找不到同名包 → 纯 AUR 依赖，yay 自己会从 AUR 解决，跳过；
+#   * pacman -Sp 算得出可安装事务 → 仓库里那份可用，跳过；
+# 只有"仓库里有同名包、但依赖闭包装不上"的依赖才走到最后一步：从 pacman 的
+# 事务报错里读出真正缺的那个名字，交给调用方用 yay 从 AUR 安装。装好之后依赖
+# 闭包就完整了，仓库里的副本可以照常安装。
 #
 # usage: find-uninstallable-dependencies.sh <srcinfo-file>
 
@@ -32,5 +35,12 @@ awk -F ' = ' '$1 ~ /^\t(depends|makedepends|checkdepends)$/ { print $2 }' "$srci
         pacman -Si --noconfirm -- "$dependency" >/dev/null 2>&1 || continue
         # 仓库副本的依赖闭包完整时 pacman 能算出可安装事务。
         pacman -Sp --noconfirm -- "$dependency" >/dev/null 2>&1 && continue
-        printf '%s\n' "$dependency"
-    done
+        # 闭包不完整：把 pacman 报出的、仓库源无论如何都提供不了的那个名字取出来。
+        pacman -Sp --noconfirm -- "$dependency" 2>&1 |
+            sed -nE \
+                -e "s/.*unable to satisfy dependency '([^']*)'.*/\1/p" \
+                -e "s/.*cannot resolve \"([^\"]*)\".*/\1/p" ||
+            true
+    done |
+    sed -E 's/[<>=].*$//' |
+    sort -u

@@ -208,23 +208,29 @@ fi
 
 # README 的依赖优先级把仓库源都满足不了的依赖交给 yay 从 AUR 构建安装。这条
 # 规则必须对依赖的依赖同样成立（见 find-uninstallable-dependencies.sh 的说明）：
-# 仓库里有同名包、但依赖闭包装不上的直接依赖必须先用 AUR 的副本装上，否则
-# pacman 会直接 "could not satisfy dependencies"，目标包连编译都不会开始
-# （run 38023434807 的 linuxqq-clipsync-git）。
-mapfile -t aur_dependency_fallbacks < <(
-    bash "$workspace_dir/scripts/find-uninstallable-dependencies.sh" \
-        "$package_dir/.SRCINFO"
-)
-if (( ${#aur_dependency_fallbacks[@]} > 0 )); then
-    printf 'Installing %s from the AUR because the repository copies cannot be installed.\n' \
-        "${aur_dependency_fallbacks[*]}"
-    if ! as_builder yay -S --aur --needed --asdeps --noconfirm \
-        "${aur_dependency_fallbacks[@]}"; then
+# 仓库里有同名包、但依赖闭包装不上的依赖，要先把真正缺的那个名字从 AUR 装好，
+# 否则 pacman 会直接 "could not satisfy dependencies"，目标包连编译都不会开始
+# （run 38025497233 的 linuxqq-clipsync-git：yay -S --aur 仍会把仓库里的同名
+# 副本当成满足条件，只有把缺件本体装进容器才能让仓库副本变得可安装）。
+# 装好一轮后重新探测，覆盖"缺件本身也依赖缺件"的链条；最多三轮。
+for _ in 1 2 3; do
+    mapfile -t aur_dependencies < <(
+        bash "$workspace_dir/scripts/find-uninstallable-dependencies.sh" \
+            "$package_dir/.SRCINFO"
+    )
+    if (( ${#aur_dependencies[@]} == 0 )); then
+        break
+    fi
+    printf 'Installing %s from the AUR because the repositories cannot satisfy the dependency closure.\n' \
+        "${aur_dependencies[*]}"
+    if ! as_builder yay -S --needed --asdeps --noconfirm \
+        "${aur_dependencies[@]}"; then
         printf \
             'WARNING: could not install %s from the AUR; the build will report the original dependency error.\n' \
-            "${aur_dependency_fallbacks[*]}" >&2
+            "${aur_dependencies[*]}" >&2
+        break
     fi
-fi
+done
 
 yay_status=0
 as_builder yay -Bi "$package_dir" \
