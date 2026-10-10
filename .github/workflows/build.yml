@@ -178,7 +178,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          mapfile -t deps < <(python3 -c 'import json,subprocess,sys; p=sys.argv[1]; plan=json.load(open(sys.argv[2], encoding="utf-8")); deps=json.loads(subprocess.check_output(["python3","scripts/build-dag.py","--prerequisites-for",p], text=True)); selected=set(plan.get("rebuild", [])); print("\n".join(d for d in deps if d in selected))' "$PACKAGE_NAME" build-plan/plan.json)
+          mapfile -t deps < <(python3 -c 'import json,subprocess,sys; p=sys.argv[1]; plan=json.load(open(sys.argv[2], encoding="utf-8")); deps=json.loads(subprocess.check_output(["python3","scripts/build-dag.py","--prerequisites-for",p], text=True)); selected=set(plan.get("rebuild", [])); selected_deps=[d for d in deps if d in selected]; sys.stdout.write("\n".join(selected_deps))' "$PACKAGE_NAME" build-plan/plan.json)
           ((${#deps[@]} == 0)) && { echo 'No selected in-repository prerequisites to stage; published dependencies remain in use.'; exit 0; }
           mkdir -p staging localrepo/x86_64
           for dep in "${deps[@]}"; do
