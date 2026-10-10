@@ -384,7 +384,7 @@ jobs:
             title="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["title"])' "$issue")"
             [[ "$title" == "[build-failure] $PACKAGE_NAME:"* ]] || continue
             gh issue close "$number" --reason completed --comment "Build recovered for $PACKAGE_NAME in run $GITHUB_RUN_ID."
-          done < <(gh issue list --state open --limit 100 --json number,title)
+          done < <(gh issue list --state open --limit 100 --json number,title | jq -c '.[]')
 
       - name: Analyze build failure
         # Runs on the failing path only. Produces the structured failure record

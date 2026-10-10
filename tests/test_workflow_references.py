@@ -75,6 +75,10 @@ class WorkflowReferenceTests(unittest.TestCase):
         self.assertIn("--repository-manifest", workflow)
         self.assertIn("emoeem-abi-manifest.txt", workflow)
 
+    def test_build_failure_issue_closure_reads_one_json_object_per_line(self):
+        workflow = (ROOT / ".github/workflows/build.yml").read_text(encoding="utf-8")
+        self.assertIn("gh issue list --state open --limit 100 --json number,title | jq -c '.[]'", workflow)
+
     def test_build_workflow_stages_in_repo_prerequisite_artifacts(self):
         workflow = (ROOT / ".github/workflows/build.yml").read_text(encoding="utf-8")
         self.assertIn("Stage freshly built in-repo prerequisites", workflow)
