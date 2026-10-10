@@ -33,11 +33,20 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
         # Git-based PKGBUILDs may derive pkgver() from fetched upstream sources.
         template_ver="$(awk -F= '/^pkgver=/{print $2; exit}' "${root}/packages/${name}/PKGBUILD")"
         pkgrel="$(awk -F= '/^pkgrel=/{print $2; exit}' "${root}/packages/${name}/PKGBUILD")"
-        template_base="${template_ver%.r0.gunknown}"
+        # .SRCINFO for a VCS package records the pkgver at the last metadata
+        # refresh, while pkgver() resolves a newer commit during makepkg. Strip
+        # the cached .rN.gHASH suffix to get the stable upstream version prefix.
+        template_base="${template_ver%%.r[0-9]*.g*}"
+        actual_ver="${actual%-*}"
+        actual_rel="${actual##*-}"
         if grep -qE '^pkgver\(\)[[:space:]]*\{' "${root}/packages/${name}/PKGBUILD" \
-            && [[ "$actual" =~ ^${template_base}\.r[0-9]+\.g[0-9a-f]+-${pkgrel}$ ]]; then
-            printf 'Accepted resolved git pkgver for %s: %s (template=%s)\n' "$name" "$actual" "$expected"
-            continue
+            && [[ "$actual_rel" == "$pkgrel" ]] \
+            && [[ "$actual_ver" == "$template_base".r* ]]; then
+            resolved_suffix="${actual_ver#"$template_base".r}"
+            if [[ "$resolved_suffix" =~ ^[0-9]+\.g[0-9a-f]+$ ]]; then
+                printf 'Accepted resolved git pkgver for %s: %s (template=%s)\n' "$name" "$actual" "$expected"
+                continue
+            fi
         fi
         bumped_rel="$(next_pkgrel "$pkgrel")"
         if [[ -n "$bumped_rel" && "$actual" == "${expected%-*}-${bumped_rel}" ]]; then
