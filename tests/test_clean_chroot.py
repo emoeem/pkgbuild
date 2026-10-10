@@ -42,7 +42,7 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn("inputs.build_mode != 'chroot' && !cancelled() && needs.build.result == 'failure'", workflow)
         self.assertIn("inputs.build_mode != 'chroot' && (!cancelled() && needs.build.result == 'success'", workflow)
         self.assertIn('arch-nspawn -c "$cache_dir/pacman" "$work_root/root" pacman -Syu --noconfirm', script)
-        self.assertIn('systemd-nspawn --link-journal=no "$@"', script)
+        self.assertIn('systemd-nspawn --link-journal=no --keep-unit "$@"', script)
         self.assertIn('PATH="$nspawn_wrapper_dir:/usr/lib/ccache/bin:$PATH"', script)
         self.assertIn('uses: $/.github/actions/setup-builder', workflow)
         self.assertIn('selected_deps=[d for d in deps if d in selected]; sys.stdout.write(\"\\n\".join(selected_deps))', workflow)

@@ -49,7 +49,7 @@ PY
 nspawn_wrapper_dir="$(mktemp -d "/tmp/pkgbuild-nspawn-${package_name}.XXXXXX")"
 cat > "$nspawn_wrapper_dir/systemd-nspawn" <<'__NSPAWN_WRAPPER__'
 #!/usr/bin/env bash
-exec /usr/bin/systemd-nspawn --link-journal=no "$@"
+exec /usr/bin/systemd-nspawn --link-journal=no --keep-unit "$@"
 __NSPAWN_WRAPPER__
 chmod 0755 "$nspawn_wrapper_dir/systemd-nspawn"
 cleanup_paths=("$nspawn_wrapper_dir")
@@ -93,7 +93,7 @@ __CACHE_ENV__
 else
     baseline="$cache_dir/chroot/$baseline_name"
     mkdir -p "$baseline"
-    if [[ ! -x "$baseline/root/usr/bin/bash" ]]; then
+    if [[ ! -f "$baseline/FINGERPRINT" || ! -x "$baseline/root/usr/bin/bash" ]]; then
         rm -rf "$baseline/root"
         echo "Creating clean CachyOS-v3 chroot baseline $fingerprint"
         base_packages=(base-devel gcc-objc ccache)

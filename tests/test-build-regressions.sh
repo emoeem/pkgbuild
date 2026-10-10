@@ -91,7 +91,7 @@ printf '%s\n' '6/6: verify clean-chroot systemd-nspawn disables host journal lin
 # Docker builders do not have a host machine-id/journal. devtools' arch-nspawn
 # inherits PATH, so the temporary wrapper must disable journal linking without
 # patching the installed devtools binary or changing the host configuration.
-grep -Fq -- 'systemd-nspawn --link-journal=no "$@"' "$root/scripts/build-in-clean-chroot.sh" \
+grep -Fq -- 'systemd-nspawn --link-journal=no --keep-unit "$@"' "$root/scripts/build-in-clean-chroot.sh" \
     || fail 'clean-chroot does not disable systemd-nspawn host journal linking'
 grep -Fq -- 'PATH="$nspawn_wrapper_dir:/usr/lib/ccache/bin:$PATH"' "$root/scripts/build-in-clean-chroot.sh" \
     || fail 'clean-chroot nspawn wrapper is not ahead of the system PATH'
