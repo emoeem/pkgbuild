@@ -1,7 +1,7 @@
 # Maintainer: emoeem
 pkgname=daed-emo
 pkgver=1.27.0.r0.gunknown
-pkgrel=1
+pkgrel=2
 pkgdesc='Modern web dashboard for dae (current upstream, x86-64-v3/AVX2 build)'
 arch=('x86_64')
 url='https://github.com/daeuniverse/daed'
@@ -47,7 +47,17 @@ prepare() {
 
 build() {
   cd "$srcdir/daed"
-  env GOAMD64=v3 CFLAGS='-O2' CXXFLAGS='-O2' make VERSION="$(pkgver)" MAKEFLAGS="-j$(nproc)"
+
+  # prepare() 已经把 wing 切到 dae-wing main 并改过它的 go.mod/go.sum
+  # （cilium/ebpf v0.22.0），而上游 Makefile 的 submodule 目标会按 daed 记录的
+  # 固定提交再 checkout 一次 wing，git 于是因本地修改会被覆盖而拒绝：
+  #   error: Your local changes to the following files would be overwritten by
+  #   checkout: wing/go.sum
+  # （run 38023434807 的 daed-emo）。SKIP_SUBMODULES 是上游 Makefile 自带的开关
+  # （ifdef SKIP_SUBMODULES），跳过这次冗余的更新；submodule 在 prepare() 里已经
+  # 初始化完成，构建用的就是 prepare() 准备好的那棵树。
+  env GOAMD64=v3 CFLAGS='-O2' CXXFLAGS='-O2' \
+    make VERSION="$(pkgver)" MAKEFLAGS="-j$(nproc)" SKIP_SUBMODULES=1
 }
 
 package() {
