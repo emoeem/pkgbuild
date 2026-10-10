@@ -1,7 +1,7 @@
 pkgbase = sing-box-ebpf
 	pkgdesc = The universal proxy platform with the experimental eBPF inbound (reF1nd fork, x86-64-v3 static build)
-	pkgver = 1.14.2.ref1nd
-	pkgrel = 2
+	pkgver = 1.14.3.ref1nd
+	pkgrel = 1
 	url = https://github.com/reF1nd/sing-box
 	install = sing-box-ebpf.install
 	arch = x86_64
@@ -19,7 +19,7 @@ pkgbase = sing-box-ebpf
 	conflicts = sing-box-git
 	conflicts = sing-box-bin
 	options = !debug
-	source = git+https://github.com/reF1nd/sing-box.git#tag=v1.14.2-reF1nd
+	source = git+https://github.com/reF1nd/sing-box.git#tag=v1.14.3-reF1nd
 	sha256sums = SKIP
 
 pkgname = sing-box-ebpf

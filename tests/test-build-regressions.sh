@@ -99,10 +99,9 @@ grep -Fq -- 'cleanup() { rm -rf -- "${cleanup_paths[@]}"; }' "$root/scripts/buil
     || fail 'clean-chroot does not clean up the temporary nspawn wrapper'
 grep -Fq -- 'cleanup_paths+=("$work_root")' "$root/scripts/build-in-clean-chroot.sh" \
     || fail 'clean-chroot work root is not registered for cleanup'
-grep -Fq -- '--cgroup-parent="$runner_cgroup_parent" --cgroupns=host' "$root/.github/workflows/build.yml" \
-    || fail 'clean-chroot container is not nested under the dedicated machine.slice'
-grep -Fq -- '--volume "$runner_cgroup_dir:$runner_cgroup_dir:rw"' "$root/.github/workflows/build.yml" \
-    || fail 'clean-chroot does not scope writable cgroup access to machine.slice'
-grep -Fq -- 'if [[ ! -d "$runner_cgroup_dir" ]]; then' "$root/.github/workflows/build.yml" \
-    || fail 'clean-chroot does not fail closed when machine.slice is absent'
+grep -Fq -- 'container_security_args+=(--privileged)' "$root/.github/workflows/build.yml" \
+    || fail 'clean-chroot builder does not use the privileged disposable CI container'
+if grep -Eq -- '--cgroup-parent|--cgroupns|runner_cgroup_(parent|dir)|/sys/fs/cgroup.*:rw' "$root/.github/workflows/build.yml"; then
+    fail 'clean-chroot workflow still contains experimental host cgroup configuration'
+fi
 printf '%s\n' 'All build regression tests passed.'

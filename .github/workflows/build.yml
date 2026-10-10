@@ -297,17 +297,13 @@ jobs:
             "$BUILDER_IMAGE" bash -lc 'shopt -s nullglob; packages=(/repo/*.pkg.tar.zst); if (( ${#packages[@]} > 0 )); then rm -f /repo/emoeem.db* /repo/emoeem.files*; repo-add --remove /repo/emoeem.db.tar.gz "${packages[@]}"; fi'
           container_security_args=()
           if [[ "$build_mode" == chroot ]]; then
-            # systemd-nspawn needs a writable payload cgroup. Put the builder
-            # under the dedicated machine.slice and expose only that subtree.
-            # Never make the entire host cgroup tree writable.
-            runner_cgroup_parent=machine.slice
-            runner_cgroup_dir="/sys/fs/cgroup/$runner_cgroup_parent"
-            if [[ ! -d "$runner_cgroup_dir" ]]; then
-              echo "Dedicated clean-chroot cgroup slice is not mounted: $runner_cgroup_dir" >&2
-              exit 1
-            fi
-            echo "Clean-chroot cgroup delegation is scoped to $runner_cgroup_parent"
-            container_security_args+=(--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cgroup-parent="$runner_cgroup_parent" --cgroupns=host --volume "$runner_cgroup_dir:$runner_cgroup_dir:rw")
+            # The hosted runner itself is disposable. Run only the repository's
+            # pinned CachyOS-v3 builder with the privileges required by nested
+            # mount/user namespaces; do not tune or expose host cgroup paths.
+            # The package workspace and local repository stay read-only, while
+            # output and caches are the only writable bind mounts.
+            container_security_args+=(--privileged)
+            echo 'Clean-chroot builder uses a privileged disposable CI container; no host cgroup subtree is mounted.'
           fi
           docker run --rm "${container_security_args[@]}" \
             --shm-size 2g \
