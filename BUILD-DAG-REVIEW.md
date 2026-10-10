@@ -25,7 +25,7 @@
 | F7 | 低 | 代码卫生 | `build-dag.py` 的 `make_jobs` 死变量、`__import__("os")` 内联、`from errorrules import load_yaml`（YAML 解析住在错误分类模块里） |
 | F8 | 中 | 你 WIP 新增的 `tests/test_build_planner.py` 有 GIT_* 泄漏隐患（与本会话修过的事故同类，会污染真实仓库） | `setUp` 用 `subprocess.run(["git","init","-q",...])` + `git -C` 且未清 `GIT_*`；本会话实测该模式在 pre-commit 钩子下把夹具提交写进真实仓库 |
 
-**落地状态（本次已按 F1+F5+F8 改在你的 WIP 上，未提交、未推送；细节见 §6）**
+**落地状态（F1+F5+F8 已随 a4e0638 并入 main 并推送；§6 是当时的落地记录，真跑后的补充见 §7）**
 
 | 项 | 状态 |
 |---|---|
@@ -311,7 +311,8 @@ build-dag --packages f,x       带声明: [[ffmpeg-full],[xclip-git]]           
 - `bash tests/run-all.sh --fast`：Syntax / shellcheck / actionlint / py_compile 与各 Python、Behaviour 用例全绿，
   唯一失败是**既存**的 `tests/test_workflow_references.py::test_every_referenced_script_is_tracked`
   （`build-planner.py`、`build-dag.py`、`wait-for-build-dependencies.sh` 等 21 个 WIP 脚本尚未 `git add`），与本轮改动无关。
-- 未提交、未推送；`git status` 里就是你这棵 WIP 上的进一步修改。
+- （当时的记录）未提交、未推送；`git status` 里就是你这棵 WIP 上的进一步修改。
+  这些改动随后随 a4e0638「并入构建平台」一起进了 main 并推送，真跑后的补充见 §7。
 
 ### 6.3 留给你的两个提醒
 
@@ -320,4 +321,31 @@ build-dag --packages f,x       带声明: [[ffmpeg-full],[xclip-git]]           
   图这边会**自动**开始消费这些声明；你现在就可以挑一个包写 `.rebuild-on` 试效果。
 - F2/F3 需要你拍板（都要动 `build.yml` 接线：前者把 ABI manifest 取来传给 select job，后者把已构建产物
   staging 进 build job）。F6/F7 是文档与代码卫生，随时可做。
+
+---
+
+## 7 真跑补充（并入 main 之后，2026-10-10）
+
+a4e0638 落地后的第一次**真跑**（不是空跑：planner 有意让构建脚本变化不触发重建）暴露了 4 个只有真跑
+才会出现的缺陷，全部已修并推送。这条也顺带把 F3 说得更明白：波次有序 ≠ 产物可用，真正卡住流水线的
+往往是「等谁」和「怎么验证」这两端。
+
+| # | 真实日志里的症状 | 根因 | 修复（提交） |
+|---|---|---|---|
+| R1 | 每个 build job 刚起步就退出：`/workspace/scripts/lib/timing.sh: line 57: local: source_cache_dir: readonly variable` | `timing.sh:57` 的 `local source_cache_dir="$3"` 与 `build-in-arch.sh:12` 顶层 `readonly source_cache_dir=...` 重名；`local` 在只读变量上返回非零，`set -e` 直接结束该包的构建 | 改名为 `sources_dir`；`tests/test-build-regressions.sh` 加 4/5 回归（在 `readonly source_cache_dir` 下调用 `timing_resources`）。提交 183df01 |
+| R2 | 所有 SONAME 正确的库都被判错：`FAIL: vapoursynth-plugin-mlrt-ncnn-runtime: libvsncnn.so declares [libvsncnn.so]`；quirc 更怪：`FAIL: quirc: soname-mismatch: /usr/lib/libquirc.so declares libquirc.so.1` | ① `runtime-verify.sh` 去方括号的正则 `gsub(/[][\\[\\]]/, "", $NF)` 永不匹配，`declared` 一直带着 `[ ]`；② `check_elf` 会读到链接器别名（`libquirc.so -> libquirc.so.1`），`readelf` 顺链读出目标的 SONAME 再拿它和别名自己的名字比 | 正则改 `gsub(/[][]/, "", $NF)`；判定改为「跳过符号链接 + 真实文件无 SONAME 且文件名带版本 → missing-soname + 有 SONAME 时必须能在 payload 里解析（自身同名，或存在同名条目，覆盖 `libavcodec.so.61.19.100` 真文件 + `libavcodec.so.61` 符号链接的发行版惯例）」；`tests/test_runtime_verify.sh` 补两种合法形状（`libok.so.1`+`libok.so`、`libfull.so.2.1.0`+`libfull.so.2`+`libfull.so`），修复前会以 CI 里一模一样的消息失败。提交 d123eca |
+| R3 | ffmpeg-full 一直 `Still waiting for: mpeghdec, svt-jpeg-xs-git`，45 分钟后超时——这两个包根本不在本次矩阵里 | `wait-for-build-dependencies.sh:63-88` 把 jobs API 的 `status=missing` 当成 pending | 新增 `missing)` 分支归入 absent（不在本次 run 里 = 用已发布的版本，无需等待）并打印一行说明；`tests/test-build-regressions.sh` 加 5/5 回归。提交 183df01 |
+| R4 | `FAIL: quirc: missing-soname: /usr/lib/libquirc.so.1.2 has a versioned name but no SONAME` | `packages/quirc/PKGBUILD` 沿用上游 Makefile 的链接规则，从不传 `-Wl,-soname` | PKGBUILD 里 `CFLAGS+=" -fPIC" LDFLAGS+=" -Wl,-soname,libquirc.so.1"` 构建、`package()` 装成 `/usr/lib/libquirc.so.1` 并保留 `libquirc.so` 别名；pkgrel 4→5、`.SRCINFO` 用 `makepkg --printsrcinfo` 重生成。提交 183df01（R2 修好后 quirc 才能真正编过） |
+
+真跑验证（`workflow_dispatch`，`packages=quirc`，run 38037955697）：
+
+- select 的 plan 里出现 `quirc selection: explicitly requested` 与
+  `ffmpeg-full dependency: quirc (provided by quirc)` —— F1 的声明边在 CI 里真的驱动了「重建依赖者」。
+- `Build quirc` **success**：日志里 `cc -shared -o libquirc.so.1.2 ... -Wl,-soname,libquirc.so.1`，
+  打包清单里是 `usr/lib/libquirc.so.1`，运行期门禁 `Runtime verification checked 3 ELF object(s); 0 failure(s).`
+  + `Runtime verification passed.`（R2 修好后同一条检查不再误报）。
+
+一条运维经验：`gh api`/`gh run view` 取不到作业日志，必须
+`curl -sS -L -H "Authorization: Bearer $(gh auth token)" https://api.github.com/repos/<owner>/<repo>/actions/jobs/<id>/logs`
+（先存文件再 grep）。
 
