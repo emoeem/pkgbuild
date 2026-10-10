@@ -1,0 +1,123 @@
+name: Track reF1nd sing-box stable releases
+
+on:
+  schedule:
+    - cron: '37 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+  pull-requests: write
+
+concurrency:
+  group: sing-box-ebpf-upstream-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: true
+
+      - name: Validate stable release and prepare package update
+        id: update
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/update-sing-box-ebpf.py --apply
+          if git diff --quiet -- packages/sing-box-ebpf/PKGBUILD packages/sing-box-ebpf/.SRCINFO; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'No newer stable reF1nd release; package files remain unchanged.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          pkgver="$(sed -n 's/^pkgver=//p' packages/sing-box-ebpf/PKGBUILD)"
+          echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+          {
+            echo '### Proposed sing-box-ebpf update'
+            echo
+            echo "- New package version: $pkgver"
+            echo '- The upstream tag and source SHA were matched against stable-build-info.json.'
+            echo '- The release source was checked for the eBPF inbound registration and option types.'
+            echo '- This workflow opens a PR only; it never publishes or installs a package.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Read builder generation
+        if: steps.update.outputs.changed == 'true'
+        id: generation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "value=$(tr -d '[:space:]' < .github/builder/generation)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up CachyOS builder
+        if: steps.update.outputs.changed == 'true'
+        id: builder
+        uses: ./.github/actions/setup-builder
+        with:
+          package_name: sing-box-ebpf
+          generation: ${{ steps.generation.outputs.value }}
+          restore-caches: 'false'
+
+      - name: Build candidate package before opening PR
+        if: steps.update.outputs.changed == 'true'
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist localrepo/x86_64 .cache/pkgbuild
+          docker run --rm \
+            --shm-size 2g \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$GITHUB_WORKSPACE/dist:/out" \
+            --volume "$GITHUB_WORKSPACE/.cache/pkgbuild:/cache" \
+            --volume "$GITHUB_WORKSPACE/localrepo/x86_64:/localrepo:ro" \
+            --volume "$GITHUB_WORKSPACE/localrepo/x86_64:/run/pkgbuild-localrepo:ro" \
+            --env LOCAL_REPO_DIR=/localrepo \
+            --env LOCAL_REPO_MOUNT=/run/pkgbuild-localrepo \
+            --env LOCAL_REPO_NAME=emoeem \
+            --env CLEAN_CHROOT_BUILD=0 \
+            --env BUILDER_GENERATION="${{ steps.generation.outputs.value }}" \
+            --env MAKE_JOBS=2 \
+            --env BUMP_PKGREL=false \
+            --env PACKAGE_NAME=sing-box-ebpf \
+            --env CACHE_DIR=/cache \
+            "$BUILDER_IMAGE" \
+            bash /workspace/scripts/build-in-arch.sh
+          test -s dist/SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
+          find dist -maxdepth 1 -type f -name 'sing-box-ebpf-*.pkg.tar.zst' -print -quit | grep -q .
+
+      - name: Open update pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKGVER: ${{ steps.update.outputs.pkgver }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          branch="automation/sing-box-ebpf-${PKGVER}"
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq 'length')"
+          if [[ "$existing" != '0' ]]; then
+            echo "An update PR already exists for $PKGVER; leaving it untouched."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add packages/sing-box-ebpf/PKGBUILD packages/sing-box-ebpf/.SRCINFO
+          git commit -m "sing-box-ebpf: update to $PKGVER"
+          git push origin "$branch"
+          base="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq '.defaultBranchRef.name')"
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base "$base" \
+            --head "$branch" \
+            --title "sing-box-ebpf: update to $PKGVER" \
+            --body $'Automated update detected from [reF1nd/sing-box-releases](https://github.com/reF1nd/sing-box-releases).\n\nThe updater verified that the stable metadata source SHA matches the corresponding sing-box tag and that the release retains the `with_ebpf` inbound registration and option types.\n\nPlease require the normal package build, static checks, and clean-chroot upgrade-path validation before merging. This PR does not publish a package.'

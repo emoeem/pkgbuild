@@ -10,17 +10,16 @@
 # 包与官方 `sing-box` 互斥（conflicts + provides），因为两者都提供 /usr/bin/sing-box
 # 和同名 systemd 单元；两个透明代理也绝不能同时运行。
 #
-# 升级步骤：
-#   1. 在 https://github.com/reF1nd/sing-box/tags 选新 tag（稳定基线优先，例如 v1.15.x-reF1nd）
-#   2. 改 _tag、_commit（git rev-parse <tag>）、pkgver（用「上游版本.ref1nd」形式）
-#   3. cd packages/sing-box-ebpf && makepkg --printsrcinfo > .SRCINFO
+# 升级：.github/workflows/sing-box-ebpf-update.yml 每 6 小时检查 reF1nd 发布仓库的稳定版元数据，
+# 验证 tag/commit 与 eBPF 入站源码后自动创建更新 PR；必须通过正常构建和 clean-chroot 验收后再合并。
+# 手动维护时仍需同步修改 _tag、_commit、pkgver/pkgrel，并重新生成 .SRCINFO。
 
-_tag=v1.14.2-reF1nd
-_commit=7c1ffd271cbc84fed23eaabdcd7e1cefb42a778e   # git rev-parse v1.14.2-reF1nd，用于拦住被移动的 tag
+_tag=v1.14.3-reF1nd
+_commit=adf2d003a4e9240ba8a65fcf90531886bd479613   # verified against v1.14.3-reF1nd
 
 pkgname=sing-box-ebpf
-pkgver=1.14.2.ref1nd
-pkgrel=2
+pkgver=1.14.3.ref1nd
+pkgrel=1
 pkgdesc='The universal proxy platform with the experimental eBPF inbound (reF1nd fork, x86-64-v3 static build)'
 arch=('x86_64')
 url='https://github.com/reF1nd/sing-box'

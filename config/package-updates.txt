@@ -15,5 +15,5 @@
 # default.  See docs/build-pipeline.md.
 
 sing-box-rule-sets workflow .github/workflows/refresh-rule-sets.yml
-sing-box-ebpf manual upstream tag is pinned by hand in the PKGBUILD; no release automation upstream
+sing-box-ebpf workflow .github/workflows/sing-box-ebpf-update.yml
 sing-box-panel manual source lives in this repo plus a pinned zashboard archive; bumped by hand
