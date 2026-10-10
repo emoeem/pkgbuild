@@ -132,7 +132,7 @@ jobs:
         run: ./scripts/check-package.sh "$PACKAGE_NAME"
 
       - name: Download build plan
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: build-plan-${{ github.run_id }}
           path: build-plan
@@ -409,7 +409,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download build reports
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: build-report-*-${{ github.run_id }}
           path: reports
@@ -508,7 +508,7 @@ jobs:
           path: source
 
       - name: Download built packages
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: built-*-${{ github.run_id }}
           path: incoming
