@@ -1,0 +1,7 @@
+# GitHub added the $/ self-repository action syntax in July 2026. actionlint
+# currently rejects it as an invalid external ref (upstream issue #711), so
+# ignore only that exact diagnostic while keeping all other checks enabled.
+paths:
+  .github/workflows/*.yml:
+    ignore:
+      - 'specifying action "\$/.+" in invalid format because ref is missing'

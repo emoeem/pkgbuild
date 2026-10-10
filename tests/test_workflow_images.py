@@ -17,8 +17,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 
-BUILDER_SETUP = "uses: ./.github/actions/setup-builder"
-BUILDER_OUTPUT = '"${{ steps.builder.outputs.image }}"'
+BUILDER_SETUP = "uses: $/.github/actions/setup-builder"
+BUILDER_OUTPUT = "BUILDER_IMAGE: ${{ steps.builder.outputs.image }}"
+BUILDER_RUN = '\"$BUILDER_IMAGE\"'
 
 # Workflows whose container-based detectors run unattended on cron.
 SCHEDULED_DETECTORS = ("dependency-drift.yml", "maintenance.yml")
@@ -33,7 +34,8 @@ class DetectorImageTests(unittest.TestCase):
         for name in SCHEDULED_DETECTORS:
             text = workflow(name)
             self.assertIn(BUILDER_SETUP, text, f"{name} does not use the shared builder setup action")
-            self.assertIn(BUILDER_OUTPUT, text, f"{name} does not run the resolved builder image")
+            self.assertIn(BUILDER_OUTPUT, text, f"{name} does not export the resolved builder image via env")
+            self.assertIn(BUILDER_RUN, text, f"{name} does not run the resolved builder image through the env variable")
 
     def test_build_and_publish_workflow_uses_cachyos_builder_for_repo_validation(self):
         text = workflow("build.yml")

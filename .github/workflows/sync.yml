@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
 
       - name: Sync AUR files
         shell: bash
@@ -74,6 +76,7 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           PACKAGES: ${{ steps.changes.outputs.packages }}
         run: |
           set -Eeuo pipefail
@@ -81,7 +84,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add packages
           git commit -m "chore: sync AUR packages: $PACKAGES"
-          git push
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push
 
       - name: Dispatch rebuild for the synced packages
         if: steps.changes.outputs.changed == 'true'

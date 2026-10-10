@@ -52,6 +52,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Select changed packages
         id: select
@@ -82,6 +83,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
       # The static half of this job is one script, and it is the same script the
       # git pre-commit hook runs (.githooks/pre-commit): "green locally" and
       # "green in CI" are the same list of checks, by construction. It also
@@ -96,7 +99,7 @@ jobs:
         run: bash tests/test-static-checks.sh
       - name: Set up CachyOS builder
         id: builder
-        uses: ./.github/actions/setup-builder
+        uses: $/.github/actions/setup-builder
         with:
           restore-caches: 'false'
       # Lint lives here, not in the per-package matrix: it does not depend on
@@ -121,12 +124,14 @@ jobs:
         #
         # 挂载仍然只读：源仓库不会被测试改动。
         shell: bash
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
         run: |
           set -Eeuo pipefail
           docker run --rm \
             --user builder \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
-            "${{ steps.builder.outputs.image }}" \
+            "$BUILDER_IMAGE" \
             bash -c 'set -Eeuo pipefail; cp -a /workspace /tmp/ws && cd /tmp/ws && bash tests/run-all.sh'
 
       - name: Verify CI script references are tracked
@@ -139,35 +144,43 @@ jobs:
           PYTHONPYCACHEPREFIX=/tmp/pycache python3 tests/test_workflow_references.py
       - name: Run builder environment checks
         shell: bash
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
         run: |
           set -Eeuo pipefail
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
-            "${{ steps.builder.outputs.image }}" \
+            "$BUILDER_IMAGE" \
             bash /workspace/tests/test-cachyos-environment.sh builder
       - name: Run build regression tests
         shell: bash
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
         run: |
           set -Eeuo pipefail
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
-            "${{ steps.builder.outputs.image }}" \
+            "$BUILDER_IMAGE" \
             bash /workspace/tests/test-build-regressions.sh
       - name: Run package audit in prepared builder
         shell: bash
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
         run: |
           set -Eeuo pipefail
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
-            "${{ steps.builder.outputs.image }}" \
+            "$BUILDER_IMAGE" \
             bash -c 'set -Eeuo pipefail; useradd --create-home checker; runuser -u checker -- env HOME=/home/checker AUDIT_ROOT=/workspace bash -c "cd /workspace && ./scripts/audit-packages.sh && ./tests/test-package-audit.sh"'
       - name: Run repository integration tests in CachyOS-v3
         shell: bash
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
         run: |
           set -Eeuo pipefail
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
-            "${{ steps.builder.outputs.image }}" \
+            "$BUILDER_IMAGE" \
             bash -c 'cd /workspace && bash tests/test_repository.sh'
 
   check:
@@ -182,21 +195,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
       - name: Set up CachyOS builder
         id: builder
-        uses: ./.github/actions/setup-builder
+        uses: $/.github/actions/setup-builder
         with:
           restore-caches: 'false'
       - name: Run CachyOS package checks
         shell: bash
         env:
           PACKAGE_NAME: ${{ matrix.package }}
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
         run: |
           set -Eeuo pipefail
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --env "PACKAGE_NAME=$PACKAGE_NAME" \
-            "${{ steps.builder.outputs.image }}" \
+            "$BUILDER_IMAGE" \
             bash -c '
               set -Eeuo pipefail
               useradd --create-home checker

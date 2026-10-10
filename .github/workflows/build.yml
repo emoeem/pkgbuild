@@ -48,7 +48,6 @@ on:
 permissions:
   contents: read
   packages: read
-  issues: write
 
 env:
   RELEASE_TAG: repo
@@ -66,6 +65,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Read builder generation
@@ -129,6 +129,11 @@ jobs:
   build:
     name: Build ${{ matrix.package }}
     needs: select
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      issues: write
     if: needs.select.outputs.packages != '[]'
     runs-on: ${{ vars.BUILD_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 360
@@ -143,6 +148,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
 
       - name: Validate package files
         env:
@@ -246,7 +253,7 @@ jobs:
 
       - name: Set up builder image and restore caches
         id: builder
-        uses: ./.github/actions/setup-builder
+        uses: $/.github/actions/setup-builder
         with:
           package_name: ${{ matrix.package }}
           flavor: ${{ steps.cache-flavor.outputs.flavor }}
@@ -274,6 +281,7 @@ jobs:
         env:
           PACKAGE_NAME: ${{ matrix.package }}
           BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+          BUILDER_GENERATION: ${{ steps.generation.outputs.value }}
           REQUESTED_BUILD_MODE: ${{ inputs.build_mode || 'legacy' }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -302,7 +310,7 @@ jobs:
             --env "LOCAL_REPO_MOUNT=/run/pkgbuild-localrepo" \
             --env "LOCAL_REPO_NAME=emoeem" \
             --env "CLEAN_CHROOT_BUILD=$([[ "$build_mode" == chroot ]] && echo 1 || echo 0)" \
-            --env "BUILDER_GENERATION=${{ steps.generation.outputs.value }}" \
+            --env "BUILDER_GENERATION=$BUILDER_GENERATION" \
             --env "MAKE_JOBS=$MAKE_JOBS" \
             --env "BUMP_PKGREL=$BUMP_PKGREL" \
             --env "PACKAGE_NAME=$PACKAGE_NAME" \
@@ -502,6 +510,7 @@ jobs:
       - name: Checkout source branch
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Download build reports
@@ -578,8 +587,9 @@ jobs:
             exit 0
           fi
           git commit -m "fix(build): automatic repair for ${applied[*]}"
-          git pull --rebase origin main
-          git push origin HEAD
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" pull --rebase origin main
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD
 
   publish:
     name: Publish pacman repository release
@@ -601,6 +611,7 @@ jobs:
       - name: Checkout source branch
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
+          persist-credentials: false
           path: source
 
       - name: Download built packages
@@ -742,6 +753,8 @@ jobs:
       - name: Write back bumped pkgrel to main
         if: ${{ inputs.bump_pkgrel == true }}
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           bash source/scripts/write-back-pkgrel.sh \

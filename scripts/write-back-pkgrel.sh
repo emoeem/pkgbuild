@@ -78,5 +78,14 @@ if git -C "$root" diff --cached --quiet; then
 fi
 git -C "$root" commit \
     -m "chore(build): write back bumped pkgrel for ${directories[*]} [skip ci]"
-git -C "$root" pull --rebase origin main
-git -C "$root" push origin HEAD
+if [[ -n "${GH_TOKEN:-}" ]]; then
+    # Keep checkout credentials disabled; grant this process only command-scoped
+    # credentials for the required fast-forward pull and push.
+    auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+    git -C "$root" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" pull --rebase origin main
+    git -C "$root" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD
+else
+    # Preserve interactive/local use where the caller has configured git auth.
+    git -C "$root" pull --rebase origin main
+    git -C "$root" push origin HEAD
+fi

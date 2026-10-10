@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Refresh rule-set sources
         id: refresh
@@ -64,6 +65,8 @@ jobs:
       - name: Commit and push
         if: steps.refresh.outputs.updated == 'true'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           git config user.name 'github-actions[bot]'
@@ -71,7 +74,8 @@ jobs:
           git add packages/sing-box-rule-sets
           git diff --cached --quiet && { echo "Nothing staged."; exit 0; }
           git commit -m "chore(sing-box-rule-sets): refresh upstream rule-sets"
-          git push
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push
 
       - name: Trigger rebuild
         if: steps.refresh.outputs.updated == 'true'
