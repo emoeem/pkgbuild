@@ -15,6 +15,7 @@ on:
       - "packages/**"
       - "scripts/**"
       - "tests/**"
+      - "config/**"
       - ".github/builder/**"
       - ".github/workflows/check.yml"
       # tests/test_workflow_images.py asserts invariants of these two, so an
@@ -70,6 +71,13 @@ jobs:
         run: bash tests/test_elf_soname.sh
       - name: Run workflow image tests
         run: python tests/test_workflow_images.py
+      # Manifest policy runs before any container is pulled: a package that
+      # declares no update source, or whose metadata cannot be parsed, should
+      # fail in seconds on the bare runner instead of minutes into a job.
+      - name: Check package manifest policy
+        run: python3 scripts/check-package-manifests.py
+      - name: Run package manifest tests
+        run: python3 tests/test_package_manifests.py
       - name: Run package audit in prepared builder
         shell: bash
         run: |
@@ -119,7 +127,7 @@ jobs:
                   cd /workspace
                   ./scripts/check-package.sh \"\$PACKAGE_NAME\"
                   shellcheck --severity=warning manage.sh scripts/*.sh client/*.sh tests/*.sh
-                  PYTHONPYCACHEPREFIX=/tmp/pycache python -m py_compile scripts/select-packages.py tests/test_select_packages.py
+                  PYTHONPYCACHEPREFIX=/tmp/pycache python -m py_compile scripts/select-packages.py scripts/check-package-manifests.py tests/test_select_packages.py tests/test_package_manifests.py tests/test_workflow_images.py
                   namcap \"packages/\$PACKAGE_NAME/PKGBUILD\"
                 "
             '

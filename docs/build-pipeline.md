@@ -44,6 +44,15 @@
 
 `tests/test_repository.sh` 使用真实 `repo-add` 验证仓库生成、GitHub Release 文件名清洗和删除 package 后数据库更新。
 
+### Package manifest policy（借鉴 archlinuxcn 的 pre-commit 门禁）
+
+`scripts/check-package-manifests.py` 只用标准库，不需要 makepkg、不拉容器，因此在裸 runner 上先于 builder image 运行（`check.yml` 的 integration job）。它强制两条契约：
+
+- 每个 `packages/<name>` 必须且只能声明一个更新来源：AUR 镜像包用 `.aur-url` + `.aur-commit`；其余包必须出现在 `config/package-updates.txt`，用 `workflow <path>` 指向真实且被 git 跟踪的更新 workflow，或用 `manual <reason>` 明确说明无人更新。`workflow` 路径按 git 跟踪状态校验，workflow 改名不会静默留下孤儿包。
+- 已提交的元数据自洽：`pkgbase` 等于目录名、`pkgver` 不含 `-`/`:`/空白、`pkgrel` 为数字、`pkgdesc`/`url`/`license` 非空、每个 `*sums` 数组条目数等于 `source` 条目数、`packages/` 下没有已提交的 gitlink。
+
+最后一行恒为 `SUMMARY packages=<n> errors=<n>`。与之互补的 `scripts/audit-packages.sh`、`scripts/check-package.sh` 需要 makepkg（在 builder 容器内运行），负责 `.SRCINFO` 新鲜度等离线无法判定的部分。
+
 ## 4. fzf 管理界面
 
 `manage.sh` 新增「仓库状态总览」，在不离开终端的情况下展示：
@@ -62,6 +71,8 @@
 本地可运行：
 
 ```bash
+python3 scripts/check-package-manifests.py
+python3 tests/test_package_manifests.py
 python3 tests/test_select_packages.py
 ./tests/test-build-regressions.sh
 bash tests/test_repository.sh
