@@ -95,6 +95,12 @@ check_elf() {
     local file magic declared
     while IFS= read -r file; do
         [[ -n "$file" ]] || continue
+        # Symlinks such as libfoo.so -> libfoo.so.1 are linker aliases: readelf
+        # follows them and reports the target's SONAME, which then never equals
+        # the alias's own name. The target is checked on its own line of the
+        # listing, so skipping the alias here is what keeps a correct package
+        # (libquirc.so + libquirc.so.1, libavcodec.so + libavcodec.so.61) green.
+        [[ -L "$target$file" ]] && continue
         [[ -f "$target$file" ]] || continue
         magic="$(head -c 4 "$target$file" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
         [[ "$magic" == "7f454c46" ]] || continue
@@ -107,8 +113,12 @@ check_elf() {
                 "$file: $(ldd "$target$file" 2>/dev/null | awk '/not found/ {print $1}' | paste -sd, -)"
         fi
 
-        # A shared library must carry a SONAME that matches its file name;
-        # a mismatch is exactly what makes dependent packages fail to load it.
+        # A shared library must carry a SONAME, and the loader must be able to
+        # find a file by that name inside the package: distro convention ships
+        # both the fully versioned file (libavcodec.so.61.19.100) and the
+        # symlink the loader looks for (libavcodec.so.61), so the two cases are
+        # "the file is named after its SONAME" and "the payload carries that
+        # name". Anything else is a library dependents cannot load.
         local base_name
         base_name="$(basename "$file")"
         if [[ "$base_name" =~ [.]so([.][0-9]+)*$ ]]; then
@@ -119,10 +129,14 @@ check_elf() {
             # depends on this check was a false alarm.
             declared="$(readelf -d "$target$file" 2>/dev/null |
                 awk '/SONAME/ {gsub(/[][]/, "", $NF); print $NF}')"
-            if [[ -n "$declared" && "$declared" != "$base_name" ]]; then
+            if [[ -z "$declared" ]]; then
+                if [[ "$base_name" =~ [.]so[.][0-9] ]]; then
+                    note_failure "$package_name" "missing-soname" \
+                        "$file has a versioned name but no SONAME"
+                fi
+            elif [[ "$declared" != "$base_name" ]] &&
+                ! grep -Fxq -- "$(dirname "$file")/$declared" <<<"$listing"; then
                 note_failure "$package_name" "soname-mismatch" "$file declares $declared"
-            elif [[ -z "$declared" && "$base_name" =~ [.]so[.][0-9] ]]; then
-                note_failure "$package_name" "missing-soname" "$file has a versioned name but no SONAME"
             fi
         fi
     done <<<"$listing"

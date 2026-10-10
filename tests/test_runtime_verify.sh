@@ -81,6 +81,15 @@ cp /usr/bin/true "$ok/usr/bin/ok-true"
 # without it this suite only ever saw a mismatching SONAME, which is how a
 # bracket-stripping bug could report every real library as broken.
 gcc -shared -fPIC -Wl,-soname,libok.so.1 -o "$ok/usr/lib/libok.so.1" "$work/helper.c"
+# The linker alias every Arch package ships. readelf follows it and reports the
+# target's SONAME, so the check must ignore symlinks; otherwise libquirc.so ->
+# libquirc.so.1 fails as "libquirc.so declares libquirc.so.1".
+ln -s libok.so.1 "$ok/usr/lib/libok.so"
+# The other legal shape: the fully versioned file plus the SONAME symlink the
+# loader follows (how ffmpeg ships libavcodec.so.61.19.100).
+gcc -shared -fPIC -Wl,-soname,libfull.so.2 -o "$ok/usr/lib/libfull.so.2.1.0" "$work/helper.c"
+ln -s libfull.so.2.1.0 "$ok/usr/lib/libfull.so.2"
+ln -s libfull.so.2 "$ok/usr/lib/libfull.so"
 printf 'pkgname = okfixture\npkgver = 1.0-1\narch = x86_64\n' >"$ok/.PKGINFO"
 pack "$ok" "$work/okfixture.pkg.tar.zst"
 bash "$root/scripts/runtime-verify.sh" --file "$work/okfixture.pkg.tar.zst" >/dev/null ||
