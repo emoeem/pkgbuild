@@ -271,7 +271,7 @@ These commands become valid only after the local workflow/action/script changes 
 
 ### Chroot permissions evidence
 
-The local rootless Podman probe could create a basic mount namespace, but `mkarchroot` failed inside `pacstrap` while mounting `/dev` (`permission denied`). The GitHub-hosted rootful Docker runner therefore currently uses only `--cap-add SYS_ADMIN --security-opt seccomp=unconfined` for the chroot build and upgrade-test containers; `--privileged` and host-sensitive mounts are not used. This is the smallest tested capability set in the current implementation, not proof that every individual syscall needs it. A narrowed custom seccomp profile has **not** been validated; tracking it as follow-up is safer than guessing an allowlist that breaks `devtools` mount behavior.
+The local rootless Podman probe could create a basic mount namespace, but `mkarchroot` failed inside `pacstrap` while mounting `/dev` (`permission denied`). The first real shadow run showed `unshare: cannot change root filesystem propagation: Permission denied` despite `SYS_ADMIN` and unconfined seccomp. The chroot-only builder container therefore also uses `--security-opt apparmor=unconfined` so devtools can create its nested mount namespace. This does not apply to legacy builds; `--privileged` and host-sensitive mounts are not used. This is the smallest tested capability set in the current implementation, not proof that every individual syscall needs it. A narrowed custom seccomp profile has **not** been validated; tracking it as follow-up is safer than guessing an allowlist that breaks `devtools` mount behavior.
 
 ### Baseline refresh and cache monitoring
 
