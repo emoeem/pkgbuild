@@ -95,6 +95,8 @@ grep -Fq -- 'systemd-nspawn --link-journal=no "$@"' "$root/scripts/build-in-clea
     || fail 'clean-chroot does not disable systemd-nspawn host journal linking'
 grep -Fq -- 'PATH="$nspawn_wrapper_dir:/usr/lib/ccache/bin:$PATH"' "$root/scripts/build-in-clean-chroot.sh" \
     || fail 'clean-chroot nspawn wrapper is not ahead of the system PATH'
-grep -Fq -- 'rm -rf -- "$work_root" "$nspawn_wrapper_dir"' "$root/scripts/build-in-clean-chroot.sh" \
+grep -Fq -- 'cleanup() { rm -rf -- "${cleanup_paths[@]}"; }' "$root/scripts/build-in-clean-chroot.sh" \
     || fail 'clean-chroot does not clean up the temporary nspawn wrapper'
+grep -Fq -- 'cleanup_paths+=("$work_root")' "$root/scripts/build-in-clean-chroot.sh" \
+    || fail 'clean-chroot work root is not registered for cleanup'
 printf '%s\n' 'All build regression tests passed.'
