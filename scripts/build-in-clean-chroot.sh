@@ -73,7 +73,7 @@ if [[ "$cache_fs" == btrfs ]]; then
     else
         mkdir -p "$baseline"
         echo "Creating clean CachyOS-v3 chroot baseline $fingerprint (btrfs cache uses an archive)"
-        base_packages=(base-devel gcc-objc ccache)
+        base_packages=(base-devel gcc-objc ccache cachyos-mirrorlist cachyos-v3-mirrorlist)
         if [[ "$builder_flavor" == 1 ]]; then base_packages+=(cuda gcc15); fi
         mkarchroot -C "$base_config" -c "$cache_dir/pacman" "$baseline/root" "${base_packages[@]}"
         install -d "$baseline/root/etc/makepkg.conf.d"
@@ -96,7 +96,7 @@ else
     if [[ ! -f "$baseline/FINGERPRINT" || ! -x "$baseline/root/usr/bin/bash" ]]; then
         rm -rf "$baseline/root"
         echo "Creating clean CachyOS-v3 chroot baseline $fingerprint"
-        base_packages=(base-devel gcc-objc ccache)
+        base_packages=(base-devel gcc-objc ccache cachyos-mirrorlist cachyos-v3-mirrorlist)
         if [[ "$builder_flavor" == 1 ]]; then base_packages+=(cuda gcc15); fi
         mkarchroot -C "$base_config" -c "$cache_dir/pacman" "$baseline/root" "${base_packages[@]}"
         install -d "$baseline/root/etc/makepkg.conf.d"

@@ -17,7 +17,7 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn('cleanup_paths+=("$work_root")', script)
         self.assertIn('trap cleanup EXIT INT TERM', script)
         self.assertIn('makechrootpkg -c -u', script)
-        self.assertIn('base_packages=(base-devel gcc-objc ccache)', script)
+        self.assertIn('base_packages=(base-devel gcc-objc ccache cachyos-mirrorlist cachyos-v3-mirrorlist)', script)
         self.assertIn('export CARGO_HOME=/cache/cargo', script)
         self.assertIn('pacman.conf.pkgbuild-base', script)
         self.assertIn('base_packages+=(cuda gcc15)', script)
