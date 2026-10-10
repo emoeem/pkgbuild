@@ -101,7 +101,7 @@ jobs:
 
       - name: Upload build plan
         if: always()
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-plan-${{ github.run_id }}
           path: build-plan/
@@ -357,7 +357,7 @@ jobs:
 
       - name: Upload build report
         if: failure()
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-report-${{ matrix.package }}-${{ github.run_id }}
           path: build-report/
@@ -379,7 +379,7 @@ jobs:
           tar --list --file "artifact/${PACKAGE_NAME}.tar"
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: built-${{ matrix.package }}-${{ github.run_id }}
           path: artifact/${{ matrix.package }}.tar
