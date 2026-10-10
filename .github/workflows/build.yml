@@ -297,20 +297,17 @@ jobs:
             "$BUILDER_IMAGE" bash -lc 'shopt -s nullglob; packages=(/repo/*.pkg.tar.zst); if (( ${#packages[@]} > 0 )); then rm -f /repo/emoeem.db* /repo/emoeem.files*; repo-add --remove /repo/emoeem.db.tar.gz "${packages[@]}"; fi'
           container_security_args=()
           if [[ "$build_mode" == chroot ]]; then
-            # systemd-nspawn needs a writable payload cgroup. Expose only this
-            # GitHub Actions job's cgroup subtree, not the whole host cgroup tree.
-            runner_cgroup="$(awk -F: '$1 == "0" { print $3; exit }' /proc/self/cgroup)"
-            if [[ -z "$runner_cgroup" || "$runner_cgroup" == / ]]; then
-              echo "Cannot safely scope the clean-chroot cgroup mount (runner cgroup: ${runner_cgroup:-missing})." >&2
-              exit 1
-            fi
-            runner_cgroup_dir="/sys/fs/cgroup${runner_cgroup%/}"
+            # systemd-nspawn needs a writable payload cgroup. Put the builder
+            # under the dedicated machine.slice and expose only that subtree.
+            # Never make the entire host cgroup tree writable.
+            runner_cgroup_parent=machine.slice
+            runner_cgroup_dir="/sys/fs/cgroup/$runner_cgroup_parent"
             if [[ ! -d "$runner_cgroup_dir" ]]; then
-              echo "Runner cgroup path is not mounted: $runner_cgroup_dir" >&2
+              echo "Dedicated clean-chroot cgroup slice is not mounted: $runner_cgroup_dir" >&2
               exit 1
             fi
-            echo "Clean-chroot cgroup delegation is scoped to $runner_cgroup"
-            container_security_args+=(--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cgroup-parent="$runner_cgroup" --cgroupns=host --volume "$runner_cgroup_dir:$runner_cgroup_dir:rw")
+            echo "Clean-chroot cgroup delegation is scoped to $runner_cgroup_parent"
+            container_security_args+=(--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cgroup-parent="$runner_cgroup_parent" --cgroupns=host --volume "$runner_cgroup_dir:$runner_cgroup_dir:rw")
           fi
           docker run --rm "${container_security_args[@]}" \
             --shm-size 2g \
