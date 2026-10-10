@@ -197,7 +197,7 @@ jobs:
           echo "value=$(tr -d '[:space:]' < .github/builder/generation)" >> "$GITHUB_OUTPUT"
 
       - name: Restore pacman package cache
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/pkgbuild/pacman
           key: pacman-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'scripts/build-in-arch.sh') }}
@@ -205,7 +205,7 @@ jobs:
             pacman-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-
 
       - name: Restore VCS/source cache
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/pkgbuild/sources
           key: sources-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-${{ hashFiles('scripts/build-in-arch.sh', 'scripts/validate-source-cache.sh') }}
@@ -213,7 +213,7 @@ jobs:
             sources-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-
 
       - name: Restore Cargo cache
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/pkgbuild/cargo
           key: cargo-v3-${{ steps.generation.outputs.value }}-${{ hashFiles('.github/builder/Dockerfile') }}
@@ -221,7 +221,7 @@ jobs:
             cargo-v3-${{ steps.generation.outputs.value }}-
 
       - name: Restore ccache
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/pkgbuild/ccache
           key: ccache-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'scripts/build-in-arch.sh') }}
