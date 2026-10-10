@@ -56,6 +56,8 @@ PACKAGE_NAME=linuxqq-clipsync-git PATH="$tmp/bin:$PATH" bash "$script" "$tmp/new
 grep -q 'UPGRADE_PATH=PASS: linuxqq-clipsync-git 1.0-1' "$tmp/normal.out"
 grep -q 'pacman -U --noconfirm /tmp/old.pkg.tar.zst' "$MOCK_LOG"
 # Replacement semantics: upstream sing-box is installed and must disappear when sing-box-ebpf is selected.
+# Remove the previous linuxqq fixture so the script cannot accidentally select it first.
+rm -f "$tmp/new"/*.pkg.tar.zst
 make_pkg "$tmp/new" sing-box-ebpf 2.0-1
 PACKAGE_NAME=sing-box-ebpf PATH="$tmp/bin:$PATH" bash "$script" "$tmp/new" "$tmp/old" "$tmp/cache" > "$tmp/replace.out"
 grep -q 'Replacement path passed' "$tmp/replace.out"
