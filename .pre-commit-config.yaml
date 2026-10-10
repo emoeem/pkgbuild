@@ -1,0 +1,15 @@
+# 给用 pre-commit 框架的人准备的入口：钩子本体（.githooks/pre-commit +
+# scripts/install-git-hooks.sh）不依赖任何第三方包，这份配置只是把同一个脚本
+# 挂到 pre-commit 上，方便已经装了 https://pre-commit.com 的人复用。
+#
+# 用法：
+#   pipx install pre-commit && pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: emoeem-static-checks
+        name: emoeem static checks (same gate as check.yml)
+        entry: scripts/run-static-checks.sh
+        language: system
+        pass_filenames: false
+        always_run: true

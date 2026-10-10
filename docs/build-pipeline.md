@@ -54,6 +54,19 @@
 
 最后一行恒为 `SUMMARY packages=<n> errors=<n>`。与之互补的 `scripts/audit-packages.sh`、`scripts/check-package.sh` 需要 makepkg（在 builder 容器内运行），负责 `.SRCINFO` 新鲜度等离线无法判定的部分。
 
+### 本地入口：pre-commit 与 CI 共用同一份静态清单
+
+`scripts/run-static-checks.sh` 是 check.yml integration job 在容器步骤之前那一半的**唯一**清单：manifest 门禁、依赖图测试、ELF SONAME 故障注入、workflow 镜像不变量、AUR 依赖兜底、构建回归（`tests/test-build-regressions.sh`，此前只写在 README 里、CI 从不运行）、shell 语法、shellcheck（`--severity=warning`，与 per-package job 一致）、`py_compile`。check.yml 直接调用它，`.githooks/pre-commit` 也直接调用它，所以「本地提交绿了」和「CI 那一道静态关卡绿了」是同一件事，而不是两份会漂移的清单；新增检查只能加进这个脚本。
+
+两点设计上的取舍：
+
+- 检查失败会**全部跑完**再退出 1，并把失败项名字列出来；缺工具（`shellcheck`/`python3` 找不到）是响亮的失败而不是静默跳过，`--only` 选不出任何检查也直接报错退出 2——否则一个被撞坏的 `PATH` 就能把整道关卡变成「passed (0/10)」。
+- 脚本自身只用 shell 内建命令解析参数和定位仓库根目录（不用 `dirname`/`tr`），同样的理由：门禁不能因为环境缺了某个基础工具而静默放行。
+
+一次性接线：`scripts/install-git-hooks.sh`（执行 `git config core.hooksPath .githooks`，撤销用 `git config --unset core.hooksPath`）。单次绕过：`EMO_SKIP_STATIC_CHECKS=1 git commit ...` 或 `git commit --no-verify`。已装 pre-commit 框架的人可以直接用 `.pre-commit-config.yaml`（钩子本体不依赖任何第三方包）。整套约十秒，不需要容器、makepkg 或网络；需要容器的那部分（`.SRCINFO` 新鲜度、完整 audit、真实 `repo-add` 集成）仍在同一 job 的后续步骤里运行。
+
+`tests/test-static-checks.sh` 守护这条等价关系本身：清单缩水或多出未实现的名字、检查失败被吞掉、缺工具静默跳过、`--only` 顺手跑全量、check.yml 又抄一份内联清单、`.pre-commit-config.yaml` 指向别处——都会让它失败。它刻意**不**列入 `run-static-checks.sh` 的清单（否则钩子会递归），由 check.yml 单独一步运行。
+
 ## 4. fzf 管理界面
 
 `manage.sh` 新增「仓库状态总览」，在不离开终端的情况下展示：
@@ -72,6 +85,11 @@
 本地可运行：
 
 ```bash
+# 静态检查的统一入口：与 check.yml integration job 的静态部分同一份清单，
+# 也是 .githooks/pre-commit 调用的东西（下面单条命令都被它覆盖）
+./scripts/run-static-checks.sh
+bash tests/test-static-checks.sh   # 守护上面这条例外的等价关系
+
 python3 scripts/check-package-manifests.py
 python3 tests/test_package_manifests.py
 python3 tests/test_select_packages.py
@@ -79,7 +97,7 @@ python3 tests/test_select_packages.py
 bash tests/test_repository.sh
 bash tests/test-cachyos-environment.sh base
 bash -n scripts/*.sh client/install.sh manage.sh tests/*.sh
-python3 -m py_compile scripts/select-packages.py tests/test_select_packages.py
+python3 -m py_compile scripts/*.py tests/*.py
 ./scripts/check-package.sh
 ```
 

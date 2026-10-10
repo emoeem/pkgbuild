@@ -16,6 +16,7 @@ on:
       - "scripts/**"
       - "tests/**"
       - "config/**"
+      - ".githooks/**"
       - ".github/builder/**"
       - ".github/workflows/check.yml"
       # tests/test_workflow_images.py asserts invariants of these two, so an
@@ -65,21 +66,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-      - name: Run dependency graph tests
-        run: python tests/test_select_packages.py
-      - name: Run ELF SONAME fault-injection test
-        run: bash tests/test_elf_soname.sh
-      - name: Run workflow image tests
-        run: python tests/test_workflow_images.py
-      - name: Run AUR dependency fallback test
-        run: bash tests/test-aur-dependency-fallback.sh
-      # Manifest policy runs before any container is pulled: a package that
-      # declares no update source, or whose metadata cannot be parsed, should
-      # fail in seconds on the bare runner instead of minutes into a job.
-      - name: Check package manifest policy
-        run: python3 scripts/check-package-manifests.py
-      - name: Run package manifest tests
-        run: python3 tests/test_package_manifests.py
+      # The static half of this job is one script, and it is the same script the
+      # git pre-commit hook runs (.githooks/pre-commit): "green locally" and
+      # "green in CI" are the same list of checks, by construction. It also
+      # runs before any container is pulled, so a package with no update source
+      # or an unparsable .SRCINFO fails in seconds instead of minutes into a
+      # job. Add checks to scripts/run-static-checks.sh, not here.
+      - name: Run static checks
+        run: bash scripts/run-static-checks.sh
+      # Guards that equivalence: the check list, failure propagation, and the
+      # hook/CI wiring itself.
+      - name: Run static check harness tests
+        run: bash tests/test-static-checks.sh
       - name: Run package audit in prepared builder
         shell: bash
         run: |
