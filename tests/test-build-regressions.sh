@@ -99,4 +99,8 @@ grep -Fq -- 'cleanup() { rm -rf -- "${cleanup_paths[@]}"; }' "$root/scripts/buil
     || fail 'clean-chroot does not clean up the temporary nspawn wrapper'
 grep -Fq -- 'cleanup_paths+=("$work_root")' "$root/scripts/build-in-clean-chroot.sh" \
     || fail 'clean-chroot work root is not registered for cleanup'
+grep -Fq -- '--cgroupns=host --volume "$runner_cgroup_dir:$runner_cgroup_dir:rw"' "$root/.github/workflows/build.yml" \
+    || fail 'clean-chroot does not scope writable cgroup access to the current job'
+grep -Fq -- '[[ -z "$runner_cgroup" || "$runner_cgroup" == / ]]' "$root/.github/workflows/build.yml" \
+    || fail 'clean-chroot does not reject an unsafe unscoped cgroup mount'
 printf '%s\n' 'All build regression tests passed.'
