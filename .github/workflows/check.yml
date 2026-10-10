@@ -71,6 +71,8 @@ jobs:
         run: bash tests/test_elf_soname.sh
       - name: Run workflow image tests
         run: python tests/test_workflow_images.py
+      - name: Run AUR dependency fallback test
+        run: bash tests/test-aur-dependency-fallback.sh
       # Manifest policy runs before any container is pulled: a package that
       # declares no update source, or whose metadata cannot be parsed, should
       # fail in seconds on the bare runner instead of minutes into a job.
