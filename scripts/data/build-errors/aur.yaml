@@ -1,0 +1,30 @@
+# AUR synchronisation and overlay maintenance failures.
+rules:
+  - id: aur-sync-failed
+    category: SourceError
+    stage: fetch
+    summary: The AUR source could not be synchronised.
+    confidence: medium
+    patterns:
+      - "fatal: unable to access"
+      - "fatal: could not read Username"
+    root_cause: "AUR repository unavailable"
+    action:
+      kind: retry
+      safe_auto_fix: none
+      retry: true
+  - id: overlay-anchor-missing
+    category: PKGBuildError
+    stage: prepare
+    summary: An overlay could not find its anchor in the upstream PKGBUILD.
+    confidence: high
+    patterns:
+      - "overlay anchor not found"
+      - "could not apply overlay"
+      - "anchor count"
+      - "overlay .* is stale"
+    root_cause: "the upstream PKGBUILD changed shape; the overlay anchor is stale"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

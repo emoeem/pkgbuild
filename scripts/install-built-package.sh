@@ -38,7 +38,7 @@ mapfile -t dependencies < <(
 )
 
 if (( ${#dependencies[@]} > 0 )); then
-    "$aur_helper" -S --needed --asdeps --noconfirm "${dependencies[@]}"
+    "$aur_helper" -S --needed --asdeps --noconfirm -- "${dependencies[@]}"
 fi
 
-sudo pacman -U --noconfirm "${package_files[@]}"
+sudo pacman -U --noconfirm -- "${package_files[@]}"

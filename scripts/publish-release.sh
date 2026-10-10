@@ -53,6 +53,7 @@ is_managed_asset() {
         "${repository_name}.files.sig"
         "${repository_name}.conf"
         "${repository_name}-key.asc"
+        "${repository_name}-abi-manifest.txt"
         "SHA256SUMS"
     )
     local name

@@ -11,8 +11,16 @@
 - `depends` 中的版本约束会先归一化为依赖名。
 - Split package 的多个 `pkgname` 也被视为同一个 package base 的 provider。
 - `scripts/overlays/<package>.sh` 变化只触发对应 package。
-- `scripts/build-in-arch.sh` 和 `config/` 变化仍会触发完整重建。
+- `config/**`（构建环境与本地性能档）变化触发完整重建；`scripts/build-in-arch.sh`
+  等构建脚本变化**不**触发 package 重建（它们不改变产物，只改变执行方式）。
+  这一点由 `tests/test_select_packages.py` 明确断言，文档与代码以此为准。
+- 共享库关系 `provides = libfoo.so=2-64` 与 `depends = libfoo.so=2-64` 按完整
+  关系名匹配，并额外登记链接器拼写 `libfoo.so.2`，因此 SONAME 依赖也能连上提供者。
 - `--root` 参数允许在隔离的 Git fixture 中测试选择逻辑。
+
+构建决策不再散落在选择脚本里：`scripts/build-planner.py` 是唯一决策点，
+输出 changed / affected / rebuild / skipped 与逐包 reason；`scripts/build-dag.py`
+在此基础上给出波次与资源槽位。CI 的 `select` job 把两者的输出写进 step summary。
 
 因此普通文档修改不会触发 package build，而影响依赖 ABI/API 的包会向下游传播。
 
@@ -29,7 +37,7 @@
 
 使用预构建镜像后，package job 不再重复执行 CachyOS repository bootstrap 和 yay bootstrap。`build-in-arch.sh` 的本地路径要求宿主机本身是 CachyOS 且启用 `cachyos-v3`，不会再在 Arch 容器里临时拼装 CachyOS 仓库。
 
-依赖漂移检测（`dependency-drift.yml`）和 soname 复查（`maintenance.yml`）里的检测容器也拉同一份镜像（`BUILDER_IMAGE`），不再从 Docker Hub 匿名拉 `docker.io/cachyos/cachyos-v3`：Docker Hub 的未认证拉取按 runner 出口 IP 限速，共享 runner 会直接拿到 `toomanyrequests`（maintenance run 37989749507 就是这么失败的，`docker run` exit 125，而检测器本身没有任何问题）。GHCR 的匿名拉取不需要凭据也不吃这个限速；builder 镜像本来就基于同一个 CachyOS-v3 镜像并已配好 chaotic-aur（`[chaotic-aur]` 是该文件最后一段，所以 `remove_chaotic_section` 仍然安全），检测器的 provider 集合只多不少。`setup-container-repos.sh` 因此只在容器里还没有 `[chaotic-aur]` 段时才追加配置：重复声明会让 pacman 每次都报 `could not register 'chaotic-aur' database (database already registered)`，而且生效的始终是第一段。
+ABI watch（`dependency-drift.yml`）和 maintenance（`maintenance.yml`）里的检测容器也拉同一份镜像（`BUILDER_IMAGE`），不再从 Docker Hub 匿名拉 `docker.io/cachyos/cachyos-v3`：Docker Hub 的未认证拉取按 runner 出口 IP 限速，共享 runner 会直接拿到 `toomanyrequests`（maintenance run 37989749507 就是这么失败的，`docker run` exit 125，而检测器本身没有任何问题）。GHCR 的匿名拉取不需要凭据也不吃这个限速；builder 镜像本来就基于同一个 CachyOS-v3 镜像并已配好 chaotic-aur（`[chaotic-aur]` 是该文件最后一段，所以 `remove_chaotic_section` 仍然安全），检测器的 provider 集合只多不少。`setup-container-repos.sh` 因此只在容器里还没有 `[chaotic-aur]` 段时才追加配置：重复声明会让 pacman 每次都报 `could not register 'chaotic-aur' database (database already registered)`，而且生效的始终是第一段。
 
 ## 3. Repository Integration Tests
 
@@ -132,7 +140,7 @@ CachyOS/pacman 在 Podman 容器中执行 `ldconfig` 和 systemd hook 时会尝�
 - `/cache/sources/<package>`：按目标 package 隔离的 makepkg `SRCDEST`，尤其用于 VCS source。
 - VCS source 使用独立的 URL 身份校验；发现同名但不同远程仓库的缓存会在构建前自动清除，避免 `xclip` 一类 basename 冲突。
 
-GitHub Actions 使用 `actions/cache` 恢复 `.cache/pkgbuild`，缓存 key 按 CachyOS-v3、standard/CUDA builder 和 builder 定义区分。缓存失效只会增加下载时间，不会跳过依赖解析或 checksum 验证。
+GitHub Actions 使用 `actions/cache` 恢复 `.cache/pkgbuild`，缓存 key 按 CachyOS-v3、standard/CUDA builder 和 builder 定义区分；key 失效时 `restore-keys` 仍按 flavor 前缀恢复最近的缓存。缓存失效只会增加下载时间，不会跳过依赖解析或 checksum 验证。下载的发布仓库资产存放在缓存目录之外的 `localrepo/`，因此不会被打进缓存快照。
 
 ### CUDA Builder
 
@@ -164,7 +172,7 @@ Builder 通过 `/etc/makepkg.conf.d/pkgbuild-aria2.conf` 为 HTTP/HTTPS/FTP sour
 
 ### Phase 2：全量 PKGBUILD 审计
 
-新增 `scripts/audit-packages.sh`，对当前 12 个有效 PKGBUILD 做全量元数据、`.SRCINFO`、架构、AUR 元数据和内部 provider / dependency 检查。对于 Stable / Git、CUDA 等有意提供同一虚拟包的替代包，只有存在明确冲突关系时才允许共享 provider。
+新增 `scripts/audit-packages.sh`，对当前 11 个有效 PKGBUILD 做全量元数据、`.SRCINFO`、架构、AUR 元数据和内部 provider / dependency 检查。对于 Stable / Git、CUDA 等有意提供同一虚拟包的替代包，只有存在明确冲突关系时才允许共享 provider。
 
 新增 `tests/test-package-audit.sh` 回归测试，并把全量审计加入 `check.yml` 的 integration job。管理 TUI 也新增「审计全部软件包」入口。
 

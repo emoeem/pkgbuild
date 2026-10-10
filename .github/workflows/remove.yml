@@ -27,6 +27,7 @@ jobs:
   remove:
     name: Remove repository packages
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     permissions:
       contents: write
     concurrency:
@@ -94,6 +95,21 @@ jobs:
             "$output_file"
           sort -u -o "$output_file" "$output_file"
 
+          # Never remove a package that is still published from packages/:
+          # a stale removal record (e.g. a package that was removed once and
+          # later re-added) would otherwise delete it again on the next
+          # infrastructure replay.
+          filtered_file="$GITHUB_WORKSPACE/remove-packages-filtered.txt"
+          : > "$filtered_file"
+          while IFS= read -r package_name; do
+            if [[ -f "packages/$package_name/.SRCINFO" ]]; then
+              echo "Skipping removal of $package_name: still present in packages/" >&2
+            else
+              printf '%s\n' "$package_name" >> "$filtered_file"
+            fi
+          done < "$output_file"
+          mv "$filtered_file" "$output_file"
+
           while IFS= read -r package_name; do
             if [[ ! "$package_name" =~ ^[A-Za-z0-9@._+-]+$ ]]; then
               echo "Invalid package name: $package_name" >&2
@@ -142,17 +158,45 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p incoming published/x86_64
+          # 密码经 0600 文件传入容器，而不是 --env（宿主机 ps 可见）。
+          install -m0600 /dev/null repository-passphrase
+          printf '%s' "$REPOSITORY_KEY_PASSPHRASE" > repository-passphrase
           docker run --rm \
             --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/incoming:/incoming:ro" \
             --volume "$GITHUB_WORKSPACE/remove-packages.txt:/remove-packages:ro" \
             --volume "$GITHUB_WORKSPACE/published/x86_64:/repository" \
             --volume "$GITHUB_WORKSPACE/repository-key.asc:/run/secrets/repository-key.asc:ro" \
+            --volume "$GITHUB_WORKSPACE/repository-passphrase:/run/secrets/repository-passphrase:ro" \
             --env "REPOSITORY_NAME=${REPOSITORY_NAME}" \
             --env "REPOSITORY_SERVER=https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}" \
-            --env "REPOSITORY_KEY_PASSPHRASE=$REPOSITORY_KEY_PASSPHRASE" \
+            --env "REPOSITORY_KEY_PASSPHRASE_FILE=/run/secrets/repository-passphrase" \
             docker.io/library/archlinux:base-devel \
             bash /workspace/scripts/create-repository.sh
+          rm -f repository-passphrase
+
+      - name: Generate ABI manifest
+        if: steps.removals.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/published/x86_64:/repository" \
+            --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
+            --env "REPOSITORY_NAME=${REPOSITORY_NAME}" \
+            docker.io/library/archlinux:base-devel \
+            bash /workspace/scripts/generate-abi-manifest.sh /repository
+
+      - name: Verify repository integrity
+        if: steps.removals.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/published/x86_64:/repository:ro" \
+            --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
+            docker.io/library/archlinux:base-devel \
+            bash -c 'bash /workspace/scripts/verify-repository.sh /repository'
 
       - name: Publish repository release
         if: steps.removals.outputs.changed == 'true'

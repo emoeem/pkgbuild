@@ -21,6 +21,7 @@ jobs:
   publish:
     name: Publish ${{ matrix.variant }} builder
     runs-on: ubuntu-24.04
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +35,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Read builder generation
+        id: generation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          generation="$(tr -d '[:space:]' < .github/builder/generation)"
+          [[ "$generation" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid builder generation: $generation" >&2; exit 1; }
+          echo "value=$generation" >> "$GITHUB_OUTPUT"
+          echo "Builder generation: $generation"
+
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -48,7 +59,13 @@ jobs:
           push: true
           build-args: |
             CUDA_BUILDER=${{ matrix.cuda }}
+            BUILDER_GENERATION=${{ steps.generation.outputs.value }}
           tags: ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:${{ matrix.tag }}
+          # Registry cache instead of actions/cache: image layers are far too
+          # large for the 10 GiB actions cache and would evict the build
+          # caches used by build.yml.
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:buildcache-${{ matrix.variant }}
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:buildcache-${{ matrix.variant }},mode=max
       - name: Verify builder environment
         shell: bash
         env:

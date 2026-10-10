@@ -34,18 +34,9 @@ class SelectPackagesTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         (self.root / "packages").mkdir()
-        environment = git_environment()
-        subprocess.run(["git", "init", "-q", str(self.root)], check=True, env=environment)
-        subprocess.run(
-            ["git", "-C", str(self.root), "config", "user.email", "test@example.invalid"],
-            check=True,
-            env=environment,
-        )
-        subprocess.run(
-            ["git", "-C", str(self.root), "config", "user.name", "test"],
-            check=True,
-            env=environment,
-        )
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, env=git_environment())
+        subprocess.run(["git", "-C", str(self.root), "config", "user.email", "test@example.invalid"], check=True, env=git_environment())
+        subprocess.run(["git", "-C", str(self.root), "config", "user.name", "test"], check=True, env=git_environment())
 
     def tearDown(self):
         self.temp.cleanup()
@@ -66,12 +57,6 @@ class SelectPackagesTests(unittest.TestCase):
             ["git", "-C", str(path), "rev-parse", "HEAD"], text=True, env=git_environment()
         ).strip()
 
-    def commit(self, message):
-        environment = git_environment()
-        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True, env=environment)
-        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", message], check=True, env=environment)
-        return self.head(self.root)
-
     def install_lister(self):
         """Ship the real .rebuild-on parser into the fixture.
 
@@ -86,6 +71,13 @@ class SelectPackagesTests(unittest.TestCase):
         (self.root / "packages" / package / ".rebuild-on").write_text(
             "\n".join(lines) + "\n", encoding="utf-8"
         )
+
+    def commit(self, message):
+        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True, env=git_environment())
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", message], check=True, env=git_environment())
+        return subprocess.check_output(
+            ["git", "-C", str(self.root), "rev-parse", "HEAD"], text=True, env=git_environment()
+        ).strip()
 
     def select(self, before, after):
         return MODULE.select(self.root, "changed", before, after)
@@ -140,6 +132,17 @@ class SelectPackagesTests(unittest.TestCase):
         (self.root / "scripts/build-in-arch.sh").write_text("changed\n", encoding="utf-8")
         after = self.commit("build infrastructure")
         self.assertEqual(self.select(before, after), [])
+
+    def test_zero_before_sha_rebuilds_everything(self):
+        self.add_package("foo")
+        self.add_package("bar")
+        after = self.commit("base")
+        self.assertEqual(self.select("0" * 40, after), ["bar", "foo"])
+
+    def test_empty_before_rebuilds_everything(self):
+        self.add_package("foo")
+        after = self.commit("base")
+        self.assertEqual(self.select("", after), ["foo"])
 
     def test_config_change_rebuilds_everything(self):
         self.add_package("foo")
@@ -196,7 +199,8 @@ class SelectPackagesTests(unittest.TestCase):
         before = self.commit("base")
         (self.root / "packages/foo/PKGBUILD").write_text("changed\n", encoding="utf-8")
         after = self.commit("change foo")
-        with self.assertRaises(SystemExit):
+        # pkgbuild_lib raises SourceInfoError (a RuntimeError), not SystemExit.
+        with self.assertRaises((RuntimeError, SystemExit)):
             self.select(before, after)
 
     def test_fixture_git_ignores_an_inherited_git_directory(self):

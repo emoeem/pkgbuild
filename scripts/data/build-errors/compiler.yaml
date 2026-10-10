@@ -1,0 +1,59 @@
+# CompilerError: the compiler rejected the code.
+rules:
+  - id: werror-promoted
+    category: CompilerError
+    stage: compile
+    summary: A new compiler promotes a warning into an error.
+    confidence: medium
+    patterns:
+      - "error: .*[-]Werror"
+      - "cc1plus: all warnings being treated as errors"
+      - "warnings being treated as errors"
+      - "treated as errors"
+    root_cause: "warning promoted to error by -Werror"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: missing-header
+    category: CompilerError
+    stage: compile
+    summary: A required header is missing from the build environment.
+    confidence: high
+    patterns:
+      - "fatal error: .*: No such file or directory"
+    extract:
+      header: "fatal error: ([A-Za-z0-9_./+-]+[.]h): No such file"
+    root_cause: "missing header {header}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: compiler-internal-error
+    category: CompilerError
+    stage: compile
+    summary: The compiler itself crashed.
+    confidence: medium
+    patterns:
+      - "internal compiler error"
+      - "Please submit a full bug report"
+      - "Segmentation fault.*cc1"
+    root_cause: "compiler internal error"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: true
+  - id: unsupported-flag
+    category: CompilerError
+    stage: configure
+    summary: A compiler flag is not supported by the selected toolchain.
+    confidence: medium
+    patterns:
+      - "unrecognized command[- ]line option"
+      - "unknown argument"
+      - "error: unrecognized command line option"
+    root_cause: "unsupported compiler flag"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

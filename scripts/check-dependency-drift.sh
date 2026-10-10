@@ -13,6 +13,7 @@ stale_file="${3:-}"
 
 if [[ -n "${LOCAL_REPO_DIR:-}" ]]; then
     local_copy="$(mktemp -d)"
+    trap 'rm -rf "$local_copy"' EXIT
     cp -a "${LOCAL_REPO_DIR}/." "$local_copy/"
     shopt -s nullglob
     local_packages=("$local_copy"/*.pkg.tar.zst)
@@ -70,12 +71,20 @@ check_dep() { # <buildinfo> <package-name> <dependency> <label>
     local buildinfo="$1" name="$2" dep="$3" label="$4" old new
     old="$(recorded_version "$buildinfo" "$dep")"
     new="$(current_version "$dep")"
-    if [[ -n "$old" && -n "$new" && "$old" != "$new" ]]; then
+    # Nothing was recorded for this dependency, so there is nothing to compare;
+    # counting it would turn "not covered" into "verified".
+    [[ -n "$old" ]] || return 1
+    compared=$((compared + 1))
+    if [[ -n "$new" && "$old" != "$new" ]]; then
+        stale=$((stale + 1))
         printf 'STALE %s: %s %s changed %s -> %s\n' "$name" "$label" "$dep" "$old" "$new"
         [[ -n "$stale_file" ]] && printf '%s\n' "$name" >> "$stale_file"
         return 0
     fi
-    [[ -n "$new" ]] || return 2
+    if [[ -z "$new" ]]; then
+        unresolved_count=$((unresolved_count + 1))
+        return 2
+    fi
     return 1
 }
 
@@ -88,12 +97,18 @@ check_dep() { # <buildinfo> <package-name> <dependency> <label>
 # no longer lists it, which is exactly the case that used to go silent.
 list_triggers="${root}/scripts/list-rebuild-triggers.sh"
 
+packages=0
+compared=0
+stale=0
+unresolved_count=0
+
 for pkg in "$repo_dir"/*.pkg.tar.zst; do
     [[ -e "$pkg" ]] || continue
     name="$(bsdtar -xOf "$pkg" .PKGINFO | awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
     buildinfo="$(mktemp)"; bsdtar -xOf "$pkg" .BUILDINFO > "$buildinfo"
     src="${root}/packages/${name}/.SRCINFO"
     [[ -f "$src" ]] || { rm -f "$buildinfo"; continue; }
+    packages=$((packages + 1))
 
     declared=()
     if [[ -f "$list_triggers" ]]; then
@@ -132,3 +147,21 @@ for pkg in "$repo_dir"/*.pkg.tar.zst; do
     fi
     rm -f "$buildinfo"
 done
+
+# This line is what the workflow asserts on: it must appear even when there is
+# nothing to report, because "the detector crashed" and "there really is no
+# drift" are otherwise indistinguishable in the log -- which is exactly how the
+# openvino SONAME drift stayed invisible.
+printf 'SUMMARY packages=%d compared=%d stale=%d unresolved=%d\n' \
+    "$packages" "$compared" "$stale" "$unresolved_count"
+
+if (( compared == 0 )); then
+    printf 'Nothing could be compared: the pacman databases are probably not synced (run pacman -Syu first) or no published package records dependency versions.\n' >&2
+    printf 'Refusing to report "no drift" from an incomplete scan.\n' >&2
+    exit 3
+fi
+
+if (( unresolved_count > 0 )); then
+    printf 'WARNING: %d dependency version(s) could not be resolved against the current repositories; drift may be under-reported.\n' \
+        "$unresolved_count" >&2
+fi

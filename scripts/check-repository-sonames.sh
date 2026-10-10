@@ -171,11 +171,13 @@ report "declared external sonames: ${declared_total} across ${#declared_sonames[
 # Inspect every published package.
 # ---------------------------------------------------------------------------
 declared_errors=0
+scanned=0
 for package_file in "$published"/*.pkg.tar.zst; do
     [[ -e "$package_file" ]] || continue
     pkgname="$(bsdtar -xOf "$package_file" .BUILDINFO 2>/dev/null |
         awk -F ' = ' '$1 == "pkgname" { print $2; exit }')"
     [[ -n "$pkgname" ]] || continue
+    scanned=$((scanned + 1))
 
     declared="$(bsdtar -xOf "$package_file" .PKGINFO .BUILDINFO 2>/dev/null |
         awk -F ' = ' '$1 == "depend" || $1 == "depends" { print $2 }' |
@@ -243,7 +245,20 @@ done
 
 sort -u -o "$out_dir/stale.txt" "$out_dir/stale.txt"
 sort -u -o "$out_dir/orphans.txt" "$out_dir/orphans.txt"
+
+# The SUMMARY line must be there even when the scan is clean: otherwise
+# "the detector crashed / nothing was scanned" and "there really is no drift"
+# look identical to the workflow's assertion.
+stale_unique="$(wc -l < "$out_dir/stale.txt")"
+orphan_unique="$(wc -l < "$out_dir/orphans.txt")"
+printf 'SUMMARY packages=%d stale=%d orphans=%d providers=%d\n' \
+    "$scanned" "$stale_unique" "$orphan_unique" "$provider_count" \
+    >> "$out_dir/report.txt"
 cat "$out_dir/report.txt"
+if (( scanned == 0 )); then
+    printf 'No published package could be inspected; refusing to report a clean scan.\n' >&2
+    exit 3
+fi
 # Exit codes: 0 = clean, 2 = bad usage, 3 = unusable declarations/provider set
 # (refusing to report rather than reporting nonsense), 4 = declarations that no
 # longer match the artifacts (a human has to edit .rebuild-on; no rebuild can

@@ -16,7 +16,9 @@ for elf in "${files[@]}"; do
   [[ -f "$elf" ]] || continue
   [[ "$(head -c 4 "$elf" 2>/dev/null | od -An -tx1 | tr -d ' \n')" == "7f454c46" ]] || continue
   count=$((count + 1))
-  if ldd "$elf" 2>&1 | grep -q 'not found'; then
+  # 不用 grep -q：命中即退出会让超长的 ldd 输出触发 EPIPE，pipefail 把
+  # 「有缺库」翻转成「检查失败」。读完整个输入再判断。
+  if ldd "$elf" 2>&1 | grep 'not found' >/dev/null; then
     printf 'FAIL: unresolved runtime dependency: %s\n' "$elf" >&2
     ldd "$elf" >&2 || true
     failures=$((failures + 1))

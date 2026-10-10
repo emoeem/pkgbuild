@@ -32,29 +32,105 @@ readonly default_make_jobs
 
 usage() {
     cat <<EOF
-用法：$(basename "$0") [--no-push]
+用法：$(basename "$0") [选项] [动作代号]
 
-打开基于 fzf 的私人软件仓库管理界面。
+不带动作代号时打开基于 fzf 的私人软件仓库管理界面。
 
-  --no-push  启动时关闭自动 Git 推送。
+  --no-push   启动时关闭自动 Git 推送（只影响界面里的开关初值）
+  --list      列出所有动作代号（一行一个，制表符分隔说明），给脚本/补全用
+  -h, --help  显示这份帮助
+
+给了动作代号就**跳过菜单直接执行那一个动作**，例如：
+
+  $(basename "$0") dashboard    # 仓库状态总览
+  $(basename "$0") doctor       # 运行环境自检
+  $(basename "$0") build        # 在 GitHub 上构建软件包（里面还会用 fzf 选包）
+
+代号见 --list。需要选包/确认的动作照样会用 fzf 和交互式提问，所以请在终端里跑。
 EOF
 }
 
 push_changes=1
-if [[ "${1:-}" == "--no-push" ]]; then
-    push_changes=0
+action_code=''
+
+# 动作表：`代号:函数名:菜单里显示的名字`。
+#
+# **这是唯一一份动作清单** —— 菜单、`--list`、直接点名执行都读它，
+# 所以三边不可能对不上（以前只有菜单那一处 case，脚本没法点名执行）。
+readonly -a manage_actions=(
+    'dashboard:show_dashboard:仓库状态总览'
+    'add-aur:add_aur_package:添加 AUR 软件包'
+    'add-custom:add_custom_package:从自定义 Git 添加软件包'
+    'remove:remove_package:从仓库删除软件包'
+    'sync-aur:sync_aur_sources:在 GitHub 上同步 AUR 源'
+    'build:build_packages:在 GitHub 上构建软件包'
+    'track:track_running_build:跟踪正在运行的构建'
+    'triage:triage_failed_builds:排查失败的构建'
+    'check-local:check_local_packages:检查本地 PKGBUILD'
+    'audit:audit_all_packages:审计全部软件包'
+    'plan:show_build_plan:构建计划与 DAG'
+    'parallel:run_parallel_build:并行构建（本地）'
+    'timing:show_build_timing:构建时序统计'
+    'repair:repair_center:修复中心'
+    'doctor:run_doctor:运行环境自检（doctor）'
+    'updates:check_local_updates:检查本地软件包更新'
+    'update-repo:update_local_repository:更新本地 pacman 仓库'
+    'install:install_repository_package:从仓库安装软件包'
+    'actions:show_recent_actions:查看最近的 GitHub Actions'
+    'pull:pull_main:拉取最新 main 分支'
+)
+
+run_action() {
+    local wanted="$1" entry code function
+    for entry in "${manage_actions[@]}"; do
+        code="${entry%%:*}"
+        [[ "$code" == "$wanted" ]] || continue
+        function="${entry#*:}"
+        function="${function%%:*}"
+        "$function"
+        return $?
+    done
+    printf '不认识的动作代号：%s\n' "$wanted" >&2
+    printf '可用代号：%s --list\n' "$(basename "$0")" >&2
+    return 2
+}
+
+list_actions() {
+    local entry
+    for entry in "${manage_actions[@]}"; do
+        printf '%s\t%s\n' "${entry%%:*}" "${entry##*:}"
+    done
+}
+
+while (( $# > 0 )); do
+    case "$1" in
+        --no-push)
+            push_changes=0
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        --list)
+            list_actions
+            exit 0
+            ;;
+        -*)
+            printf '不认识的选项：%s\n' "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+        *)
+            if [[ -n "$action_code" ]]; then
+                printf '一次只能点名一个动作（已经给了 %s）。\n' "$action_code" >&2
+                usage >&2
+                exit 2
+            fi
+            action_code="$1"
+            ;;
+    esac
     shift
-fi
-
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    usage
-    exit 0
-fi
-
-if (( $# != 0 )); then
-    usage >&2
-    exit 2
-fi
+done
 
 for command_name in git fzf; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -171,6 +247,19 @@ select_one() {
 
     printf '%s\n' "$@" |
         fzf "${fzf_options[@]}" --prompt="${prompt}> "
+}
+
+# 和 `select_one` 一样，但每项是 `值|显示文字`：只显示后半截，返回整行。
+# 主菜单用它 —— 动作表里的代号不该出现在菜单上。
+select_one_keyed() {
+    local prompt="$1"
+    shift
+
+    printf '%s\n' "$@" |
+        fzf "${fzf_options[@]}" \
+            --delimiter='|' \
+            --with-nth=2.. \
+            --prompt="${prompt}> "
 }
 
 select_managed_package() {
@@ -712,6 +801,180 @@ show_recent_actions() {
     gh run view "$run_id" --repo "$github_repository"
 }
 
+run_doctor() {
+    "${repo_root}/scripts/doctor.sh"
+}
+
+show_build_plan() {
+    local selection before after
+    selection="$(
+        select_one '计划范围' \
+            '全部软件包（all）' \
+            '与上一个提交的差异（changed）' \
+            '指定软件包（逗号分隔）' \
+            '取消'
+    )" || return
+    before=""
+    after="HEAD"
+    case "$selection" in
+        取消) return ;;
+        全部软件包*) selection="all" ;;
+        与上一个提交*)
+            selection="changed"
+            before="$(git -C "$repo_root" rev-parse HEAD~1 2>/dev/null || echo '')"
+            after="$(git -C "$repo_root" rev-parse HEAD)"
+            ;;
+        *)
+            selection="$(prompt_value '软件包（逗号分隔）')" || return
+            ;;
+    esac
+    python3 "${repo_root}/scripts/build-planner.py" \
+        --selection "$selection" \
+        --before "${before}" \
+        --after "${after}" \
+        --format text
+    printf '\n'
+    python3 "${repo_root}/scripts/build-dag.py" --format text
+}
+
+run_parallel_build() {
+    local mode
+    mode="$(
+        select_one '并行构建' \
+            '预演（只显示波次，不构建）' \
+            '真实构建（容器 / 本机）' \
+            '取消'
+    )" || return
+    case "$mode" in
+        取消) return ;;
+        预演*) "${repo_root}/scripts/parallel-build.sh" --dry-run ;;
+        *) "${repo_root}/scripts/parallel-build.sh" ;;
+    esac
+}
+
+show_build_timing() {
+    local database="${repo_root}/state/timing-history.jsonl"
+    if [[ ! -f "$database" ]]; then
+        printf '还没有构建时序记录（%s 不存在）。\n' "$database"
+        return 0
+    fi
+    local aggregated
+    aggregated="$(mktemp)"
+    python3 "${repo_root}/scripts/build-timing.py" aggregate --dir /dev/null --out /dev/null >/dev/null 2>&1 || true
+    python3 - "$database" "$aggregated" <<'PY'
+import json, sys
+from datetime import datetime, timezone
+
+records = []
+for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        records.append(json.loads(line))
+    except json.JSONDecodeError:
+        continue
+
+grouped = {}
+for record in records:
+    name = record.get("package", "unknown")
+    entry = grouped.setdefault(name, {"package": name, "runs": 0, "total": 0.0, "status": ""})
+    entry["runs"] += 1
+    entry["total"] += float(record.get("total_seconds") or 0)
+    entry["status"] = record.get("status") or entry["status"]
+
+hits = sum(int((record.get("cache") or {}).get("hits") or 0) for record in records)
+misses = sum(int((record.get("cache") or {}).get("misses") or 0) for record in records)
+json.dump(
+    {
+        "schema": 1,
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "packages": sorted(
+            (
+                {
+                    "package": entry["package"],
+                    "runs": entry["runs"],
+                    "total_seconds": round(entry["total"] / max(entry["runs"], 1), 1),
+                    "last_status": entry["status"],
+                }
+                for entry in grouped.values()
+            ),
+            key=lambda item: item["total_seconds"],
+            reverse=True,
+        ),
+        "totals": {
+            "packages": len(records),
+            "seconds": round(sum(float(record.get("total_seconds") or 0) for record in records), 1),
+            "failures": sum(1 for record in records if record.get("status") != "success"),
+            "cache_hits": hits,
+            "cache_misses": misses,
+            "cache_hit_rate": round(hits / (hits + misses), 4) if hits + misses else None,
+        },
+    },
+    open(sys.argv[2], "w", encoding="utf-8"),
+    indent=2,
+)
+PY
+    python3 "${repo_root}/scripts/build-timing.py" report --db "$aggregated"
+    rm -f "$aggregated"
+}
+
+repair_center() {
+    local mode package_name
+    mode="$(
+        select_one '修复中心' \
+            '分析构建日志' \
+            '对指定软件包尝试自动修复（预演）' \
+            '查看修复历史' \
+            '取消'
+    )" || return
+    case "$mode" in
+        取消) return ;;
+        分析构建日志)
+            local log
+            printf '构建日志路径：'
+            read -r log || return
+            [[ -f "$log" ]] || { printf '日志不存在：%s\n' "$log" >&2; return 1; }
+            package_name="$(prompt_value '软件包名')" || return
+            python3 "${repo_root}/scripts/analyze-build-failure.py" \
+                --package "$package_name" --log "$log"
+            ;;
+        对指定软件包*)
+            local failure
+            package_name="$(select_managed_package)" || return
+            printf 'failure.json 路径：'
+            read -r failure || return
+            [[ -f "$failure" ]] || { printf '文件不存在：%s\n' "$failure" >&2; return 1; }
+            bash "${repo_root}/scripts/auto-repair.sh" \
+                --package "$package_name" \
+                --failure "$failure" \
+                --level "${AUTO_FIX_LEVEL:-1}" \
+                --json
+            ;;
+        查看修复历史)
+            local history="${repo_root}/state/repair-history.jsonl"
+            if [[ -f "$history" ]]; then
+                python3 - "$history" <<'PY'
+import json, sys
+
+lines = [line for line in open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines() if line.strip()]
+for line in lines[-20:]:
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    print(
+        f"{record.get('timestamp', '?'):<21}{record.get('package', '?'):<26}"
+        f"{record.get('strategy', '?'):<20}{record.get('status', '?')}"
+    )
+PY
+            else
+                printf '还没有修复历史。\n'
+            fi
+            ;;
+    esac
+}
+
 show_dashboard() {
     local branch package_count aur_count dirty
     local recent="-" running="-" failed="-"
@@ -736,8 +999,27 @@ show_dashboard() {
     printf '│ 最近 Actions %-46s │\n' "$recent"
     printf '│ 运行中       %-46s │\n' "$running"
     printf '│ 最近失败     %-46s │\n' "$failed"
+
+    local timing_records=0 repair_records=0
+    # 注意别写成 `wc -l <文件 2>/dev/null`：那个 `2>/dev/null` 管的是 wc，
+    # 而「文件不存在」是 **shell 的重定向**报出来的，照样漏到屏幕上
+    # （实测 dashboard 会多两行「没有那个文件或目录」）。
+    if [[ -f "$repo_root/state/timing-history.jsonl" ]]; then
+        timing_records="$(wc -l <"$repo_root/state/timing-history.jsonl")"
+    fi
+    if [[ -f "$repo_root/state/repair-history.jsonl" ]]; then
+        repair_records="$(wc -l <"$repo_root/state/repair-history.jsonl")"
+    fi
+    printf '│ 构建时序记录 %-46s │\n' "$timing_records 条"
+    printf '│ 自动修复记录 %-46s │\n' "$repair_records 条"
     printf '╰──────────────────────────────────────────────────────────────╯\n'
 }
+
+# 点名执行：跳过菜单，直接跑那一个动作（给脚本和工具箱用）。
+if [[ -n "$action_code" ]]; then
+    run_action "$action_code"
+    exit $?
+fi
 
 while true; do
     branch="$(git -C "$repo_root" branch --show-current)"
@@ -754,75 +1036,30 @@ while true; do
         push_label='关闭'
     fi
 
+    # 菜单项由上面的动作表生成（`代号|菜单文字`），所以加一个动作只改那一处。
+    menu_items=()
+    for action_entry in "${manage_actions[@]}"; do
+        action_menu_code="${action_entry%%:*}"
+        action_menu_label="${action_entry##*:}"
+        # 「从仓库安装」那一条要带上仓库名，才是给用户看的
+        if [[ "$action_menu_code" == 'install' ]]; then
+            action_menu_label="$install_label"
+        fi
+        menu_items+=("${action_menu_code}|${action_menu_label}")
+    done
+    menu_items+=("toggle-push|切换自动推送（当前${push_label}）")
+    menu_items+=("quit|退出")
+
     action="$(
-        select_one \
+        select_one_keyed \
             "${github_repository} | 分支 ${branch:-游离状态} | ${package_count} 个软件包 | ${repository_state} | 自动推送 ${push_label}" \
-            '仓库状态总览' \
-            '添加 AUR 软件包' \
-            '从自定义 Git 添加软件包' \
-            '从仓库删除软件包' \
-            '在 GitHub 上同步 AUR 源' \
-            '在 GitHub 上构建软件包' \
-            '跟踪正在运行的构建' \
-            '排查失败的构建' \
-            '检查本地 PKGBUILD' \
-            '检查本地软件包更新' \
-            '更新本地 pacman 仓库' \
-            "$install_label" \
-            '查看最近的 GitHub Actions' \
-            '拉取最新 main 分支' \
-            "切换自动推送（当前${push_label}）" \
-            '退出'
+            "${menu_items[@]}"
     )" || exit 0
 
+    action_code_selected="${action%%|*}"
     action_status=0
-    case "$action" in
-        '仓库状态总览')
-            show_dashboard || action_status=$?
-            ;;
-        '添加 AUR 软件包')
-            add_aur_package || action_status=$?
-            ;;
-        '从自定义 Git 添加软件包')
-            add_custom_package || action_status=$?
-            ;;
-        '从仓库删除软件包')
-            remove_package || action_status=$?
-            ;;
-        '在 GitHub 上同步 AUR 源')
-            sync_aur_sources || action_status=$?
-            ;;
-        '在 GitHub 上构建软件包')
-            build_packages || action_status=$?
-            ;;
-        '跟踪正在运行的构建')
-            track_running_build || action_status=$?
-            ;;
-        '排查失败的构建')
-            triage_failed_builds || action_status=$?
-            ;;
-        '检查本地 PKGBUILD')
-            check_local_packages || action_status=$?
-            ;;
-        '审计全部软件包')
-            audit_all_packages || action_status=$?
-            ;;
-        '检查本地软件包更新')
-            check_local_updates || action_status=$?
-            ;;
-        '更新本地 pacman 仓库')
-            update_local_repository || action_status=$?
-            ;;
-        "$install_label")
-            install_repository_package || action_status=$?
-            ;;
-        '查看最近的 GitHub Actions')
-            show_recent_actions || action_status=$?
-            ;;
-        '拉取最新 main 分支')
-            pull_main || action_status=$?
-            ;;
-        切换自动推送*)
+    case "$action_code_selected" in
+        toggle-push)
             if (( push_changes == 1 )); then
                 push_changes=0
             else
@@ -830,8 +1067,11 @@ while true; do
             fi
             continue
             ;;
-        '退出')
+        quit)
             exit 0
+            ;;
+        *)
+            run_action "$action_code_selected" || action_status=$?
             ;;
     esac
 

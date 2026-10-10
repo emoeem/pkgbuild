@@ -59,7 +59,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Select build set
+      - name: Read builder generation
+        id: generation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "value=$(tr -d '[:space:]' < .github/builder/generation)" >> "$GITHUB_OUTPUT"
+
+      - name: Build plan
         id: select
         shell: bash
         env:
@@ -67,20 +74,39 @@ jobs:
           REQUESTED_PACKAGES: ${{ inputs.packages }}
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.sha }}
+          BUILDER_GENERATION: ${{ steps.generation.outputs.value }}
         run: |
           set -Eeuo pipefail
           selection="${REQUESTED_PACKAGES:-all}"
           if [[ "$EVENT_NAME" == "push" ]]; then
             selection="changed"
           fi
-          packages="$(
-            python scripts/select-packages.py \
-              --selection "$selection" \
-              --before "$BEFORE_SHA" \
-              --after "$AFTER_SHA"
-          )"
-          echo "Selected packages: $packages"
-          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          # The planner is the single decision point: it prints why every
+          # package was selected or skipped and feeds the same answer to the
+          # matrix, to the DAG summary and to the failure report.
+          python3 scripts/build-planner.py \
+            --selection "$selection" \
+            --before "${BEFORE_SHA:-}" \
+            --after "$AFTER_SHA" \
+            --builder-generation "$BUILDER_GENERATION" \
+            --out build-plan \
+            --github-output "$GITHUB_OUTPUT"
+          cat build-plan/plan.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build DAG
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/build-dag.py --plan build-plan/plan.json --format text >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build plan
+        if: always()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: build-plan-${{ github.run_id }}
+          path: build-plan/
+          if-no-files-found: warn
+          retention-days: 14
 
   build:
     name: Build ${{ matrix.package }}
@@ -93,7 +119,7 @@ jobs:
       matrix:
         package: ${{ fromJSON(needs.select.outputs.packages) }}
     env:
-      MAKE_JOBS: ${{ inputs.make_jobs || '2' }}
+      MAKE_JOBS: ${{ inputs.make_jobs || '4' }}
       BUMP_PKGREL: ${{ inputs.bump_pkgrel || 'false' }}
 
     steps:
@@ -101,15 +127,44 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Validate package files
-        run: ./scripts/check-package.sh "${{ matrix.package }}"
+        env:
+          PACKAGE_NAME: ${{ matrix.package }}
+        run: ./scripts/check-package.sh "$PACKAGE_NAME"
 
-      - name: Check runner disk space
+      - name: Download build plan
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: build-plan-${{ github.run_id }}
+          path: build-plan
+
+      - name: Wait for in-repo build prerequisites
+        # The matrix starts every package at once, so ffmpeg-full could link
+        # against the previous mpeghdec/quirc/svt-jpeg-xs-git while those are
+        # being rebuilt in the same run. Fails open: the wait is skipped with a
+        # warning if the API cannot be read.
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ matrix.package }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          bash scripts/wait-for-build-dependencies.sh \
+            --package "$PACKAGE_NAME" \
+            --run-id "${{ github.run_id }}" \
+            --repository "${{ github.repository }}"
+
+      - name: Free runner disk space
         if: runner.environment == 'github-hosted'
         shell: bash
-        run: df -h /
+        run: |
+          # ffmpeg-full / CUDA 构建接近 hosted runner 的磁盘上限；预装的
+          # 工具链这里用不到，删掉可腾出约 25 GB。
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/android /opt/gradle
+          df -h /
 
       - name: Authenticate to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -128,11 +183,51 @@ jobs:
             echo "flavor=standard" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Restore CachyOS build caches
+      # Layered caches. Each layer has its own key so a change that only
+      # affects one of them (a new source tarball vs. a new toolchain) does not
+      # invalidate the others. The builder *generation* is a single file
+      # (.github/builder/generation) so "the builder changed, drop the derived
+      # caches" is an explicit, reviewable act instead of a side effect of
+      # editing the Dockerfile.
+      - name: Read builder generation
+        id: generation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "value=$(tr -d '[:space:]' < .github/builder/generation)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pacman package cache
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
-          path: .cache/pkgbuild
-          key: cachyos-v3-v2-${{ runner.os }}-${{ steps.cache-flavor.outputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'scripts/build-in-arch.sh') }}
+          path: .cache/pkgbuild/pacman
+          key: pacman-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'scripts/build-in-arch.sh') }}
+          restore-keys: |
+            pacman-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-
+
+      - name: Restore VCS/source cache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .cache/pkgbuild/sources
+          key: sources-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-${{ hashFiles('scripts/build-in-arch.sh', 'scripts/validate-source-cache.sh') }}
+          restore-keys: |
+            sources-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-
+
+      - name: Restore Cargo cache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .cache/pkgbuild/cargo
+          key: cargo-v3-${{ steps.generation.outputs.value }}-${{ hashFiles('.github/builder/Dockerfile') }}
+          restore-keys: |
+            cargo-v3-${{ steps.generation.outputs.value }}-
+
+      - name: Restore ccache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .cache/pkgbuild/ccache
+          key: ccache-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'scripts/build-in-arch.sh') }}
+          restore-keys: |
+            ccache-v3-${{ steps.generation.outputs.value }}-${{ steps.cache-flavor.outputs.flavor }}-
+            ccache-v3-${{ steps.generation.outputs.value }}-
 
       - name: Pull reusable CachyOS builder
         id: builder
@@ -163,10 +258,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          rm -rf .cache/pkgbuild/repo/x86_64
-          mkdir -p .cache/pkgbuild/repo/x86_64
+          # Lives outside .cache/pkgbuild so the actions/cache snapshot only
+          # ever contains the pacman/VCS/Cargo caches, never the repository
+          # assets that are re-fetched here on every job. The rm below purges
+          # the legacy subtree that old snapshots had already cached.
+          rm -rf .cache/pkgbuild/repo
+          mkdir -p localrepo/x86_64
           if gh release view repo --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release download repo --repo "$GITHUB_REPOSITORY" --pattern "*.pkg.tar.zst" --dir .cache/pkgbuild/repo/x86_64 --clobber
+            gh release download repo --repo "$GITHUB_REPOSITORY" --pattern "*.pkg.tar.zst" --dir localrepo/x86_64 --clobber
           fi
 
       - name: Build in reusable CachyOS builder
@@ -182,7 +281,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/dist:/out" \
             --volume "$GITHUB_WORKSPACE/.cache/pkgbuild:/cache" \
-            --volume "$GITHUB_WORKSPACE/.cache/pkgbuild/repo/x86_64:/localrepo" \
+            --volume "$GITHUB_WORKSPACE/localrepo/x86_64:/localrepo" \
             --env "LOCAL_REPO_DIR=/localrepo" \
             --env "LOCAL_REPO_NAME=emoeem" \
             --env "MAKE_JOBS=$MAKE_JOBS" \
@@ -215,6 +314,56 @@ jobs:
               find dist -maxdepth 1 -type f -name '*.pkg.tar.zst' -print0
           )
 
+      - name: Analyze build failure
+        # Runs on the failing path only. Produces the structured failure record
+        # and the whole artifacts/build-report/ bundle so nobody has to read a
+        # multi-thousand-line log again.
+        if: failure()
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ matrix.package }}
+          BUILD_PLAN: build-plan/plan.json
+        run: |
+          set -Eeuo pipefail
+          mkdir -p build-report
+          log="dist/build.log"
+          [[ -f "$log" ]] || { log="build-report/empty.log"; : >"$log"; }
+          python3 scripts/analyze-build-failure.py \
+            --package "$PACKAGE_NAME" \
+            --log "$log" \
+            --root "$GITHUB_WORKSPACE" \
+            --report-dir build-report \
+            --repository-dir localrepo/x86_64 \
+            --plan "$BUILD_PLAN" \
+            --timings dist/timings.json \
+            --out build-report/failure.json || true
+          cat build-report/summary.json >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Attempt automatic repair (dry run)
+        if: failure()
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ matrix.package }}
+          AUTO_FIX_LEVEL: ${{ vars.AUTO_FIX_LEVEL || '1' }}
+        run: |
+          set -Eeuo pipefail
+          bash scripts/auto-repair.sh \
+            --package "$PACKAGE_NAME" \
+            --failure build-report/failure.json \
+            --level "$AUTO_FIX_LEVEL" \
+            --out build-report/repair-attempt.json \
+            --audit build-report/repair-audit.jsonl || true
+          cat build-report/repair-attempt.json >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload build report
+        if: failure()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: build-report-${{ matrix.package }}-${{ github.run_id }}
+          path: build-report/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Pack package artifact
         shell: bash
         env:
@@ -238,6 +387,104 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  repair:
+    name: Auto-repair failed builds
+    needs:
+      - select
+      - build
+    # Only on the failing path, and never when the run was cancelled.
+    if: ${{ !cancelled() && needs.build.result == 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    concurrency:
+      group: auto-repair
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Download build reports
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          pattern: build-report-*-${{ github.run_id }}
+          path: reports
+          merge-multiple: false
+
+      - name: Apply safe automatic repairs
+        # The build already failed, so this step never turns a green run red.
+        # A repair that is applied is committed (without [skip ci]) and the
+        # resulting push triggers a fresh build; scripts/repair-budget.sh stops
+        # the build -> fix -> build spiral after MAX_REPAIR_ATTEMPTS.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTO_FIX_LEVEL: ${{ vars.AUTO_FIX_LEVEL || '1' }}
+          MAX_REPAIR_ATTEMPTS: ${{ vars.MAX_REPAIR_ATTEMPTS || '2' }}
+        run: |
+          set -Eeuo pipefail
+          shopt -s nullglob
+          mkdir -p state
+          touch state/repair-history.jsonl
+          applied=()
+          for report in reports/*/; do
+            failure="$report/failure.json"
+            [[ -f "$failure" ]] || continue
+            package="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["package"])' "$failure")"
+            echo "::group::Repair attempt for $package"
+            if ! bash scripts/repair-budget.sh \
+                  --package "$package" \
+                  --history state/repair-history.jsonl \
+                  --max "$MAX_REPAIR_ATTEMPTS"; then
+              echo "::warning::Repair budget exhausted for $package; reporting only."
+              echo "::endgroup::"
+              continue
+            fi
+            if ! bash scripts/auto-repair.sh \
+                  --package "$package" \
+                  --failure "$failure" \
+                  --root "$GITHUB_WORKSPACE" \
+                  --level "$AUTO_FIX_LEVEL" \
+                  --apply \
+                  --out "$report/repair-applied.json" \
+                  --audit state/repair-history.jsonl; then
+              echo "::warning::Automatic repair for $package did not succeed; the workspace was rolled back."
+              cat "$report/repair-applied.json" 2>/dev/null || true
+              echo "::endgroup::"
+              continue
+            fi
+            status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report/repair-applied.json")"
+            if [[ "$status" == "applied" ]]; then
+              applied+=("$package")
+            fi
+            cat "$report/repair-applied.json"
+            echo "::endgroup::"
+          done
+          if (( ${#applied[@]} == 0 )); then
+            echo "No automatic repair was applied." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "## Automatic repairs applied"
+            printf -- '- %s\n' "${applied[@]}"
+            echo
+            echo "A rebuild was triggered by this push."
+          } >> "$GITHUB_STEP_SUMMARY"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages state/repair-history.jsonl
+          if git diff --cached --quiet; then
+            echo "Repairs produced no committed change."
+            exit 0
+          fi
+          git commit -m "fix(build): automatic repair for ${applied[*]}"
+          git pull --rebase origin main
+          git push origin HEAD
+
   publish:
     name: Publish pacman repository release
     needs:
@@ -247,6 +494,7 @@ jobs:
     # available only when explicitly requested for an unrelated multi-package run.
     if: ${{ !cancelled() && needs.build.result == 'success' || (needs.build.result == 'failure' && inputs.allow_partial_publish == true) }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     permissions:
       contents: write
     concurrency:
@@ -329,16 +577,21 @@ jobs:
           REPOSITORY_KEY_PASSPHRASE: ${{ secrets.REPOSITORY_KEY_PASSPHRASE }}
         run: |
           set -Eeuo pipefail
+          # 密码经 0600 文件传入容器，而不是 --env（宿主机 ps 可见）。
+          install -m0600 /dev/null repository-passphrase
+          printf '%s' "$REPOSITORY_KEY_PASSPHRASE" > repository-passphrase
           docker run --rm \
             --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/incoming-packages:/incoming:ro" \
             --volume "$GITHUB_WORKSPACE/published/x86_64:/repository" \
             --volume "$GITHUB_WORKSPACE/repository-key.asc:/run/secrets/repository-key.asc:ro" \
+            --volume "$GITHUB_WORKSPACE/repository-passphrase:/run/secrets/repository-passphrase:ro" \
             --env "REPOSITORY_NAME=${REPOSITORY_NAME}" \
             --env "REPOSITORY_SERVER=https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}" \
-            --env "REPOSITORY_KEY_PASSPHRASE=$REPOSITORY_KEY_PASSPHRASE" \
+            --env "REPOSITORY_KEY_PASSPHRASE_FILE=/run/secrets/repository-passphrase" \
             docker.io/library/archlinux:base-devel \
             bash /workspace/scripts/create-repository.sh
+          rm -f repository-passphrase
 
       - name: Verify repository integrity
         shell: bash
@@ -350,6 +603,37 @@ jobs:
             docker.io/library/archlinux:base-devel \
             bash -c 'bash /workspace/scripts/verify-repository.sh /repository'
 
+      - name: Generate ABI manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/published/x86_64:/repository" \
+            --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
+            --env "REPOSITORY_NAME=${REPOSITORY_NAME}" \
+            docker.io/library/archlinux:base-devel \
+            bash /workspace/scripts/generate-abi-manifest.sh /repository
+
+      - name: Repository install test
+        # Release gate: install the freshly published packages from the
+        # repository itself and run the runtime verification on the result.
+        # Nothing is published unless the repository can satisfy its own
+        # packages.
+        shell: bash
+        env:
+          CACHYOS_IMAGE: docker.io/cachyos/cachyos-v3:latest
+          INSTALL_TEST_ALL: ${{ vars.INSTALL_TEST_ALL || '0' }}
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/published/x86_64:/repository:ro" \
+            --volume "$GITHUB_WORKSPACE/incoming-packages:/incoming:ro" \
+            --volume "$GITHUB_WORKSPACE/source:/workspace:ro" \
+            --env "REPOSITORY_NAME=${REPOSITORY_NAME}" \
+            --env "INSTALL_TEST_ALL=$INSTALL_TEST_ALL" \
+            "$CACHYOS_IMAGE" \
+            bash /workspace/scripts/repository-install-test.sh
+
       - name: Publish repository release
         shell: bash
         env:
@@ -359,3 +643,11 @@ jobs:
         run: |
           set -Eeuo pipefail
           bash source/scripts/publish-release.sh
+
+      - name: Write back bumped pkgrel to main
+        if: ${{ inputs.bump_pkgrel == true }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash source/scripts/write-back-pkgrel.sh \
+            "$GITHUB_WORKSPACE/incoming-packages" "$GITHUB_WORKSPACE/source"

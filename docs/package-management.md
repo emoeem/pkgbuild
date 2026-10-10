@@ -87,10 +87,9 @@ PKGBUILD_DEFAULT_MAKE_JOBS=2
 3. 从剩余软件包重新生成 `emoeem.db` 和 `emoeem.files`。
 4. 更新 SHA256、签名和单提交 `repo` 快照。
 
-删除完成后，本地客户端会在下次定时更新时同步。也可以立即执行：
+删除完成后，`sudo pacman -Sy` 刷新数据库即可确认：
 
 ```bash
-emoeem-update
 pacman -Sl emoeem
 ```
 

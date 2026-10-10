@@ -76,7 +76,18 @@ fi
 
 siglevel="Never"
 key_file="${temp_dir}/${pacman_repository}-key.asc"
-if curl -fsSL --retry 3 "${server_url}/${pacman_repository}-key.asc" -o "$key_file"; then
+# 只有 404（仓库未启用签名）才允许降级 SigLevel；网络错误 / 5xx 必须直接
+# 失败，否则一次抖动就把签名校验整个静默关掉。依次尝试加速通道与直连。
+key_http_code=""
+for server in "${servers[@]}"; do
+    key_http_code="$(curl -sS --retry 3 --max-time 120 \
+        -o "$key_file" -w '%{http_code}' \
+        "${server}/${pacman_repository}-key.asc" || printf 000)"
+    if [[ "$key_http_code" == "200" || "$key_http_code" == "404" ]]; then
+        break
+    fi
+done
+if [[ "$key_http_code" == "200" ]]; then
     pacman-key --init
     pacman-key --add "$key_file"
     fingerprint="$(
@@ -87,11 +98,16 @@ if curl -fsSL --retry 3 "${server_url}/${pacman_repository}-key.asc" -o "$key_fi
     pacman-key --lsign-key "$fingerprint"
     siglevel="Required DatabaseRequired"
     printf '已导入并本地信任仓库签名密钥 %s。\n' "$fingerprint"
+elif [[ "$key_http_code" == "404" ]]; then
+    printf '仓库未启用签名（%s-key.asc 不存在），使用 SigLevel = Never。\n' "$pacman_repository"
 else
-    printf '仓库未启用签名，使用 SigLevel = Never。\n'
+    printf '下载仓库签名密钥失败（HTTP %s）；拒绝静默关闭签名校验。\n' "$key_http_code" >&2
+    exit 1
 fi
 
-cp -- "$pacman_conf" "${pacman_conf}.emoeem-backup"
+# -n：只在备份还不存在时写入，避免第二次运行用「已被改过的 pacman.conf」
+# 覆盖最初的原版备份。
+cp -n -- "$pacman_conf" "${pacman_conf}.emoeem-backup"
 
 # 删除旧的管理段（标记块）以及手写过的 [emoeem] 段，避免重复仓库段。
 awk -v repo_header="[${pacman_repository}]" \

@@ -1,6 +1,8 @@
 dist/
 incoming/
 published/
+.cache/
+build-output/
 repository-key.asc
 __pycache__/
 *.pyc

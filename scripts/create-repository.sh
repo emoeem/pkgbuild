@@ -146,6 +146,10 @@ mapfile -d '' repository_packages < <(
 )
 
 signing_key=""
+# 允许经 0600 文件传密码：放进 --env 的密码在宿主机 ps 里可见。
+if [[ -n "${REPOSITORY_KEY_PASSPHRASE_FILE:-}" ]]; then
+    REPOSITORY_KEY_PASSPHRASE="$(<"${REPOSITORY_KEY_PASSPHRASE_FILE}")"
+fi
 if [[ -s "$repository_key" ]]; then
     export GNUPGHOME=/tmp/repository-gnupg
     install -d -m0700 "$GNUPGHOME"

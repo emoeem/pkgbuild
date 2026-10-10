@@ -8,14 +8,25 @@ on:
         required: true
         type: string
   pull_request:
+    paths:
+      - "packages/**"
+      - "config/**"
+      - "scripts/**"
+      - "tests/**"
+      - "client/**"
+      - "manage.sh"
+      - ".github/builder/**"
+      - ".github/workflows/check.yml"
   push:
     branches:
       - main
     paths:
       - "packages/**"
+      - "config/**"
       - "scripts/**"
       - "tests/**"
-      - "config/**"
+      - "client/**"
+      - "manage.sh"
       - ".githooks/**"
       - ".github/builder/**"
       - ".github/workflows/check.yml"
@@ -26,6 +37,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   select:
@@ -43,16 +58,17 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_PACKAGES: ${{ inputs.packages }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            selection="${{ inputs.packages }}"
-            packages="$(python scripts/select-packages.py --selection "$selection")"
+            packages="$(python scripts/select-packages.py --selection "$REQUESTED_PACKAGES")"
           else
             if [[ "$EVENT_NAME" == "pull_request" ]]; then
-              before="${{ github.event.pull_request.base.sha }}"
+              before="$PR_BASE_SHA"
             else
               before="$BEFORE_SHA"
             fi
@@ -78,6 +94,44 @@ jobs:
       # hook/CI wiring itself.
       - name: Run static check harness tests
         run: bash tests/test-static-checks.sh
+      # Lint lives here, not in the per-package matrix: it does not depend on
+      # the selected packages, and the matrix is skipped entirely when a
+      # scripts-only change selects no packages.
+      - name: Run the full verification suite in the builder
+        # tests/run-all.sh is the same entry point used locally, so the local
+        # and CI definitions of "verified" cannot drift apart.
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --pull always --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
+            bash -c 'set -Eeuo pipefail; cd /workspace && bash tests/run-all.sh'
+
+      - name: Verify CI script references are tracked
+        # Runs on the runner (not in the container) because it asks git what the
+        # commit contains. A workflow that calls an uncommitted helper fails at
+        # release time, which is the most expensive possible place to find out.
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          PYTHONPYCACHEPREFIX=/tmp/pycache python3 tests/test_workflow_references.py
+      - name: Run builder environment checks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --pull always --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
+            bash /workspace/tests/test-cachyos-environment.sh builder
+      - name: Run build regression tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --pull always --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
+            bash /workspace/tests/test-build-regressions.sh
       - name: Run package audit in prepared builder
         shell: bash
         run: |
@@ -119,15 +173,12 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
             bash -c '
               set -Eeuo pipefail
-              bash /workspace/tests/test-cachyos-environment.sh builder
               useradd --create-home checker
               runuser -u checker -- env HOME=/home/checker PACKAGE_NAME="$PACKAGE_NAME" \
                 bash -c "
                   set -Eeuo pipefail
                   cd /workspace
                   ./scripts/check-package.sh \"\$PACKAGE_NAME\"
-                  shellcheck --severity=warning manage.sh scripts/*.sh client/*.sh tests/*.sh
-                  PYTHONPYCACHEPREFIX=/tmp/pycache python -m py_compile scripts/select-packages.py scripts/check-package-manifests.py tests/test_select_packages.py tests/test_package_manifests.py tests/test_workflow_images.py
                   namcap \"packages/\$PACKAGE_NAME/PKGBUILD\"
                 "
             '

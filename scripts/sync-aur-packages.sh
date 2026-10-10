@@ -27,7 +27,10 @@ for package_name in "${package_names[@]}"; do
     [[ -f "$aur_url_file" ]] || { echo "$package_name is not AUR-managed (.aur-url missing)." >&2; exit 1; }
     aur_url="$(<"$aur_url_file")"
     checkout_dir="$temporary_dir/$package_name"
-    git clone --depth 1 "$aur_url" "$checkout_dir"
+    # -- 防止以 - 开头的 URL 被当成 git 选项解析；timeout 防止挂死占住
+    # 整个同步运行。
+    [[ "$aur_url" != -* ]] || { printf 'invalid .aur-url (starts with a dash): %s\n' "$aur_url" >&2; exit 1; }
+    timeout 600 git clone --depth 1 -- "$aur_url" "$checkout_dir"
     aur_commit="$(git -C "$checkout_dir" rev-parse HEAD)"
 
     # Stage the upstream tree separately. A failed overlay or package audit must

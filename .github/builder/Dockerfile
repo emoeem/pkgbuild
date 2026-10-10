@@ -1,6 +1,11 @@
 FROM docker.io/cachyos/cachyos-v3:latest
 
 ARG CUDA_BUILDER=0
+# Bumped by .github/builder/generation so every cache derived from the builder
+# contents (pacman, sources, cargo, ccache) can be invalidated deliberately
+# instead of relying on a hash of this file alone.
+ARG BUILDER_GENERATION=dev
+LABEL org.emoeem.builder.generation="${BUILDER_GENERATION}"
 COPY config/emo-native-flags.conf /etc/makepkg.conf.d/90-emo-native.conf
 
 RUN sed -i '/^\[options\]$/a DisableSandboxNetwork' /etc/pacman.conf \
@@ -16,7 +21,9 @@ RUN sed -i '/^\[options\]$/a DisableSandboxNetwork' /etc/pacman.conf \
         'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' \
         'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' \
     && printf '%s\n' '[chaotic-aur]' 'Include = /etc/pacman.d/chaotic-mirrorlist' >> /etc/pacman.conf \
-    && packages='aria2 base-devel curl core/gcc-objc git gnupg jq namcap shellcheck sudo' \
+    # actionlint is here so tests/run-all.sh can lint the workflows inside the
+    # same container that runs the rest of the suite.
+    && packages='actionlint aria2 base-devel ccache curl core/gcc-objc git gnupg jq namcap shellcheck sudo' \
     && if [ "$CUDA_BUILDER" = 1 ]; then packages="$packages cuda gcc15"; fi \
     && pacman -Syu --needed --noconfirm $packages \
     && install -d /etc/makepkg.conf.d \
@@ -32,7 +39,23 @@ RUN sed -i '/^\[options\]$/a DisableSandboxNetwork' /etc/pacman.conf \
     && printf 'builder ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/builder \
     && chmod 0440 /etc/sudoers.d/builder \
     && install -d -o builder -g builder /build /out /cache/sources \
-    && git clone --depth 1 https://aur.archlinux.org/yay-bin.git /build/yay-bin \
+    # yay 固定到检过的提交；升级要在这里有意改 sha，而不是每次镜像构建
+    # 随上游浮动。chaotic 的 keyring/mirrorlist 包同样在下载后先做 sha256
+    # 校验（chaotic 发新 keyring 时 CI 会在这里失败提醒更新哈希）。
+    && pacman -Sy --noconfirm curl \
+    && curl -fsSL --retry 5 --retry-all-errors --max-time 300 \
+        -o /tmp/chaotic-keyring.pkg.tar.zst \
+        'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst' \
+    && curl -fsSL --retry 5 --retry-all-errors --max-time 300 \
+        -o /tmp/chaotic-mirrorlist.pkg.tar.zst \
+        'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst' \
+    && printf '%s  /tmp/chaotic-keyring.pkg.tar.zst\n%s  /tmp/chaotic-mirrorlist.pkg.tar.zst\n' \
+        1496d7505f192bd98691135f364ffe3b4d4541b27c1391ac41e8694f83dda20d \
+        d05c0faa78ff99be4c001d4c65fbb02a68cc3198347857dc220b799b707ccebf \
+        | sha256sum -c - \
+    && pacman -U --noconfirm /tmp/chaotic-keyring.pkg.tar.zst /tmp/chaotic-mirrorlist.pkg.tar.zst \
+    && git clone https://aur.archlinux.org/yay-bin.git /build/yay-bin \
+    && git -C /build/yay-bin checkout --detach 13e0a4754d106a9252b7479bf1b370fbe454fc48 \
     && chown -R builder:builder /build/yay-bin \
     && runuser -u builder -- bash -c 'cd /build/yay-bin && makepkg --noconfirm --cleanbuild --clean' \
     && pacman -U --noconfirm /build/yay-bin/yay-bin-*.pkg.tar.zst \
@@ -41,3 +64,4 @@ RUN sed -i '/^\[options\]$/a DisableSandboxNetwork' /etc/pacman.conf \
 ENV PATH="/opt/cuda/bin:${PATH}"
 ENV PKGBUILD_BUILDER_IMAGE=1
 ENV PKGBUILD_CUDA_BUILDER=${CUDA_BUILDER}
+ENV BUILDER_GENERATION=${BUILDER_GENERATION}

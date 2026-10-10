@@ -1,0 +1,47 @@
+# DependencyError: dependency resolution failed before or while building.
+rules:
+  - id: pacman-target-not-found
+    category: DependencyError
+    stage: dependencies
+    summary: A dependency could not be found in any configured repository.
+    confidence: high
+    patterns:
+      - "error: target not found:"
+      - "unable to resolve dependencies"
+      - "could not satisfy dependencies:"
+      - "failed to prepare transaction"
+    extract:
+      dependency: '(?:target not found|failed to prepare transaction.*?):\s*([A-Za-z0-9@._+-]+)'
+    root_cause: "unresolvable dependency {dependency}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: dependency-version-conflict
+    category: DependencyError
+    stage: dependencies
+    summary: A dependency version constraint conflicts with the available one.
+    confidence: medium
+    patterns:
+      - "conflicting dependencies"
+      - "breaks dependency"
+      - "is not satisfied"
+      - "installing .* breaks dependency"
+    root_cause: "dependency version constraint conflict"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: build-dependency-failed
+    category: DependencyError
+    stage: dependencies
+    summary: A build dependency failed before the target package could build.
+    confidence: medium
+    patterns:
+      - "failed to build"
+      - "failed to install"
+    root_cause: "a build dependency failed"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
