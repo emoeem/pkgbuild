@@ -1,7 +1,7 @@
 pkgbase = daed-emo
 	pkgdesc = Modern web dashboard for dae (current upstream, x86-64-v3/AVX2 build)
 	pkgver = 1.27.0.r0.gunknown
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/daeuniverse/daed
 	arch = x86_64
 	license = MIT
