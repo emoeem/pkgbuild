@@ -49,8 +49,41 @@ ABI watch（`dependency-drift.yml`）和 maintenance（`maintenance.yml`）里�
 - overlay 精确触发
 - 无关文档不触发构建
 - build infrastructure 触发全量重建
+- `config/package-updates.txt`（更新来源登记表）只描述维护方式，不触发构建
 
 `tests/test_repository.sh` 使用真实 `repo-add` 验证仓库生成、GitHub Release 文件名清洗和删除 package 后数据库更新。
+
+### Package manifest policy（借鉴 archlinuxcn 的 pre-commit 门禁）
+
+`scripts/check-package-manifests.py` 只用标准库，不需要 makepkg、不拉容器，因此在裸 runner 上先于 builder image 运行（`check.yml` 的 integration job）。它强制三条契约：
+
+- 每个 `packages/<name>` 必须且只能声明一个更新来源：AUR 镜像包用 `.aur-url` + `.aur-commit`；其余包必须出现在 `config/package-updates.txt`，用 `workflow <path>` 指向真实且被 git 跟踪的更新 workflow，或用 `manual <reason>` 明确说明无人更新。`workflow` 路径按 git 跟踪状态校验，workflow 改名不会静默留下孤儿包。
+- 已提交的元数据自洽：`pkgbase` 等于目录名、`pkgver` 不含 `-`/`:`/空白、`pkgrel` 为数字、`pkgdesc`/`url`/`license` 非空、每个 `*sums` 数组条目数等于 `source` 条目数、`packages/` 下没有已提交的 gitlink。
+- `packages/<name>/.rebuild-on`（逐包重建触发声明）语法与指向正确：触发类型只能是 `soname` / `package`，`soname` 必须是「soname + 提供者包名」两个字段，`package` 指向的必须是真实存在的包目录，同一声明不重复、不指向自己。解析器与门禁共用 `scripts/list-rebuild-triggers.sh`，不存在两套解析。
+
+最后一行恒为 `SUMMARY packages=<n> errors=<n>`。与之互补的 `scripts/audit-packages.sh`、`scripts/check-package.sh` 需要 makepkg（在 builder 容器内运行），负责 `.SRCINFO` 新鲜度等离线无法判定的部分。
+
+### 逐包重建触发声明（`.rebuild-on`）
+
+`packages/<name>/.rebuild-on` 把「这个包因为什么需要重建」写在包目录旁边，取代原来那份全局的 `scripts/data/external-sonames.txt` 例外表。两种行：
+
+- `soname <soname> <provider-package>`：容器仓库看不到的共享库，来自 chaotic-aur / archlinuxcn / arch4edu / AUR。例如 `packages/ffmpeg-full/.rebuild-on` 的 `soname libshine.so.3 shine`（`shine` 在 archlinuxcn 提供 `libshine.so.3`，CI 容器里没有）。`maintenance.yml` 的 soname 复查把声明的名字只并入**该包**的 provider 集合，所以一个包的外部依赖不会顺带给别的包放行；声明了却不再被 `NEEDED` 的名字判为过期声明（`STALE-DECLARATION`），而不是永久豁免。过期声明由 maintenance 用 `::error::` 注解报出来但**不中止**该 workflow：重建修不了它（只有人改 `.rebuild-on` 能修），所以不该连带停掉无人值守的依赖漂移重建；本地手动跑脚本仍然以退出码 4 结束（0 干净 / 2 用法 / 3 报告不可信 / 4 声明过期）。
+- `package <repo-package>`：`.SRCINFO` 表达不出来的显式重建边，登记后与 `depends`/`provides` 一起参与重建选择，也参与 `dependency-drift.yml` 的版本比对——即使这个依赖后来从 `.SRCINFO` 里消失，只要 `.rebuild-on` 还写着它，就仍然被盯住（那正是只读 `.SRCINFO` 的旧行为会静默漏掉的情况）。比对的是 `<version>-<pkgrel>`：依赖只是重打包（pkgrel 变化）也可能换了 SONAME，所以同样算漂移。声明了却在本容器的仓库里查不到的包（例如只在 archlinuxcn 提供的 `shine`）只在报告里留一行 `NOTE`，不判成漂移，也不改变退出码。
+
+声明由包自己负责维护，两边都不放行：`check-package-manifests.py` 在裸 runner 上静态校验（见上），`maintenance.yml` 在容器里用真实 ELF 校验（缺声明报 `STALE`，多声明报 `STALE-DECLARATION`）。
+
+### 本地入口：pre-commit 与 CI 共用同一份静态清单
+
+`scripts/run-static-checks.sh` 是 check.yml integration job 在容器步骤之前那一半的**唯一**清单：manifest 门禁、依赖图测试、ELF SONAME 故障注入、逐包重建触发声明、workflow 镜像不变量、AUR 依赖兜底、构建回归（`tests/test-build-regressions.sh`，此前只写在 README 里、CI 从不运行）、shell 语法、shellcheck（`--severity=warning`，与 per-package job 一致）、`py_compile`。check.yml 直接调用它，`.githooks/pre-commit` 也直接调用它，所以「本地提交绿了」和「CI 那一道静态关卡绿了」是同一件事，而不是两份会漂移的清单；新增检查只能加进这个脚本。
+
+两点设计上的取舍：
+
+- 检查失败会**全部跑完**再退出 1，并把失败项名字列出来；缺工具（`shellcheck`/`python3` 找不到）是响亮的失败而不是静默跳过，`--only` 选不出任何检查也直接报错退出 2——否则一个被撞坏的 `PATH` 就能让整道关卡一个检查都没跑却报告通过。
+- 脚本自身只用 shell 内建命令解析参数和定位仓库根目录（不用 `dirname`/`tr`），同样的理由：门禁不能因为环境缺了某个基础工具而静默放行。
+
+一次性接线：`scripts/install-git-hooks.sh`（执行 `git config core.hooksPath .githooks`，撤销用 `git config --unset core.hooksPath`）。单次绕过：`EMO_SKIP_STATIC_CHECKS=1 git commit ...` 或 `git commit --no-verify`。已装 pre-commit 框架的人可以直接用 `.pre-commit-config.yaml`（钩子本体不依赖任何第三方包）。整套约十秒，不需要容器、makepkg 或网络；需要容器的那部分（`.SRCINFO` 新鲜度、完整 audit、真实 `repo-add` 集成）仍在同一 job 的后续步骤里运行。
+
+`tests/test-static-checks.sh` 守护这条等价关系本身：清单缩水或多出未实现的名字、检查失败被吞掉、缺工具静默跳过、`--only` 顺手跑全量、check.yml 又抄一份内联清单、`.pre-commit-config.yaml` 指向别处——都会让它失败。它刻意**不**列入 `run-static-checks.sh` 的清单（否则钩子会递归），由 check.yml 单独一步运行。
 
 ## 4. fzf 管理界面
 
@@ -70,12 +103,19 @@ ABI watch（`dependency-drift.yml`）和 maintenance（`maintenance.yml`）里�
 本地可运行：
 
 ```bash
+# 静态检查的统一入口：与 check.yml integration job 的静态部分同一份清单，
+# 也是 .githooks/pre-commit 调用的东西（下面单条命令都被它覆盖）
+./scripts/run-static-checks.sh
+bash tests/test-static-checks.sh   # 守护上面这条例外的等价关系
+
+python3 scripts/check-package-manifests.py
+python3 tests/test_package_manifests.py
 python3 tests/test_select_packages.py
 ./tests/test-build-regressions.sh
 bash tests/test_repository.sh
 bash tests/test-cachyos-environment.sh base
 bash -n scripts/*.sh client/install.sh manage.sh tests/*.sh
-python3 -m py_compile scripts/select-packages.py tests/test_select_packages.py
+python3 -m py_compile scripts/*.py tests/*.py
 ./scripts/check-package.sh
 ```
 
@@ -132,7 +172,7 @@ Builder 通过 `/etc/makepkg.conf.d/pkgbuild-aria2.conf` 为 HTTP/HTTPS/FTP sour
 
 ### Phase 2：全量 PKGBUILD 审计
 
-新增 `scripts/audit-packages.sh`，对当前 13 个有效 PKGBUILD 做全量元数据、`.SRCINFO`、架构、AUR 元数据和内部 provider / dependency 检查。对于 Stable / Git、CUDA 等有意提供同一虚拟包的替代包，只有存在明确冲突关系时才允许共享 provider。
+新增 `scripts/audit-packages.sh`，对当前 11 个有效 PKGBUILD 做全量元数据、`.SRCINFO`、架构、AUR 元数据和内部 provider / dependency 检查。对于 Stable / Git、CUDA 等有意提供同一虚拟包的替代包，只有存在明确冲突关系时才允许共享 provider。
 
 新增 `tests/test-package-audit.sh` 回归测试，并把全量审计加入 `check.yml` 的 integration job。管理 TUI 也新增「审计全部软件包」入口。
 

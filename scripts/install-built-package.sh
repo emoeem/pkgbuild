@@ -41,14 +41,4 @@ if (( ${#dependencies[@]} > 0 )); then
     "$aur_helper" -S --needed --asdeps --noconfirm -- "${dependencies[@]}"
 fi
 
-if ! sudo pacman -U --noconfirm -- "${package_files[@]}"; then
-    mapfile -t conflicts < <(for package_file in "${package_files[@]}"; do bsdtar -xOf "$package_file" .PKGINFO; done | awk -F ' = ' '$1 == "conflict" {sub(/[<>=].*$/, "", $2); if ($2 != "") print $2}' | sort -u)
-    ((${#conflicts[@]} > 0)) || { echo 'Install failed and package metadata declares no conflicts; no packages removed.' >&2; exit 1; }
-    mapfile -t installed < <(pacman -Qq)
-    remove=()
-    for conflict in "${conflicts[@]}"; do for current in "${installed[@]}"; do [[ "$current" == "$conflict" ]] && remove+=("$current"); done; done
-    ((${#remove[@]} > 0)) || { echo 'Install failed, but none of the declared conflicting packages are installed.' >&2; exit 1; }
-    printf 'Removing declared conflicting packages: %s\n' "${remove[*]}" >&2
-    sudo pacman -Rdd --noconfirm -- "${remove[@]}"
-    sudo pacman -U --noconfirm -- "${package_files[@]}"
-fi
+sudo pacman -U --noconfirm -- "${package_files[@]}"

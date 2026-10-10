@@ -21,13 +21,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 
-from resources import load_yaml  # noqa: E402
+from errorrules import load_yaml  # noqa: E402
 from pkgbuild_lib import (  # noqa: E402
     dependency_map,
     in_repo_dependencies,
@@ -256,7 +255,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--packages", default="", help="comma separated list; defaults to every package")
-    parser.add_argument("--plan", type=Path, help="build-plan/plan.json to take the rebuild set from")
+    parser.add_argument("--plan", type=Path, help="build-plan.json to take the rebuild set from")
     parser.add_argument("--timing-history", type=Path, help="state/timing-history.jsonl")
     parser.add_argument("--resources", type=Path, help="scripts/data/package-resources.yaml")
     parser.add_argument("--cpus", type=int, default=0, help="available CPUs (default: os.cpu_count())")
@@ -285,10 +284,13 @@ def main() -> None:
     if args.plan and args.plan.is_file():
         plan = json.loads(args.plan.read_text(encoding="utf-8"))
         selection = list(plan.get("rebuild") or [])
+        make_jobs = int(plan.get("counts", {}).get("rebuild", 0))
     elif args.packages:
         selection = [item.strip() for item in args.packages.split(",") if item.strip()]
+        make_jobs = len(selection)
     else:
         selection = sorted(packages)
+        make_jobs = len(selection)
 
     unknown = sorted(set(selection) - set(packages))
     if unknown:
@@ -300,7 +302,7 @@ def main() -> None:
     measured = load_timings(args.timing_history or root / "state" / "timing-history.jsonl")
     weights = {name: weights_for(name, table, defaults, measured) for name in selection}
 
-    cpus = args.cpus or (len(selection) and os.cpu_count()) or 4
+    cpus = args.cpus or (len(selection) and __import__("os").cpu_count()) or 4
     memory_gb = args.memory_gb or 16
     gpus = args.gpus
 

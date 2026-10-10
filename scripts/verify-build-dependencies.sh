@@ -31,7 +31,11 @@ while IFS=' = ' read -r key value; do
     name="${installed_names[$value]:-}"
     [[ -n "$name" ]] || continue
     info="$(pacman -Si "$name" 2>/dev/null || true)"
-    repo="$(awk -F ': +' '$1 == "Repository" {print $2; exit}' <<< "$info")"
+    # `pacman -Si` prints `Repository      : cachyos-v3`; with `-F ': +'` the
+    # first field keeps the padding before the colon, so a plain equality test
+    # never matched and this check silently passed for every package.  Trim the
+    # label first so a v4 repository is actually rejected.
+    repo="$(awk -F ': +' '{key=$1; sub(/[[:space:]]+$/, "", key); if (key == "Repository") {print $2; exit}}' <<< "$info")"
     case "$repo" in
         *v4*|*znver4*|*znver5*)
             printf 'Zen4/v4 repository dependency detected: %s -> %s\n' "$name" "$repo" >&2

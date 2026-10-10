@@ -43,42 +43,52 @@ report() {
     fi
 }
 
-run() {
+# $1 = display name, rest = the command to run. Output is captured and
+# re-printed for the failures: a red CI run must say *why* it is red. Before
+# this, every check's output went to /dev/null and a failure in the builder
+# could only be diagnosed by re-running the container by hand.
+check() {
     local name="$1"
     shift
-    "$@" >/dev/null 2>&1
-    report $? "$name"
+    local log rc=0
+    log="$(mktemp)"
+    "$@" >"$log" 2>&1 || rc=$?
+    report "$rc" "$name"
+    if (( rc != 0 )); then
+        printf -- '----- %s -----\n' "$name" >&2
+        sed 's/^/    /' "$log" >&2
+        printf -- '----- %s (end) -----\n' "$name" >&2
+    fi
+    rm -f "$log"
 }
 
 section 'Syntax'
 for file in manage.sh client/*.sh scripts/*.sh scripts/lib/*.sh tests/*.sh; do
     [[ -f "$file" ]] || continue
-    bash -n "$file" >/dev/null 2>&1
-    report $? "bash -n $file"
+    check "bash -n $file" bash -n "$file"
 done
 
 section 'Lint'
 if command -v shellcheck >/dev/null 2>&1; then
-    run 'shellcheck' shellcheck --severity=warning manage.sh client/*.sh scripts/*.sh scripts/lib/*.sh tests/*.sh
+    check 'shellcheck' shellcheck --severity=warning manage.sh client/*.sh scripts/*.sh scripts/lib/*.sh tests/*.sh
 else
     skipped=$(( skipped + 1 ))
     printf 'SKIP  shellcheck (not installed)\n'
 fi
 
 if command -v actionlint >/dev/null 2>&1; then
-    run 'actionlint' actionlint .github/workflows/*.yml
+    check 'actionlint' actionlint .github/workflows/*.yml
 else
     skipped=$(( skipped + 1 ))
     printf 'SKIP  actionlint (not installed)\n'
 fi
 
 section 'Python'
-python3 -m py_compile scripts/*.py scripts/lib/*.py tests/*.py >/dev/null 2>&1
-report $? 'py_compile'
+check 'py_compile' python3 -m py_compile scripts/*.py scripts/lib/*.py tests/*.py
 
 for test_file in tests/test_*.py; do
     [[ -f "$test_file" ]] || continue
-    run "$test_file" python3 "$test_file"
+    check "$test_file" python3 "$test_file"
 done
 
 section 'Behaviour'
@@ -102,7 +112,7 @@ for test_file in tests/test-*.sh tests/test_*.sh; do
                 ;;
         esac
     fi
-    run "$test_file" bash "$test_file"
+    check "$test_file" bash "$test_file"
 done
 
 printf '\n----------------------------------------\n'

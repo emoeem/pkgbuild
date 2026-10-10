@@ -25,8 +25,8 @@
 # 升级方式：`pkgver` 用日期；改了远程源就用 `scripts/refresh-rule-sets.sh` 自动比对 sha256 并提交。
 
 pkgname=sing-box-rule-sets
-pkgver=20261008
-pkgrel=2
+pkgver=20261010
+pkgrel=1
 pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, Loyalsoldier enhanced geosite (cn/non-cn), always-direct list, CN ad-SDK extras'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
@@ -56,9 +56,9 @@ sha256sums=(
     '103d157a4e0a67e69a34dd00c8b54c532668a116656bd1b5db790ed8ecdfe3ac'
     'd5a12d61f726d63c0835fd7233de1b3186204aed51c07167f9650936224293ec'
     'df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f'
-    'f7248f2cc87adfa89af51b7c34f9c41bf1b561a3daea7a27c4a8fb829b6df378'
-    '60fa2f8f94e42f20f7cd57d3b11d818ec483b1971d1357d9b6114ca07152db4d'
-    '055b1ac5ce1d8b9f6267d66eb1ede7a05feae7f578ff85f2df1d1d7fc6c1be8e'
+    'fa096b4d8a5dd2a78523bc728918b82363f21c9f1a9a9091e2883a3249d81657'
+    '5f136bb81bbe2198d248f65d288ae00e972fd0e6e25b6903f624c808972f7e4c'
+    '3e26a72e0800ccbcf9a941762a5159f7e6950f172e732aa24778c6c6788fb834'
     'SKIP'
     'SKIP'
     'SKIP'

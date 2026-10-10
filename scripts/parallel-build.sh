@@ -87,7 +87,6 @@ build_package() {
     case "$runner" in
         container)
             "$container_runtime" run --rm \
-                --cap-add SYS_ADMIN --security-opt seccomp=unconfined \
                 --volume "${root}:/workspace:ro" \
                 --volume "${package_out}:/out" \
                 --volume "${out_dir}/cache:/cache" \

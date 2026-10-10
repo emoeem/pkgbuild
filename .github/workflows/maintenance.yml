@@ -117,6 +117,14 @@ jobs:
   check-sonames:
     name: Detect outdated soname dependencies
     runs-on: ubuntu-24.04
+    env:
+      # 检测容器和 package build 用同一份 builder 镜像：它由本仓库发布到 GHCR，
+      # 匿名拉取不受 Docker Hub 的「每 IP 未认证拉取」限速影响。直接拉
+      # docker.io/cachyos/cachyos-v3:latest 会被限速成
+      # `toomanyrequests: You have reached your unauthenticated pull rate limit`
+      # （run 37989749507，docker run exit 125）——检测器本身没有任何问题，
+      # 却让每天一次的 soname 复查整个 job 变红。
+      BUILDER_IMAGE: ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest
     outputs:
       stale: ${{ steps.dispatch.outputs.stale }}
     steps:
@@ -144,12 +152,27 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p maintenance-out
+          # Exit 4 means a packages/<dir>/.rebuild-on declaration no longer
+          # matches the artifact (it declares a SONAME the package does not
+          # NEED).  A rebuild cannot fix that, and blocking the drift rebuilds
+          # below would turn a one-line metadata fix into a stopped pipeline, so
+          # it is surfaced as an error annotation and the run continues.  Every
+          # other non-zero exit (bad usage, unusable declarations or provider
+          # set) still fails the step: those mean the report cannot be trusted.
+          set +e
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/maintenance-out:/out" \
             "${{ steps.builder.outputs.image }}" \
             bash /workspace/scripts/check-repository-sonames.sh \
               /workspace/published/x86_64 /out /workspace/packages
+          status=$?
+          set -e
+          if ((status == 4)); then
+            printf '::error::stale .rebuild-on declaration(s); see STALE-DECLARATION in the report above\n'
+          elif ((status != 0)); then
+            exit "$status"
+          fi
 
       - name: Dispatch rebuilds for stale packages
         id: dispatch

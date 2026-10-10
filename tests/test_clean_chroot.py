@@ -41,7 +41,7 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn('arch-nspawn -c "$cache_dir/pacman" "$work_root/root" pacman -Syu --noconfirm', script)
         self.assertIn('uses: ./.github/actions/setup-builder', workflow)
         local_runner = (ROOT / 'scripts/parallel-build.sh').read_text()
-        self.assertIn('--cap-add SYS_ADMIN --security-opt seccomp=unconfined', local_runner)
+        self.assertNotIn('--cap-add SYS_ADMIN', local_runner)
 
     def test_checks_run_by_default_and_skip_is_explicit(self):
         script = (ROOT / 'scripts/build-in-clean-chroot.sh').read_text()

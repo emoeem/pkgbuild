@@ -284,6 +284,34 @@ run_build() {
 # ccache counters are zeroed so the recorded hit rate describes this build
 # only. Every CI build job owns its restored cache volume, so this does not
 # disturb other packages.
+# README 的依赖优先级把仓库源都满足不了的依赖交给 yay 从 AUR 构建安装。这条
+# 规则必须对依赖的依赖同样成立（见 find-uninstallable-dependencies.sh 的说明）：
+# 仓库里有同名包、但依赖闭包装不上的依赖，要先把真正缺的那个名字从 AUR 装好，
+# 否则 pacman 会直接 "could not satisfy dependencies"，目标包连编译都不会开始
+# （run 38025497233：yay -S --aur 仍会把仓库里的同名副本当成满足条件，只有把缺件
+# 本体装进容器才能让仓库副本变得可安装；触发那个 run 的桩包此后已退役，但规则对
+# 任何此类依赖仍然成立）。
+# 装好一轮后重新探测，覆盖"缺件本身也依赖缺件"的链条；最多三轮。这段必须在
+# timing_begin build 之前跑完：从 AUR 补装依赖属于准备阶段，不是这个包的编译。
+for _ in 1 2 3; do
+    mapfile -t aur_dependencies < <(
+        bash "$workspace_dir/scripts/find-uninstallable-dependencies.sh" \
+            "$package_dir/.SRCINFO"
+    )
+    if (( ${#aur_dependencies[@]} == 0 )); then
+        break
+    fi
+    printf 'Installing %s from the AUR because the repositories cannot satisfy the dependency closure.\n' \
+        "${aur_dependencies[*]}"
+    if ! as_builder yay -S --needed --asdeps --noconfirm \
+        "${aur_dependencies[@]}"; then
+        printf \
+            'WARNING: could not install %s from the AUR; the build will report the original dependency error.\n' \
+            "${aur_dependencies[*]}" >&2
+        break
+    fi
+done
+
 if command -v ccache >/dev/null 2>&1; then
     ccache --zero-stats >/dev/null 2>&1 || true
 fi
@@ -329,27 +357,6 @@ fi
 if (( yay_status != 0 )); then
     printf 'yay exited with status %d after producing package files; attempting explicit install for runtime verification.\n' "$yay_status" >&2
 fi
-
-# yay may build successfully but decline installation because a package-level
-# conflict exists. The builder is disposable: remove only explicitly declared
-# conflicts from .SRCINFO, never virtual provides, then install for real checks.
-install_built_package() {
-    local package_file="$1" srcinfo="$package_dir/.SRCINFO" conflict current
-    if pacman -U --noconfirm -- "$package_file"; then return 0; fi
-    printf 'Initial install failed; checking declared .SRCINFO conflicts.\n' >&2
-    mapfile -t conflicts < <(awk -F ' = ' '$1 == "conflict" {sub(/[<>=].*$/, "", $2); if ($2 != "") print $2}' "$srcinfo" | sort -u)
-    ((${#conflicts[@]} > 0)) || { echo 'No declared conflicts; refusing blind removal.' >&2; return 1; }
-    mapfile -t installed < <(pacman -Qq)
-    remove=()
-    for conflict in "${conflicts[@]}"; do
-        for current in "${installed[@]}"; do [[ "$current" == "$conflict" ]] && remove+=("$current"); done
-    done
-    ((${#remove[@]} > 0)) || { echo 'Declared conflicts are not installed; refusing blind removal.' >&2; return 1; }
-    printf 'Removing declared conflicting package(s) from disposable builder: %s\n' "${remove[*]}" >&2
-    pacman -Rdd --noconfirm -- "${remove[@]}"
-    pacman -U --noconfirm -- "$package_file"
-}
-for package_file in "${package_files[@]}"; do install_built_package "$package_file"; done
 
 timing_begin verify
 for package_file in "${package_files[@]}"; do

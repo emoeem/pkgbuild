@@ -1,0 +1,19 @@
+# Update-source registry for packages that are not plain AUR mirrors.
+#
+# scripts/check-package-manifests.py requires every packages/<name> to declare
+# exactly one update source.  Packages that mirror an AUR repo say so with
+# .aur-url + .aur-commit; everything else must be listed here.
+#
+# Format, one line per package:
+#
+#   <package> workflow <path>   an automated updater refreshes this package
+#   <package> manual <reason>   nothing refreshes it; that is a decision
+#
+# `workflow` paths are checked against git, so a renamed workflow fails the
+# check instead of silently orphaning the package.  Prefer `workflow` when an
+# updater exists; `manual` is a deliberate statement of staleness, not a
+# default.  See docs/build-pipeline.md.
+
+sing-box-rule-sets workflow .github/workflows/refresh-rule-sets.yml
+sing-box-ebpf manual upstream tag is pinned by hand in the PKGBUILD; no release automation upstream
+sing-box-panel manual source lives in this repo plus a pinned zashboard archive; bumped by hand

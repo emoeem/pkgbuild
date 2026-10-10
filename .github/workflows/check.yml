@@ -27,8 +27,13 @@ on:
       - "tests/**"
       - "client/**"
       - "manage.sh"
+      - ".githooks/**"
       - ".github/builder/**"
       - ".github/workflows/check.yml"
+      # tests/test_workflow_images.py asserts invariants of these two, so an
+      # edit to either one must re-run it.
+      - ".github/workflows/dependency-drift.yml"
+      - ".github/workflows/maintenance.yml"
 
 permissions:
   contents: read
@@ -77,29 +82,52 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-      - name: Run dependency graph tests
-        run: python tests/test_select_packages.py
-      - name: Run ELF SONAME fault-injection test
-        run: bash tests/test_elf_soname.sh
-      # Lint lives here, not in the per-package matrix: it does not depend on
-      # the selected packages, and the matrix is skipped entirely when a
-      # scripts-only change selects no packages.
+      # The static half of this job is one script, and it is the same script the
+      # git pre-commit hook runs (.githooks/pre-commit): "green locally" and
+      # "green in CI" are the same list of checks, by construction. It also
+      # runs before any container is pulled, so a package with no update source
+      # or an unparsable .SRCINFO fails in seconds instead of minutes into a
+      # job. Add checks to scripts/run-static-checks.sh, not here.
+      - name: Run static checks
+        run: bash scripts/run-static-checks.sh
+      # Guards that equivalence: the check list, failure propagation, and the
+      # hook/CI wiring itself.
+      - name: Run static check harness tests
+        run: bash tests/test-static-checks.sh
       - name: Set up CachyOS builder
         id: builder
         uses: ./.github/actions/setup-builder
         with:
           restore-caches: 'false'
-
+      # Lint lives here, not in the per-package matrix: it does not depend on
+      # the selected packages, and the matrix is skipped entirely when a
+      # scripts-only change selects no packages.
       - name: Run the full verification suite in the builder
         # tests/run-all.sh is the same entry point used locally, so the local
         # and CI definitions of "verified" cannot drift apart.
+        #
+        # 两条约束决定了这里的形式，缺一个套件就会假红（见 run 38036330468）：
+        #
+        # 1. 必须以非 root 跑。makepkg 拒绝以 root 运行，而 test-package-audit.sh
+        #    和 test_auto_repair.sh 的 .SRCINFO/updpkgsums 修复路径都要调 makepkg。
+        #    builder 是镜像里建好的无特权用户（带 HOME 和 passwordless sudo），
+        #    正是为此存在。
+        # 2. 必须复制一份再跑，而不是直接读只读挂载。checkout 的属主是 runner
+        #    （uid 1001），容器里的用户是 builder（uid 1000），git 会拒绝跨属主
+        #    仓库（fatal: detected dubious ownership in repository），于是
+        #    tests/test_workflow_references.py 的 `git ls-files`、manifest 门禁的
+        #    workflow 跟踪校验都会失败。以非 root 复制时 cp 无法保留属主，副本
+        #    自然属于 builder，检查就与本地一致了。
+        #
+        # 挂载仍然只读：源仓库不会被测试改动。
         shell: bash
         run: |
           set -Eeuo pipefail
           docker run --rm \
+            --user builder \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             "${{ steps.builder.outputs.image }}" \
-            bash -c 'set -Eeuo pipefail; cd /workspace && bash tests/run-all.sh'
+            bash -c 'set -Eeuo pipefail; cp -a /workspace /tmp/ws && cd /tmp/ws && bash tests/run-all.sh'
 
       - name: Verify CI script references are tracked
         # Runs on the runner (not in the container) because it asks git what the

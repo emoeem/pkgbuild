@@ -22,6 +22,7 @@ permissions:
 env:
   RELEASE_TAG: repo
   REPOSITORY_NAME: emoeem
+  BUILDER_IMAGE: ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest
 
 jobs:
   remove:

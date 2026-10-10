@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# 提交前跑一遍「静态门禁」（check.yml 的 integration job 里、容器步骤之前的那一半）。
+#
+# 接上：scripts/install-git-hooks.sh（它设置 core.hooksPath=.githooks）。
+# 绕过：git commit --no-verify，或 EMO_SKIP_STATIC_CHECKS=1 git commit ...
+#
+# 这里刻意不自己写检查清单：仓库里只有 scripts/run-static-checks.sh 一份清单，
+# check.yml 也调它，所以「本地绿了」和「CI 那道静态关卡绿了」是同一件事。
+set -Eeuo pipefail
+
+if [[ -n "${EMO_SKIP_STATIC_CHECKS:-}" ]]; then
+    printf 'EMO_SKIP_STATIC_CHECKS is set: skipping the static gate.\n'
+    exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+exec "${repo_root}/scripts/run-static-checks.sh"

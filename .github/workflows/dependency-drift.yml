@@ -28,6 +28,14 @@ concurrency:
   group: abi-watch
   cancel-in-progress: false
 
+env:
+  # 和 package build / maintenance 用同一份 builder 镜像（本仓库发布到 GHCR，
+  # 匿名拉取不受限）。这里是每两小时一次：只要容器从 Docker Hub 匿名拉取，
+  # 就会随 runner 共享 IP 的剩余额度随机变成 toomanyrequests，把「检测器跑不
+  # 动」伪装成 workflow 失败（run 37989749507）。拉取失败必须是响的失败，
+  # 所以镜像换成本仓库自己的，而不是加 retry。
+  BUILDER_IMAGE: ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest
+
 jobs:
   detect:
     name: Detect drift and dispatch rebuilds

@@ -3,7 +3,7 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前维护 13 个 package base。
+当前维护 11 个 package base。
 
 ## Features
 
@@ -300,7 +300,15 @@ AUR + 私人仓库包（本机实测约 2 秒），也能发现由传递依赖�
   仍然只有源码树里存在的包会被 dispatch；已下架却还在发布的记为 `ORPHAN`。
 - `maintenance.yml` 每天用同一个 `check-repository-sonames.sh` 再做一次深度
   复查（同时清理过期 Artifact）。来自 chaotic-aur / archlinuxcn / arch4edu /
-  AUR 的库记在 `scripts/data/external-sonames.txt`（文件头部写明更新方法）。
+  AUR 的库由包自己在 `packages/<包>/.rebuild-on` 里声明（`soname libshine.so.3
+  shine`），声明只对该包放行——没有全局白名单，全局名单会连带掩盖别的包缺同一个
+  库；声明了却不再被 NEEDED 的名字判为过期声明（`STALE-DECLARATION`，退出码 4），
+  而不是继续豁免。
+
+`dependency-drift.yml` 比对的是 `<version>-<pkgrel>`（依赖只是重打包也可能换
+SONAME），对象既有当前 `.SRCINFO` 里的依赖，也有 `.rebuild-on` 里 `package <名字>`
+声明的名字——依赖从 `.SRCINFO` 消失后仍然被盯住；只在容器仓库之外提供的声明名
+（如 archlinuxcn 的 `shine`）留一行 `NOTE`，不算漂移。
 
 如果依赖提供者自己没声明 `provides=('libfoo.so=N-64')`（例如 chaotic-aur 的
 `openapv`、CachyOS 的 `openvino`），pacman 无法阻止不兼容升级，只能依赖上面的
@@ -370,7 +378,7 @@ Docker 的 Linux 自托管 runner。
 当前仓库已完成一轮五阶段维护优化：
 
 1. **AUR / Overlay**：AUR 同步改为事务式 staging，先验证上游、overlay、PKGBUILD 和 `.SRCINFO`，再替换工作区，避免失败同步破坏现有包。
-2. **PKGBUILD 审计**：`scripts/audit-packages.sh` 对 13 个有效 package base 做元数据、架构、AUR 元数据以及 provider / dependency 一致性审计。
+2. **PKGBUILD 审计**：`scripts/audit-packages.sh` 对 11 个有效 package base 做元数据、架构、AUR 元数据以及 provider / dependency 一致性审计。
 3. **构建缓存**：CI 复用 pacman、VCS source 和 Cargo 缓存；builder / build 脚本变化会使缓存 key 失效（按 flavor 前缀部分恢复旧缓存），下载的仓库资产存放在缓存目录之外，不进入缓存快照。
 4. **Repository 完整性**：发布前运行 `scripts/verify-repository.sh`，校验数据库引用、软件包资产、SHA256 和仓库配置。
 5. **管理与文档**：TUI 增加「审计全部软件包」，构建流水线文档同步记录实际维护流程。
@@ -383,6 +391,10 @@ Docker 的 Linux 自托管 runner。
 
 ```bash
 ./tests/run-all.sh          # 语法 + lint + Python + 行为测试
+# 静态检查统一入口（与 check.yml 的静态关卡同一份清单）；先接线一次：
+# ./scripts/install-git-hooks.sh 让 pre-commit 钩子自动跑它
+./scripts/run-static-checks.sh
+bash tests/test-static-checks.sh
 ./scripts/doctor.sh         # 环境自检
 ./scripts/build-planner.py --selection changed --before HEAD~1 --after HEAD
 ./scripts/audit-packages.sh

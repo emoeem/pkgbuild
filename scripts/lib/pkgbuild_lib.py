@@ -44,6 +44,11 @@ SONAME_RELATION_PATTERN = re.compile(r"^.*[.]so=[0-9][0-9.]*(?:-[0-9]+)?$")
 #: Paths that change the toolchain/environment every package is built with.
 INFRASTRUCTURE_PATHS = ("config/",)
 
+#: The one config/ file that must not trigger a rebuild of everything: the
+#: update source registry only records who refreshes a package, so editing it
+#: costs nothing.  See check-package-manifests.py.
+UPDATE_SOURCE_REGISTRY = "config/package-updates.txt"
+
 #: Paths that affect the pipeline itself but never a produced package.
 PIPELINE_PATHS = (
     ".github/",
@@ -498,6 +503,12 @@ def classify_changes(
     for path in paths:
         parts = path.split("/")
         if path.startswith(INFRASTRUCTURE_PATHS):
+            if path == UPDATE_SOURCE_REGISTRY:
+                # A bookkeeping edit is not an environment change: keeping it
+                # out of `infrastructure` is what makes "add a package to the
+                # registry" stop costing a full rebuild.
+                impact.ignored.append(path)
+                continue
             impact.infrastructure.append(path)
             continue
         if len(parts) >= 3 and parts[0] == "packages" and parts[1] in available:

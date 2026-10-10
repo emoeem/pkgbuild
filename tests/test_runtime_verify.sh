@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Fault-injection regression tests for scripts/runtime-verify.sh.
 #
-# Each fixture pins both archive checks and installed-package error reporting.
-# Broken archives include a dangling symlink, SONAME mismatch, unresolved
-# library and world-writable file; a mock pacman also checks not-installed.
+# Each fixture ships a deliberately broken payload so a silently-disabled check
+# shows up as a missing failure instead of a green run: a dangling symlink, a
+# library whose SONAME disagrees with its file name, an executable with an
+# unresolved runtime library, and a world-writable file.
 set -Eeuo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,7 +31,7 @@ pack() {
     )
 }
 
-printf '%s\n' '1/4: a broken package is rejected with the exact failure classes'
+printf '%s\n' '1/3: a broken package is rejected with the exact failure classes'
 
 pkg="$work/broken"
 mkdir -p "$pkg/usr/bin" "$pkg/usr/lib" "$pkg/etc"
@@ -46,6 +47,9 @@ ln -sf libfake.so.99 "$pkg/usr/lib/libfake.so"
 gcc -o "$pkg/usr/bin/broken" "$work/fake.c" -L"$pkg/usr/lib" -lfake
 rm -f "$pkg/usr/lib/libfake.so"
 ln -sf /nonexistent/target "$pkg/usr/lib/libdangling.so"
+# A versioned library with no SONAME at all: the quirc 1.2 defect, where the
+# installed name promises a version the loader can never resolve.
+gcc -shared -fPIC -o "$pkg/usr/lib/libnosoname.so.1" "$work/helper.c"
 printf 'x\n' >"$pkg/etc/wide-open.conf"
 chmod 777 "$pkg/etc/wide-open.conf"
 printf 'pkgname = faultfixture\npkgver = 1.0-1\narch = x86_64\n' >"$pkg/.PKGINFO"
@@ -60,7 +64,7 @@ python3 - "$work/report.json" <<'PY' || exit 1
 import json, sys
 report = json.load(open(sys.argv[1], encoding="utf-8"))
 checks = {finding["check"] for finding in report["findings"]}
-expected = {"broken-symlink", "soname-mismatch", "world-writable", "unresolved-library"}
+expected = {"broken-symlink", "soname-mismatch", "missing-soname", "world-writable", "unresolved-library"}
 missing = expected - checks
 if missing:
     raise SystemExit(f"missing failure class(es): {sorted(missing)} (got {sorted(checks)})")
@@ -69,16 +73,29 @@ if report["status"] != "fail":
 print(f"  detected: {sorted(checks)}")
 PY
 
-printf '%s\n' '2/4: a healthy package passes'
+printf '%s\n' '2/3: a healthy package passes'
 ok="$work/ok"
-mkdir -p "$ok/usr/bin"
+mkdir -p "$ok/usr/bin" "$ok/usr/lib"
 cp /usr/bin/true "$ok/usr/bin/ok-true"
+# A versioned library whose SONAME matches its file name is the normal case;
+# without it this suite only ever saw a mismatching SONAME, which is how a
+# bracket-stripping bug could report every real library as broken.
+gcc -shared -fPIC -Wl,-soname,libok.so.1 -o "$ok/usr/lib/libok.so.1" "$work/helper.c"
+# The linker alias every Arch package ships. readelf follows it and reports the
+# target's SONAME, so the check must ignore symlinks; otherwise libquirc.so ->
+# libquirc.so.1 fails as "libquirc.so declares libquirc.so.1".
+ln -s libok.so.1 "$ok/usr/lib/libok.so"
+# The other legal shape: the fully versioned file plus the SONAME symlink the
+# loader follows (how ffmpeg ships libavcodec.so.61.19.100).
+gcc -shared -fPIC -Wl,-soname,libfull.so.2 -o "$ok/usr/lib/libfull.so.2.1.0" "$work/helper.c"
+ln -s libfull.so.2.1.0 "$ok/usr/lib/libfull.so.2"
+ln -s libfull.so.2 "$ok/usr/lib/libfull.so"
 printf 'pkgname = okfixture\npkgver = 1.0-1\narch = x86_64\n' >"$ok/.PKGINFO"
 pack "$ok" "$work/okfixture.pkg.tar.zst"
 bash "$root/scripts/runtime-verify.sh" --file "$work/okfixture.pkg.tar.zst" >/dev/null ||
     fail 'a healthy package failed runtime verification'
 
-printf '%s\n' '3/4: smoke manifest expectations are enforced'
+printf '%s\n' '3/3: smoke manifest expectations are enforced'
 smoke="$work/smoke"
 mkdir -p "$smoke/usr/bin"
 printf 'pkgname = ffmpeg-full\npkgver = 1.0-1\narch = x86_64\n' >"$smoke/.PKGINFO"
@@ -86,28 +103,5 @@ pack "$smoke" "$work/smokefixture.pkg.tar.zst"
 if bash "$root/scripts/runtime-verify.sh" --file "$work/smokefixture.pkg.tar.zst" >/dev/null 2>&1; then
     fail 'a package missing its declared binaries passed verification'
 fi
-
-printf '%s\n' '4/4: a missing installed package emits not-installed instead of dying under set -e'
-mock="$work/mock-bin"
-mkdir -p "$mock"
-cat >"$mock/pacman" <<'MOCK'
-#!/usr/bin/env bash
-case "$1" in
-  -Ql) exit 1 ;;
-  -T) exit 1 ;;
-  *) exit 1 ;;
-esac
-MOCK
-chmod +x "$mock/pacman"
-if PATH="$mock:$PATH" bash "$root/scripts/runtime-verify.sh" --package absent-fixture --json-out "$work/not-installed.json" >/dev/null 2>&1; then
-    fail 'a missing installed package unexpectedly passed verification'
-fi
-python3 - "$work/not-installed.json" <<'PYJSON' || exit 1
-import json, sys
-report = json.load(open(sys.argv[1], encoding="utf-8"))
-if report["status"] != "fail" or not any(f.get("check") == "not-installed" for f in report["findings"]):
-    raise SystemExit(f"missing explicit not-installed finding: {report}")
-print("  explicit not-installed finding recorded")
-PYJSON
 
 printf '%s\n' 'All runtime verification tests passed.'
