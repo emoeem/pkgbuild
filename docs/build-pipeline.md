@@ -41,6 +41,7 @@
 - overlay 精确触发
 - 无关文档不触发构建
 - build infrastructure 触发全量重建
+- `config/package-updates.txt`（更新来源登记表）只描述维护方式，不触发构建
 
 `tests/test_repository.sh` 使用真实 `repo-add` 验证仓库生成、GitHub Release 文件名清洗和删除 package 后数据库更新。
 

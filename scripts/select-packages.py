@@ -10,6 +10,11 @@ from pathlib import Path
 PACKAGE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9@._+-]+$")
 DEPENDENCY_OPERATOR_PATTERN = re.compile(r"^([^<>=]+)(?:[<>=].*)?$")
 
+# config/ changes the build environment, so everything rebuilds.  The update
+# source registry is the one exception: it only records who refreshes a package,
+# so editing it must not cost a full rebuild.  See check-package-manifests.py.
+UPDATE_SOURCE_REGISTRY = "config/package-updates.txt"
+
 
 def package_dirs(root: Path) -> list[Path]:
     return sorted(
@@ -109,7 +114,7 @@ def affected_packages(root: Path, paths: list[str], available: set[str]) -> set[
     infrastructure = False
     for path in paths:
         parts = path.split("/")
-        if path.startswith("config/"):
+        if path.startswith("config/") and path != UPDATE_SOURCE_REGISTRY:
             infrastructure = True
         if len(parts) >= 3 and parts[0] == "packages" and parts[1] in available:
             selected.add(parts[1])

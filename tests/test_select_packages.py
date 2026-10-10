@@ -93,5 +93,23 @@ class SelectPackagesTests(unittest.TestCase):
         after = self.commit("build infrastructure")
         self.assertEqual(self.select(before, after), [])
 
+    def test_config_change_rebuilds_everything(self):
+        self.add_package("foo")
+        self.add_package("bar")
+        before = self.commit("base")
+        (self.root / "config").mkdir()
+        (self.root / "config/emo-native-flags.conf").write_text("changed\n", encoding="utf-8")
+        after = self.commit("build flags")
+        self.assertEqual(self.select(before, after), ["bar", "foo"])
+
+    def test_update_source_registry_does_not_rebuild_everything(self):
+        self.add_package("foo")
+        self.add_package("bar")
+        before = self.commit("base")
+        (self.root / "config").mkdir()
+        (self.root / "config/package-updates.txt").write_text("foo manual\n", encoding="utf-8")
+        after = self.commit("update source registry")
+        self.assertEqual(self.select(before, after), [])
+
 if __name__ == "__main__":
     unittest.main()
