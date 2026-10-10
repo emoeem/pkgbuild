@@ -97,8 +97,17 @@ __CACHE_ENV__
     baseline_root="$baseline/root"
     work_parent="$cache_dir/chroot"
 fi
+# arch-nspawn invokes systemd-nspawn by name through PATH. Docker builders do
+# not have a host systemd machine-id/journal to link; systemd-nspawn otherwise
+# fails in setup_journal and leaves its mount-tunnel cleanup error in the log.
+nspawn_wrapper_dir="$(mktemp -d "/tmp/pkgbuild-nspawn-${package_name}.XXXXXX")"
+cat > "$nspawn_wrapper_dir/systemd-nspawn" <<'__NSPAWN_WRAPPER__'
+#!/usr/bin/env bash
+exec /usr/bin/systemd-nspawn --link-journal=no "$@"
+__NSPAWN_WRAPPER__
+chmod 0755 "$nspawn_wrapper_dir/systemd-nspawn"
 work_root="$(mktemp -d "$work_parent/work-${package_name}.XXXXXX")"
-trap 'rm -rf -- "$work_root"' EXIT INT TERM
+trap 'rm -rf -- "$work_root" "$nspawn_wrapper_dir"' EXIT INT TERM
 mkdir -p "$work_root/root"
 cp --reflink=auto -a "$baseline_root/." "$work_root/root/"
 sed -i '/^\[options\]$/a CacheDir = /cache/pacman' "$work_root/root/etc/pacman.conf"
@@ -128,7 +137,7 @@ if [[ -d "$repo_dir" ]] && compgen -G "$repo_dir/*.db*" >/dev/null; then
 fi
 export MAKEFLAGS="-j${MAKE_JOBS:-$(nproc)}" NPROC="${MAKE_JOBS:-$(nproc)}"
 export CFLAGS="${EMO_CFLAGS:-}" CXXFLAGS="${EMO_CXXFLAGS:-${EMO_CFLAGS:-}}" LDFLAGS="${EMO_LDFLAGS:-}" RUSTFLAGS="${EMO_RUSTFLAGS:-}"
-export CMAKE_BUILD_PARALLEL_LEVEL="${MAKE_JOBS:-$(nproc)}" SRCDEST="${cache_dir}/sources/${package_name}" CARGO_HOME="$cache_dir/cargo" CCACHE_DIR="$cache_dir/ccache" CCACHE_MAXSIZE=2G PATH="/usr/lib/ccache/bin:$PATH"
+export CMAKE_BUILD_PARALLEL_LEVEL="${MAKE_JOBS:-$(nproc)}" SRCDEST="${cache_dir}/sources/${package_name}" CARGO_HOME="$cache_dir/cargo" CCACHE_DIR="$cache_dir/ccache" CCACHE_MAXSIZE=2G PATH="$nspawn_wrapper_dir:/usr/lib/ccache/bin:$PATH"
 mkdir -p "$SRCDEST" "$cache_dir/cargo" "$cache_dir/ccache"
 printf 'Clean-chroot build: package=%s baseline=%s repo=%s\n' "$package_name" "$fingerprint" "$repo_dir"
 # Update this package's disposable work copy before invoking makechrootpkg.

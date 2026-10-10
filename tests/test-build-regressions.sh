@@ -87,4 +87,14 @@ PATH="$stub:$PATH" timeout 60 bash "$root/scripts/wait-for-build-dependencies.sh
 (( SECONDS - start < 30 )) || fail 'the ordering wait slept on prerequisites that are absent'
 grep -Fq 'Not part of this run' "$work/wait.out" ||
     fail 'absent prerequisites were not reported as skipped'
+printf '%s\n' '6/6: verify clean-chroot systemd-nspawn disables host journal linking'
+# Docker builders do not have a host machine-id/journal. devtools' arch-nspawn
+# inherits PATH, so the temporary wrapper must disable journal linking without
+# patching the installed devtools binary or changing the host configuration.
+grep -Fq -- 'systemd-nspawn --link-journal=no "$@"' "$root/scripts/build-in-clean-chroot.sh" \
+    || fail 'clean-chroot does not disable systemd-nspawn host journal linking'
+grep -Fq -- 'PATH="$nspawn_wrapper_dir:/usr/lib/ccache/bin:$PATH"' "$root/scripts/build-in-clean-chroot.sh" \
+    || fail 'clean-chroot nspawn wrapper is not ahead of the system PATH'
+grep -Fq -- 'rm -rf -- "$work_root" "$nspawn_wrapper_dir"' "$root/scripts/build-in-clean-chroot.sh" \
+    || fail 'clean-chroot does not clean up the temporary nspawn wrapper'
 printf '%s\n' 'All build regression tests passed.'
