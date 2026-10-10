@@ -1,0 +1,59 @@
+# SourceError: declared sources cannot be fetched or verified.
+rules:
+  - id: checksum-mismatch
+    category: SourceError
+    stage: fetch
+    summary: A source file does not match its declared checksum.
+    confidence: high
+    patterns:
+      - "did not pass the validity check"
+      - "ERROR: (sha256|sha512|b2|md5)sums"
+      - "validity check .* FAILED"
+    root_cause: "upstream source changed without a checksum update"
+    action:
+      kind: refresh_checksum
+      safe_auto_fix: level2
+      retry: true
+  - id: source-not-found
+    category: SourceError
+    stage: fetch
+    summary: A source file referenced by the PKGBUILD does not exist.
+    confidence: high
+    patterns:
+      - "Failed to download"
+      - "source file not found"
+      - "ERROR: One or more files"
+    root_cause: "missing or moved source"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: missing-pgp-key
+    category: SourceError
+    stage: fetch
+    summary: Signature verification failed because the signing key is unknown.
+    confidence: high
+    patterns:
+      - "Unknown public key"
+      - "Can't check signature: No public key"
+      - "signature from .* is unknown trust"
+    root_cause: "upstream PGP key missing from the keyring"
+    action:
+      kind: import_key
+      safe_auto_fix: level2
+      retry: true
+  - id: upstream-repository-missing
+    category: SourceError
+    stage: fetch
+    summary: The upstream repository or branch is gone.
+    confidence: high
+    patterns:
+      - "repository not found"
+      - "Could not read from remote repository"
+      - "remote: Repository not found"
+      - "Remote branch .* not found"
+    root_cause: "upstream repository unavailable"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

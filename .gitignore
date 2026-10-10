@@ -1,6 +1,8 @@
 dist/
 incoming/
 published/
+.cache/
+build-output/
 repository-key.asc
 __pycache__/
 *.pyc
@@ -9,3 +11,6 @@ __pycache__/
 src/
 pkg/
 *.log
+
+# Isolated rootful Podman storage used only for local CI-container validation
+.cache/ci-container-root/

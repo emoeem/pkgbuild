@@ -10,8 +10,15 @@ if [[ -n "$repo_dir" ]]; then
     packages=("$repo_dir"/*.pkg.tar.zst)
     shopt -u nullglob
     if (( ${#packages[@]} > 0 )); then
-        rm -f "$repo_dir/${repo_name}.db"* "$repo_dir/${repo_name}.files"*
-        repo-add --remove "$repo_dir/${repo_name}.db.tar.gz" "${packages[@]}" >/dev/null
+        if [[ -w "$repo_dir" ]]; then
+            rm -f "$repo_dir/${repo_name}.db"* "$repo_dir/${repo_name}.files"*
+            repo-add --remove "$repo_dir/${repo_name}.db.tar.gz" "${packages[@]}" >/dev/null
+        elif [[ -s "$repo_dir/${repo_name}.db" || -s "$repo_dir/${repo_name}.db.tar.gz" || -s "$repo_dir/${repo_name}.db.tar.zst" ]]; then
+            printf 'Using pre-indexed read-only repository %s.\n' "$repo_dir"
+        else
+            printf 'Repository %s is read-only and has no database; index it before mounting.\n' "$repo_dir" >&2
+            exit 2
+        fi
         cat > /tmp/emo-repo.conf <<EOF
 [${repo_name}]
 SigLevel = Never

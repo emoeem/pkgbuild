@@ -13,6 +13,7 @@ stale_file="${3:-}"
 
 if [[ -n "${LOCAL_REPO_DIR:-}" ]]; then
     local_copy="$(mktemp -d)"
+    trap 'rm -rf "$local_copy"' EXIT
     cp -a "${LOCAL_REPO_DIR}/." "$local_copy/"
     shopt -s nullglob
     local_packages=("$local_copy"/*.pkg.tar.zst)
@@ -33,19 +34,51 @@ recorded_version() {
 }
 current_version() { pacman -Si "$1" 2>/dev/null | awk -F ': +' '$1 == "Version" {print $2; exit}'; }
 
+packages=0
+compared=0
+unresolved=0
+stale=0
+
 for pkg in "$repo_dir"/*.pkg.tar.zst; do
     [[ -e "$pkg" ]] || continue
     name="$(bsdtar -xOf "$pkg" .PKGINFO | awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
     buildinfo="$(mktemp)"; bsdtar -xOf "$pkg" .BUILDINFO > "$buildinfo"
     src="${root}/packages/${name}/.SRCINFO"
     [[ -f "$src" ]] || { rm -f "$buildinfo"; continue; }
+    packages=$((packages + 1))
     while IFS= read -r raw; do
         dep="$(strip_dep "$raw")"; [[ -n "$dep" && "$dep" != *.so* ]] || continue
         old="$(recorded_version "$buildinfo" "$dep")"; new="$(current_version "$dep")"
-        if [[ -n "$old" && -n "$new" && "$old" != "$new" ]]; then
+        # 没记录版本的依赖无法比较；有记录但查不到当前版本的依赖说明
+        # pacman 数据库没同步，必须单独计数，否则整轮扫描会静默空转。
+        [[ -n "$old" ]] || continue
+        compared=$((compared + 1))
+        if [[ -z "$new" ]]; then
+            unresolved=$((unresolved + 1))
+            continue
+        fi
+        if [[ "$old" != "$new" ]]; then
+            stale=$((stale + 1))
             printf 'STALE %s: direct dependency %s changed %s -> %s\n' "$name" "$dep" "$old" "$new"
             [[ -n "$stale_file" ]] && printf '%s\n' "$name" >> "$stale_file"
         fi
     done < <(awk -F ' = ' '$1 ~ /^\t(depends|makedepends|checkdepends)$/ {print $2}' "$src")
     rm -f "$buildinfo"
 done
+
+# 这一行是给工作流断言用的：干净时也必须有输出，否则「检测器崩了」和
+# 「确实没有漂移」在日志里长得一模一样 —— 这正是 openvino SONAME 漂移
+# 没能被及时拦下的原因之一。
+printf 'SUMMARY packages=%d compared=%d stale=%d unresolved=%d\n' \
+    "$packages" "$compared" "$stale" "$unresolved"
+
+if (( compared == 0 )); then
+    printf 'Nothing could be compared: the pacman databases are probably not synced (run pacman -Syu first) or no published package records dependency versions.\n' >&2
+    printf 'Refusing to report "no drift" from an incomplete scan.\n' >&2
+    exit 3
+fi
+
+if (( unresolved > 0 )); then
+    printf 'WARNING: %d dependency version(s) could not be resolved against the current repositories; drift may be under-reported.\n' \
+        "$unresolved" >&2
+fi

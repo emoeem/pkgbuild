@@ -11,17 +11,21 @@ permissions:
   issues: write
 
 concurrency:
-  group: dae-release-sync
+  # Shared with sync.yml and refresh-rule-sets.yml: all three commit to main,
+  # so they must not race each other into non-fast-forward push failures.
+  group: main-branch-updates
   cancel-in-progress: false
 
 jobs:
   sync:
     name: Update dae release marker and rebuild daed
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # The daed build itself may run up to 360 minutes and this workflow waits
+    # for it, so its own budget has to exceed that.
+    timeout-minutes: 420
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           fetch-depth: 0
 
@@ -45,17 +49,6 @@ jobs:
         if: steps.update.outputs.updated == 'true'
         run: ./scripts/check-package.sh daed-emo
 
-      - name: Commit and push dae release marker
-        if: steps.update.outputs.updated == 'true'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/dae-upstream-release
-          git commit -m "chore(daed): track upstream dae release"
-          git push origin HEAD:main
-
       - name: Trigger daed rebuild
         if: steps.update.outputs.updated == 'true'
         id: daed_dispatch
@@ -75,6 +68,7 @@ jobs:
 
       - name: Wait for daed rebuild
         if: steps.update.outputs.updated == 'true'
+        id: watch
         env:
           GH_TOKEN: ${{ github.token }}
           STARTED: ${{ steps.daed_dispatch.outputs.started }}
@@ -83,9 +77,19 @@ jobs:
           set -Eeuo pipefail
           run_id=""
           for _ in $(seq 1 90); do
+            # 只按 created_at 匹配会撞上同一时间窗里的其它 dispatch（例如
+            # AUR 同步触发的构建）；先按时间过滤，再确认这次 run 的 matrix
+            # 里真的有 "Build daed-emo" 这个 job。
             run_id="$(gh api \
               "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=workflow_dispatch&per_page=20" \
-              --jq ".workflow_runs[] | select(.created_at >= \"$STARTED\") | .id" 2>/dev/null | head -n1)"
+              --jq ".workflow_runs[] | select(.created_at >= \"$STARTED\" and .head_branch == \"main\") | .id" 2>/dev/null |
+              while IFS= read -r candidate; do
+                if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$candidate/jobs" \
+                    --jq '.jobs[] | select(.name == "Build daed-emo") | .id' 2>/dev/null | grep -q .; then
+                  printf '%s\n' "$candidate"
+                  break
+                fi
+              done)"
             if [[ -n "$run_id" ]]; then
               break
             fi
@@ -97,6 +101,21 @@ jobs:
           }
           echo "daed build run: $run_id"
           gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+
+      # marker 在构建成功之后才提交：build 失败时下一次运行会原样重试整个
+      # 流程，而不是因为 marker 已记录就早退、把这次上游版本静默丢掉。
+      # 构建并不读取这个文件，它只是「该版本已成功构建发布」的账本。
+      - name: Commit and push dae release marker
+        if: steps.update.outputs.updated == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/dae-upstream-release
+          git commit -m "chore(daed): track upstream dae release"
+          git pull --rebase origin main
+          git push origin HEAD:main
 
       - name: Report successful update
         if: steps.update.outputs.updated == 'true'

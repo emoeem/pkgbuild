@@ -26,6 +26,10 @@ rm -f /tmp/emo-cflags-test.o
 
 if [[ "$mode" == builder ]]; then
     check 'command: namcap' command -v namcap >/dev/null
+    check 'command: mkarchroot' command -v mkarchroot >/dev/null
+    check 'command: makechrootpkg' command -v makechrootpkg >/dev/null
+    check 'command: arch-nspawn' command -v arch-nspawn >/dev/null
+    check 'command: nvchecker' command -v nvchecker >/dev/null
     check 'command: yay' command -v yay >/dev/null
     check 'frontend: cc1obj' bash -c 'test -x "$(gcc -print-prog-name=cc1obj)"'
     check 'compiler: Objective-C smoke test' bash -c 'printf "%s\n" "int main(void){return 0;}" | gcc -march=znver3 -mtune=znver3 -O3 -x objective-c -c -o /tmp/emo-objc-test.o -'

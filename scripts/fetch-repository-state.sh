@@ -18,8 +18,9 @@ readonly legacy_branch="${LEGACY_BRANCH:-repo}"
 
 mkdir -p "$state_dir"
 
-if gh release view "$release_tag" --repo "$release_repository" >/dev/null 2>&1; then
-    gh release download "$release_tag" \
+# gh/git 调用加超时：一个挂死的下载会占住持有发布锁的整个 job。
+if timeout 120 gh release view "$release_tag" --repo "$release_repository" >/dev/null 2>&1; then
+    timeout 1800 gh release download "$release_tag" \
         --repo "$release_repository" \
         --dir "$state_dir" \
         --clobber
@@ -30,7 +31,7 @@ fi
 printf 'Release %s not found; trying the legacy %s branch snapshot.\n' \
     "$release_tag" "$legacy_branch"
 
-if ! git ls-remote --exit-code --heads \
+if ! timeout 120 git ls-remote --exit-code --heads \
     "https://github.com/${release_repository}.git" \
     "$legacy_branch" >/dev/null 2>&1; then
     printf 'No %s branch either; starting with an empty repository.\n' \
@@ -40,7 +41,7 @@ fi
 
 bootstrap_dir="$(mktemp -d)"
 trap 'rm -rf "$bootstrap_dir"' EXIT
-GIT_TERMINAL_PROMPT=0 git clone \
+GIT_TERMINAL_PROMPT=0 timeout 600 git clone \
     --depth 1 \
     --branch "$legacy_branch" \
     "https://github.com/${release_repository}.git" \

@@ -1,70 +1,176 @@
-name: Rebuild on dependency drift
+name: ABI watch (dependency version and soname drift)
+
+# 已发布的私有包不在 Arch / CachyOS 的 rebuild 范围内，依赖或 SONAME 一变就会
+# 变成「装得上、跑不起来」。这里负责在尽可能短的窗口内自己发现并自动重建：
+#
+#   * version drift：已发布包 .BUILDINFO 记录的依赖版本与当前仓库不一致
+#   * soname drift ：已发布包的 ELF NEEDED 在当前仓库里已经没有提供者
+#                    （openvino 这类换了 SONAME、又不声明 provides 的提供者
+#                     只有它抓得住，所以它必须和版本检测同样频繁地跑）
+#
+# 硬性要求：两个检测器都必须「跑不动就报错」。崩溃、被跳过或比较数为 0 的
+# 检测器绝不允许被当成「没有漂移」—— openvino 的 SONAME 漂移就是这么被拖到
+# 用户自己发现 ffmpeg 起不来的。
 
 on:
   schedule:
-    # Every four hours: a dependency SONAME/ABI bump breaks the already
-    # published packages immediately, and the rebuild can only start once this
-    # detection has run. The check only compares recorded dependency versions
-    # against the current repositories, so running it often is cheap.
-    - cron: "43 */4 * * *"
+    # 每两小时。检测窗口直接等于用户吃坏包的时间，但一次扫描要下载整个发布
+    # 仓库，所以在有 ABI 清单（见 README）之前先取一个成本可控的节奏。
+    - cron: "23 */2 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
   actions: write
+  issues: write
+
+concurrency:
+  group: abi-watch
+  cancel-in-progress: false
 
 jobs:
   detect:
+    name: Detect drift and dispatch rebuilds
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up CachyOS builder
+        id: builder
+        uses: ./.github/actions/setup-builder
+        with:
+          restore-caches: 'false'
 
       - name: Fetch current repository state
+        id: state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           mkdir -p published/x86_64
-          if gh release view repo --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release download repo --repo "$GITHUB_REPOSITORY" \
-              --pattern '*.pkg.tar.zst' --dir published/x86_64 --clobber
+          rm -f published/x86_64/*.pkg.tar.zst
+          if ! gh release view repo --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # 首次发布前的自举状态：没有可观察的仓库不算失败，否则这个
+            # workflow 在第一次 publish 前会永远红着。
+            printf 'Release repo does not exist yet; nothing to watch until the first publish.\n' >> "$GITHUB_STEP_SUMMARY"
+            printf 'count=0\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release download repo --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.pkg.tar.zst' --dir published/x86_64 --clobber
+          count="$(find published/x86_64 -maxdepth 1 -name '*.pkg.tar.zst' | wc -l)"
+          printf 'Published packages downloaded: %s\n' "$count"
+          printf 'count=%s\n' "$count" >> "$GITHUB_OUTPUT"
+          # 下载失败必须报错；绝不允许被当成「无漂移」。
+          if (( count == 0 )); then
+            printf '::error::No published package could be downloaded; refusing to report "no drift".\n'
+            exit 1
           fi
 
-      - name: Detect direct dependency drift
-        if: ${{ hashFiles('published/x86_64/*.pkg.tar.zst') != '' }}
+      - name: Detect dependency version drift
         run: |
           set -Eeuo pipefail
-          mkdir -p drift
-          # Both mounts are read-only, so the detector cannot write its report
-          # inside the container. Capture the container's stdout on the runner
-          # instead; writing to /workspace/drift/report.txt silently produced no
-          # report and reported "no drift" on every run.
+          mkdir -p drift/version
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/published:/published:ro" \
+            --volume "$GITHUB_WORKSPACE/drift:/out" \
             --env "LOCAL_REPO_DIR=/published/x86_64" \
-            docker.io/cachyos/cachyos-v3:latest \
-            bash -c 'bash /workspace/scripts/setup-container-repos.sh || echo "WARNING: chaotic-aur unavailable, drift only covers the remaining repositories" >&2; bash /workspace/scripts/check-dependency-drift.sh /published/x86_64 /workspace' \
-            > drift/report.txt || true
-          cat drift/report.txt
+            "${{ steps.builder.outputs.image }}" \
+            bash -c '
+              set -Eeuo pipefail
+              if ! bash /workspace/scripts/setup-container-repos.sh; then
+                printf "WARNING: third-party repositories unavailable; version drift only covers the remaining repositories.\n" >&2
+              fi
+              # 检测器用 pacman -Si 取当前版本；数据库没同步时它会拒绝报「无漂移」。
+              pacman -Syu --noconfirm >/dev/null
+              bash /workspace/scripts/check-dependency-drift.sh \
+                /published/x86_64 /workspace /out/version/stale.txt
+            ' | tee drift/version/report.txt
+          grep -q '^SUMMARY ' drift/version/report.txt || {
+            printf '::error::dependency drift detector produced no SUMMARY line; treating the scan as failed.\n'
+            exit 1
+          }
 
-      - name: Dispatch affected package rebuilds
+      - name: Detect soname drift
+        run: |
+          set -Eeuo pipefail
+          mkdir -p drift/soname
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$GITHUB_WORKSPACE/drift/soname:/out" \
+            "${{ steps.builder.outputs.image }}" \
+            bash /workspace/scripts/check-repository-sonames.sh \
+              /workspace/published/x86_64 /out /workspace/packages
+          grep -q '^SUMMARY ' drift/soname/report.txt || {
+            printf '::error::soname detector produced no SUMMARY line; treating the scan as failed.\n'
+            exit 1
+          }
+
+      - name: Merge stale packages
+        id: merge
+        run: |
+          set -Eeuo pipefail
+          mkdir -p maintenance-out
+          : > maintenance-out/stale.txt
+          for source in drift/version/stale.txt drift/soname/stale.txt; do
+            if [[ -f "$source" ]]; then
+              cat "$source" >> maintenance-out/stale.txt
+            fi
+          done
+          sed -i '/^[[:space:]]*$/d' maintenance-out/stale.txt
+          sort -u -o maintenance-out/stale.txt maintenance-out/stale.txt
+
+          version_stale="$(grep -c '^STALE ' drift/version/report.txt || true)"
+          soname_stale="$(grep -c '^STALE ' drift/soname/report.txt || true)"
+          orphans="$(grep -c '^ORPHAN ' drift/soname/report.txt || true)"
+          {
+            printf '### ABI watch\n\n'
+            printf '| check | findings |\n| --- | --- |\n'
+            printf '| dependency version drift | %s |\n' "$version_stale"
+            printf '| soname drift | %s |\n' "$soname_stale"
+            printf '| orphan published packages | %s |\n' "$orphans"
+            printf '\nPackages needing a rebuild: %s\n' \
+              "$(paste -sd, maintenance-out/stale.txt || true)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat maintenance-out/stale.txt
+
+      - name: Dispatch rebuilds for stale packages
+        id: dispatch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          mapfile -t packages < <(
-            sed -n 's/^STALE \([^:]*\):.*/\1/p' drift/report.txt | sort -u
-          )
-          if (( ${#packages[@]} == 0 )); then
-            echo 'No direct dependency drift detected.' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          bash scripts/dispatch-stale-rebuilds.sh maintenance-out/stale.txt
+
+      - name: Open or update the tracking issue
+        # 通知失败不应该让「已经成功 dispatch 的重建」看起来像失败。
+        # dispatch 失败时也不运行：STALE 为空会把已有 issue 误关成「已一致」。
+        continue-on-error: true
+        if: ${{ always() && steps.merge.outcome == 'success' && steps.dispatch.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STALE: ${{ steps.dispatch.outputs.stale }}
+        run: |
+          set -Eeuo pipefail
+          title='ABI watch: published packages need a rebuild'
+          number="$(
+            gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+              --search "in:title \"$title\"" \
+              --json number --jq '.[0].number // empty'
+          )"
+          if [[ -n "${STALE:-}" ]]; then
+            body="$(
+              printf '已发布包与当前仓库的依赖 / SONAME 不再匹配。\n\n已自动 dispatch 重建（bump_pkgrel=true）：\n\n'
+              printf '%s\n' "$STALE" | tr ',' '\n' | sed 's/^/- /'
+            )"
+            if [[ -n "$number" ]]; then
+              gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            fi
+          elif [[ -n "$number" ]]; then
+            gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
+              --comment '所有已发布包与当前仓库的依赖 / SONAME 一致。'
           fi
-          selected="$(IFS=,; echo "${packages[*]}")"
-          echo "Dependency drift requires: $selected" >> "$GITHUB_STEP_SUMMARY"
-          gh workflow run build.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            -f packages="$selected" \
-            -f make_jobs=4 \
-            -f bump_pkgrel=true

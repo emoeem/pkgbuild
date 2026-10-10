@@ -16,7 +16,7 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; failures=$((failures + 1)); }
 # where the database reaches GitHub before one of its package assets does.
 mapfile -t descriptions < <(bsdtar -tf "$db" | grep '/desc$' | sort -u)
 for entry in "${descriptions[@]}"; do
-    filename="$(bsdtar -xOf "$db" "$entry" | awk -F ' = ' '$1 == "%FILENAME%" {print $2; exit}')"
+    filename="$(bsdtar -xOf "$db" "$entry" | awk '/^%FILENAME%$/{getline; print; exit}')"
     if [[ -z "$filename" ]]; then
         printf 'WARN: database entry has no %%FILENAME%% field: %s\n' "$entry" >&2
         continue

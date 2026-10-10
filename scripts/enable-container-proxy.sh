@@ -190,7 +190,11 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 BK="$BACKUP_DIR/config.$STAMP.pre-container-proxy.json"
 install -d -m 755 "$BACKUP_DIR"
 cp -a "$CONF" "$BK" && say "   备份：$BK"
-cp -a "$NEW_JSON" "$CONF.new" && chmod 644 "$CONF.new" && mv -f "$CONF.new" "$CONF"
+# 保留原配置的权限（该文件含 clash_api.secret，若原为 0600 不能被提升成
+# 全局可读），并用同目录的随机临时名做原子替换。
+conf_mode="$(stat -c %a "$CONF" 2>/dev/null || printf 600)"
+staged_json="$(mktemp "$CONF.new.XXXXXX")"
+cp -a "$NEW_JSON" "$staged_json" && chmod "$conf_mode" "$staged_json" && mv -f "$staged_json" "$CONF"
 systemctl restart "$SERVICE"
 sleep 3
 

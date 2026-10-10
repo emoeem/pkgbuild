@@ -1,0 +1,60 @@
+# NetworkError: transient or policy network failures.
+rules:
+  - id: network-timeout
+    category: NetworkError
+    stage: fetch
+    summary: A download timed out.
+    confidence: medium
+    patterns:
+      - "Operation too slow"
+      - "Connection timed out"
+      - "Timeout was reached"
+      - "The read operation timed out"
+      - "curl: [(]28[)]"
+    root_cause: "network timeout during download"
+    action:
+      kind: retry
+      safe_auto_fix: level1
+      retry: true
+  - id: network-resolution
+    category: NetworkError
+    stage: fetch
+    summary: DNS resolution failed for a download host.
+    confidence: medium
+    patterns:
+      - "Could not resolve host"
+      - "Temporary failure in name resolution"
+      - "Name or service not known"
+    root_cause: "DNS resolution failure"
+    action:
+      kind: retry
+      safe_auto_fix: level1
+      retry: true
+  - id: network-tls
+    category: NetworkError
+    stage: fetch
+    summary: TLS verification failed for an upstream host.
+    confidence: medium
+    patterns:
+      - "SSL certificate problem"
+      - "certificate verify failed"
+      - "TLS handshake"
+    root_cause: "TLS failure"
+    action:
+      kind: retry
+      safe_auto_fix: none
+      retry: true
+  - id: network-http-status
+    category: NetworkError
+    stage: fetch
+    summary: The upstream returned a retryable HTTP status.
+    confidence: medium
+    patterns:
+      - "returned error: 5[0-9][0-9]"
+      - "HTTP/1[.]1 50[0-9]"
+      - "curl: [(]22[)].*returned error"
+    root_cause: "upstream server error"
+    action:
+      kind: retry
+      safe_auto_fix: level1
+      retry: true

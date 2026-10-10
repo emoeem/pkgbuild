@@ -1,0 +1,44 @@
+# CUDA / nvcc specific failures (ffmpeg-full and CUDA packages).
+rules:
+  - id: nvcc-host-compiler
+    category: CompilerError
+    stage: compile
+    summary: nvcc cannot use the configured host compiler (usually a GCC mismatch).
+    confidence: high
+    patterns:
+      - "unsupported GNU version"
+      - "gcc version .* is not supported"
+      - "host compiler.*(not supported|unsupported)"
+      - "unsupported GNU version.*use gcc"
+    root_cause: "nvcc/host-compiler mismatch"
+    action:
+      kind: pin_host_compiler
+      safe_auto_fix: level3
+      retry: true
+  - id: cuda-missing
+    category: EnvironmentError
+    stage: configure
+    summary: The CUDA toolkit is missing from the builder image.
+    confidence: high
+    patterns:
+      - "nvcc: command not found"
+      - "Could not find CUDA"
+      - "CUDA_TOOLKIT_ROOT_DIR"
+    root_cause: "CUDA toolkit missing; the cuda builder image is required"
+    action:
+      kind: rebuild_builder
+      safe_auto_fix: none
+      retry: false
+  - id: cuda-arch-unsupported
+    category: CompilerError
+    stage: compile
+    summary: The requested compute capability is unsupported by this CUDA release.
+    confidence: medium
+    patterns:
+      - "Unsupported gpu architecture"
+      - "unsupported compute capability"
+    root_cause: "unsupported CUDA compute capability"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

@@ -1,0 +1,90 @@
+name: Set up CachyOS-v3 builder
+description: Restore build caches and resolve the repository's reusable CachyOS builder image
+inputs:
+  flavor:
+    description: standard or cuda
+    required: false
+    default: standard
+  package_name:
+    description: Package name used to select the CUDA builder
+    required: false
+    default: ''
+  generation:
+    description: Builder generation key
+    required: false
+    default: none
+  restore-caches:
+    description: Restore layered build caches
+    required: false
+    default: 'false'
+outputs:
+  image:
+    description: Builder image reference
+    value: ${{ steps.image.outputs.image }}
+runs:
+  using: composite
+  steps:
+    - name: Restore pacman package cache
+      if: inputs.restore-caches == 'true'
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: .cache/pkgbuild/pacman
+        key: pacman-v3-${{ inputs.generation }}-${{ inputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'scripts/build-in-arch.sh') }}
+        restore-keys: |
+          pacman-v3-${{ inputs.generation }}-${{ inputs.flavor }}-
+    - name: Restore clean-chroot baseline cache
+      if: inputs.restore-caches == 'true'
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: .cache/pkgbuild/chroot/baseline-*
+        key: chroot-v1-${{ inputs.generation }}-x86_64-v3-${{ inputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'config/emo-native-flags.conf', 'scripts/build-in-clean-chroot.sh') }}
+        restore-keys: |
+          chroot-v1-${{ inputs.generation }}-x86_64-v3-${{ inputs.flavor }}-
+    - name: Restore VCS/source cache
+      if: inputs.restore-caches == 'true'
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: .cache/pkgbuild/sources
+        key: sources-v3-${{ inputs.generation }}-${{ inputs.flavor }}-${{ hashFiles('scripts/build-in-arch.sh', 'scripts/validate-source-cache.sh') }}
+        restore-keys: |
+          sources-v3-${{ inputs.generation }}-${{ inputs.flavor }}-
+    - name: Restore Cargo cache
+      if: inputs.restore-caches == 'true'
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: .cache/pkgbuild/cargo
+        key: cargo-v3-${{ inputs.generation }}-${{ hashFiles('.github/builder/Dockerfile') }}
+        restore-keys: |
+          cargo-v3-${{ inputs.generation }}-
+    - name: Restore ccache
+      if: inputs.restore-caches == 'true'
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        path: .cache/pkgbuild/ccache
+        key: ccache-v3-${{ inputs.generation }}-${{ inputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'scripts/build-in-arch.sh') }}
+        restore-keys: |
+          ccache-v3-${{ inputs.generation }}-${{ inputs.flavor }}-
+          ccache-v3-${{ inputs.generation }}-
+    - name: Pull reusable CachyOS builder
+      id: image
+      shell: bash
+      env:
+        PACKAGE_NAME: ${{ inputs.package_name }}
+        FLAVOR: ${{ inputs.flavor }}
+        OWNER: ${{ github.repository_owner }}
+      run: |
+        set -Eeuo pipefail
+        if [[ "$PACKAGE_NAME" == *cuda* || "$PACKAGE_NAME" == "ffmpeg-full" || "$FLAVOR" == cuda ]]; then
+          image="ghcr.io/${OWNER}/pkgbuild-builder:cuda"
+          build_arg=1
+        else
+          image="ghcr.io/${OWNER}/pkgbuild-builder:latest"
+          build_arg=0
+        fi
+        if timeout --signal=TERM --kill-after=30s 8m docker pull "$image"; then
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+        else
+          echo "Builder image unavailable; building fallback from the repository's CachyOS-v3 Dockerfile."
+          docker build --build-arg "CUDA_BUILDER=$build_arg" --file .github/builder/Dockerfile --tag pkgbuild-builder:fallback .
+          echo image=pkgbuild-builder:fallback >> "$GITHUB_OUTPUT"
+        fi

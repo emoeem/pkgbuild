@@ -1,0 +1,6 @@
+# GitHub Actions security scan evidence — 2026-10-10
+
+- Third-party `uses:` references in `.github/workflows/` and `.github/actions/` were inspected; all are pinned to full commit SHAs with version comments. The only non-SHA `uses:` references are local composite action references (`./.github/actions/setup-builder`).
+- A targeted source scan found no direct `${{ github.event.* }}` values interpolated into `run:` script bodies. Workflow-dispatch package names, build mode, make jobs and boolean controls are passed through environment variables or typed expressions; shell code uses quoted environment variables.
+- `zizmor` could not be executed in the builder-derived tooling container in this environment: no `zizmor`, `cargo`, `uv`, or `pip` executable was available in the container, and `curl -fsSL --max-time 15 https://api.github.com/repos/woodruffw/zizmor/releases/latest` failed with `curl: (7) Failed to connect to api.github.com:443`. This is an environment/network limitation, **not a clean zizmor result**. Re-run `zizmor .github/workflows/*.yml .github/actions/setup-builder/action.yml` in a network-enabled CachyOS builder-derived tooling container before considering the security scan complete.
+- `actionlint` and ShellCheck are run separately; neither substitutes for zizmor.

@@ -1,0 +1,21 @@
+# TestFailure: the package's own test suite failed.
+rules:
+  - id: test-suite-failed
+    category: TestFailure
+    stage: check
+    summary: The upstream test suite reported failures.
+    confidence: high
+    patterns:
+      - "A failure occurred in check"
+      - "Tests failed"
+      - "FAILED [(]failures="
+      - "[0-9]+ tests failed"
+      - "Not enough tests passed"
+      - "assertion failed"
+    extract:
+      failed_test: "FAILED [(]failures=([0-9]+)"
+    root_cause: "upstream test suite failed"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

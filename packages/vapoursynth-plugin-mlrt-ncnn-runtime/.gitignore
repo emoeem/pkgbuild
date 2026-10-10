@@ -2,3 +2,9 @@
 !.gitignore
 !.SRCINFO
 !PKGBUILD
+!.aur-url
+!.aur-commit
+
+!.nvchecker.toml
+
+!.nvchecker.toml

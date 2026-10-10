@@ -20,7 +20,7 @@ url = https://example.invalid/${name}
 builddate = 0
 packager = integration test
 size = 1
-filename = epoch-demo-1.2.0-1-x86_64.pkg.tar.zst
+filename = ${name}-${version//:/-}-1-x86_64.pkg.tar.zst
 arch = x86_64
 license = MIT
 EOF
@@ -30,6 +30,9 @@ EOF
 }
 
 make_package "epoch-demo" "1:2.0"
+# Second package keeps SHA256SUMS valid after one asset is removed below, so
+# the missing asset is the only inconsistency verify-repository.sh can see.
+make_package "filler-demo" "1.0"
 
 INCOMING_DIR="$temp/incoming" \
 REPOSITORY_DIR="$temp/repository" \
@@ -55,6 +58,24 @@ bsdtar -xOf "$temp/repository/emoeem.db" 'epoch-demo-1:2.0/desc' |
 if bsdtar -xOf "$temp/repository/emoeem.db" 'epoch-demo-1:2.0/desc' |
     grep -Fq 'epoch-demo-1:2.0-1-x86_64.pkg.tar.zst'; then
     echo 'repository database retained an unsanitized GitHub asset filename' >&2
+    exit 1
+fi
+
+# A database entry whose package asset is missing must fail verification.
+cp -a "$temp/repository" "$temp/repository-missing-asset"
+missing_asset='epoch-demo-1.2.0-1-x86_64.pkg.tar.zst'
+rm "$temp/repository-missing-asset/$missing_asset"
+grep -Fv -e "${missing_asset}" \
+    "$temp/repository-missing-asset/SHA256SUMS" \
+    > "$temp/repository-missing-asset/SHA256SUMS.new"
+mv "$temp/repository-missing-asset/SHA256SUMS.new" \
+    "$temp/repository-missing-asset/SHA256SUMS"
+if verify_log="$(bash "$root/scripts/verify-repository.sh" "$temp/repository-missing-asset" 2>&1)"; then
+    echo 'verify-repository.sh passed despite a missing package asset' >&2
+    exit 1
+fi
+if ! grep -Fq "database references missing asset: ${missing_asset}" <<<"$verify_log"; then
+    echo 'verify-repository.sh did not report the missing database asset' >&2
     exit 1
 fi
 

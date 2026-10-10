@@ -1,0 +1,33 @@
+# RuntimeDependencyError: the build succeeded but the artifact cannot run.
+rules:
+  - id: ldd-not-found
+    category: RuntimeDependencyError
+    stage: verify
+    summary: An installed ELF object has an unresolved runtime dependency.
+    confidence: high
+    patterns:
+      - "unresolved runtime dependency"
+      - "Runtime smoke found"
+      - "not found.*=>.*not found"
+    extract:
+      soname: "(lib[A-Za-z0-9+._-]*[.]so([.][0-9]+)+)"
+    root_cause: "unresolved runtime dependency"
+    action:
+      inspect_provider: true
+      find_dependents: true
+      trigger_rebuild: true
+      safe_auto_fix: level3
+      retry: true
+  - id: smoke-test-missing-binary
+    category: RuntimeDependencyError
+    stage: verify
+    summary: A smoke test binary is missing from the package.
+    confidence: medium
+    patterns:
+      - "smoke test: .* not found"
+      - "smoke test failed"
+    root_cause: "the package does not install the expected binary"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

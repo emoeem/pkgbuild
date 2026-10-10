@@ -1,0 +1,30 @@
+# CacheError: the build cache is unusable.
+rules:
+  - id: cache-corrupt
+    category: CacheError
+    stage: build
+    summary: A cached artifact is corrupt or the cache is unwritable.
+    confidence: medium
+    patterns:
+      - "cache.*corrupt"
+      - "ccache.*error"
+      - "failed to write to cache"
+      - "unable to create.*cache"
+    root_cause: "corrupt or unwritable build cache"
+    action:
+      kind: clear_cache
+      safe_auto_fix: level1
+      retry: true
+  - id: cache-permission
+    category: CacheError
+    stage: build
+    summary: The restored cache is owned by a different user.
+    confidence: medium
+    patterns:
+      - "dubious ownership"
+      - "Permission denied.*(cache|ccache)"
+    root_cause: "cache ownership mismatch"
+    action:
+      kind: clear_cache
+      safe_auto_fix: level1
+      retry: true

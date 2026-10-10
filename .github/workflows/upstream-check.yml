@@ -1,0 +1,85 @@
+name: Track upstream package versions
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+  issues: write
+
+concurrency:
+  group: upstream-version-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Pull CachyOS builder
+        id: builder
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          image="ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest"
+          if ! docker pull "$image"; then
+            docker build --file .github/builder/Dockerfile --tag pkgbuild-builder:upstream .
+            image=pkgbuild-builder:upstream
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Check versions in CachyOS builder
+        shell: bash
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .cache/upstream
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            "$BUILDER_IMAGE" \
+            python3 /workspace/scripts/check-upstream-versions.py \
+              --root /workspace \
+              --config /workspace/.cache/upstream/sources.toml \
+              --oldver /workspace/.cache/upstream/oldver.json \
+              --newver /workspace/.cache/upstream/newver.json \
+              --report /workspace/.cache/upstream/report.json \
+              --run
+          cat .cache/upstream/report.json
+
+      - name: Open or update upstream version issues
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' > "$RUNNER_TEMP/upstream-issues.jsonl"
+          import json
+          from pathlib import Path
+          data = json.loads(Path('.cache/upstream/report.json').read_text())
+          for update in data.get('updates', []):
+              print(json.dumps(update))
+          PY
+          while IFS= read -r record; do
+            [[ -n "$record" ]] || continue
+            package="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["package"])' "$record")"
+            current="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["current"])' "$record")"
+            upstream="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["upstream"])' "$record")"
+            title="[upstream] $package: $upstream available (PKGBUILD: $current)"
+            issue="$(gh issue list --state open --limit 100 --json number,title --search "$package in:title" | python3 -c 'import json,sys; p=sys.argv[1]; rows=json.load(sys.stdin); print(next((x["number"] for x in rows if x["title"]==p), ""))' "$title")"
+            body="Upstream version detected by nvchecker.\n\n- Package: $package\n- PKGBUILD pkgver baseline: $current\n- Upstream: $upstream\n\nNo PKGBUILD was modified automatically. Review source checksums, packaging changes and rebuild impact before updating."
+            if [[ -n "$issue" ]]; then gh issue comment "$issue" --body "$body"; else gh issue create --title "$title" --body "$body"; fi
+          done < "$RUNNER_TEMP/upstream-issues.jsonl"

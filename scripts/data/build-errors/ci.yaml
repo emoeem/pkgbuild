@@ -1,0 +1,44 @@
+# CIError: the workflow harness itself failed.
+rules:
+  - id: ci-cancelled
+    category: CIError
+    stage: unknown
+    summary: The job was cancelled (usually superseded by a newer run).
+    confidence: high
+    patterns:
+      - "The operation was canceled"
+      - "runner has received a shutdown signal"
+      - "was cancelled"
+    root_cause: "job cancelled"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: true
+  - id: ci-timeout
+    category: CIError
+    stage: unknown
+    summary: The job hit its timeout.
+    confidence: medium
+    patterns:
+      - "exceeded the maximum execution time"
+    root_cause: "job timeout"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: ci-disk
+    category: CIError
+    stage: unknown
+    summary: The hosted runner ran out of disk before the build started.
+    confidence: medium
+    # "No space left on device" during a build is an EnvironmentError
+    # (environment.yaml); this rule only covers the harness running out of room
+    # before the build starts.
+    patterns:
+      - "insufficient disk space"
+      - "not enough disk space on the runner"
+    root_cause: "runner disk exhausted before the build started"
+    action:
+      kind: infrastructure
+      safe_auto_fix: level1
+      retry: true

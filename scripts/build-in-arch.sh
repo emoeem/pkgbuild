@@ -43,16 +43,22 @@ printf 'Building %s with %s parallel job(s).\n' "$package_name" "$make_jobs"
 if [[ "$prepared_image" == "1" ]]; then
     mkdir -p "$pacman_cache_dir" "$source_cache_dir" \
         "$cargo_cache_dir/registry" "$cargo_cache_dir/git" "$cargo_cache_dir/bin" \
-        "$cache_dir/yay/$package_name"
+        "$cache_dir/yay/$package_name" "$cache_dir/ccache"
     # The GitHub Actions cache is restored from a host-owned volume. Make the
     # complete cache path traversable and writable by the unprivileged builder
     # before yay/Go tries to create per-package cache directories.
     chmod u+rwx,go+rx "$cache_dir"
-    chmod -R a+rwX "$source_cache_dir" "$cargo_cache_dir" "$cache_dir/yay"
+    chmod -R a+rwX "$source_cache_dir" "$cargo_cache_dir" "$cache_dir/yay" "$cache_dir/ccache"
     sed -i "/^CacheDir = /d" /etc/pacman.conf
     sed -i "/^\[options\]$/a CacheDir = $pacman_cache_dir" /etc/pacman.conf
 fi
 
+if [[ "$prepared_image" == "1" ]]; then
+    # Preserve the builder image's original pacman configuration before the
+    # disposable outer container adds its downloaded-package repository.
+    cp /etc/pacman.conf /tmp/pkgbuild-builder-pacman.conf
+    export BUILDER_PACMAN_CONF=/tmp/pkgbuild-builder-pacman.conf
+fi
 bash "$workspace_dir/scripts/configure-build-repo.sh"
 
 if [[ "$prepared_image" != "1" ]]; then
@@ -85,6 +91,49 @@ if [[ "$prepared_image" == "1" ]]; then
 fi
 
 install -d -o builder -g builder "$build_root" "$output_dir"
+
+# shellcheck source=scripts/lib/timing.sh
+source "${workspace_dir}/scripts/lib/timing.sh"
+readonly phase_file="${output_dir}/timings.phases.jsonl"
+readonly build_log="${output_dir}/build.log"
+readonly stamper="${workspace_dir}/scripts/build-timing.py"
+timing_init "$phase_file"
+
+# Runs on every exit path (success, build failure, argument error) so a failed
+# package still ships a timings record and the failure analyzer has a log.
+emit_build_timings() {
+    local exit_code=$?
+    trap - EXIT
+    timing_total
+
+    local package_bytes=0 status="success"
+    if [[ -f "${output_dir}/SHA256SUMS" ]]; then
+        # || true: this runs from an EXIT trap, so a failing command must never
+        # abort the handler before the timings record is written.
+        package_bytes="$(du -sb --total "${output_dir}"/*.pkg.tar.zst 2>/dev/null |
+            awk 'END { print $1 }' || true)"
+    fi
+    (( exit_code == 0 )) || status="failed"
+    timing_resources "${output_dir}/resources.txt" "$package_dir" \
+        "$source_cache_dir" "${package_bytes:-0}"
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 "$stamper" collect \
+            --package "$package_name" \
+            --pkgver "$(awk -F= '/^pkgver=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$package_dir/PKGBUILD" 2>/dev/null || true)" \
+            --log "$build_log" \
+            --phases "$phase_file" \
+            --ccache "${output_dir}/ccache-stats.txt" \
+            --resources "${output_dir}/resources.txt" \
+            --status "$status" \
+            --out "${output_dir}/timings.json" >/dev/null || true
+    fi
+
+    exit "$exit_code"
+}
+trap emit_build_timings EXIT
+
+timing_begin prepare
 rm -rf "$package_dir" "$package_remote"
 cp -a "$source_dir" "$package_dir"
 chown -R builder:builder "$package_dir"
@@ -108,6 +157,9 @@ as_builder() {
         "CMAKE_BUILD_PARALLEL_LEVEL=${make_jobs}"
         "NINJAFLAGS=-j${make_jobs}"
         "SRCDEST=${source_cache_dir}"
+        "PATH=/usr/lib/ccache/bin:${PATH}"
+        "CCACHE_DIR=${cache_dir}/ccache"
+        "CCACHE_MAXSIZE=2G"
     )
 
     if [[ "$prepared_image" == "1" ]]; then
@@ -118,7 +170,7 @@ as_builder() {
         environment+=(
             "CUDA_PATH=/opt/cuda"
             "NVCC_CCBIN=/usr/bin/g++-15"
-            "PATH=/opt/cuda/bin:${PATH}"
+            "PATH=/usr/lib/ccache/bin:/opt/cuda/bin:${PATH}"
         )
     fi
 
@@ -152,10 +204,14 @@ bash "${workspace_dir}/scripts/run-namcap.sh" "${package_dir}/PKGBUILD"
 printf 'Validating Git source cache entries...\n'
 bash "${workspace_dir}/scripts/validate-source-cache.sh" "${package_dir}" "${source_cache_dir}"
 
+timing_end prepare
+timing_begin sources
+
 if [[ "$package_name" == "ffmpeg-full" ]]; then
     readonly ffmpeg_signing_key="FCF986EA15E6E293A5644F10B4322F04D67658D8"
     curl --fail --silent --show-error --location \
         --connect-timeout 30 \
+        --max-time 300 \
         --retry 5 \
         --retry-all-errors \
         --retry-delay 5 \
@@ -176,6 +232,8 @@ if [[ "$package_name" == "ffmpeg-full" ]]; then
         "cd '$package_dir' && makepkg --verifysource --noconfirm"
 fi
 
+timing_end sources
+
 if [[ "$prepared_image" != "1" ]]; then
     printf 'Bootstrapping yay-bin...\n'
     git clone --depth 1 https://aur.archlinux.org/yay-bin.git \
@@ -188,7 +246,7 @@ fi
 
 yay --version
 printf "Refreshing package databases and pruning stale binary caches...\n"
-pacman -Sy --noconfirm
+pacman -Syu --noconfirm
 bash "$workspace_dir/scripts/validate-build-policy.sh"
 pacman -Sc --noconfirm
 
@@ -205,19 +263,47 @@ if [[ "$package_name" == "ffmpeg-full" ]]; then
         sdl2-compat libglvnd l-smash onetbb tevent \
         tesseract-data-eng tesseract-data-osd
 fi
+run_build() {
+    if [[ "$prepared_image" == "1" && "${CLEAN_CHROOT_BUILD:-1}" == "1" ]]; then
+        bash "$workspace_dir/scripts/build-in-clean-chroot.sh" "$package_dir" "$output_dir"
+        return $?
+    fi
+    as_builder yay -Bi "$package_dir" \
+        --noconfirm \
+        --needed \
+        --pgpfetch \
+        --noremovemake \
+        --sudoloop \
+        --answerclean None \
+        --answerdiff None \
+        --answeredit None \
+        --answerupgrade None \
+        --mflags "--cleanbuild --clean --noconfirm"
+}
+
+# ccache counters are zeroed so the recorded hit rate describes this build
+# only. Every CI build job owns its restored cache volume, so this does not
+# disturb other packages.
+if command -v ccache >/dev/null 2>&1; then
+    ccache --zero-stats >/dev/null 2>&1 || true
+fi
+
+timing_begin build
 yay_status=0
-as_builder yay -Bi "$package_dir" \
-    --noconfirm \
-    --needed \
-    --pgpfetch \
-    --noremovemake \
-    --sudoloop \
-    --answerclean None \
-    --answerdiff None \
-    --answeredit None \
-    --answerupgrade None \
-    --mflags "--cleanbuild --clean --noconfirm" ||
-    yay_status=$?
+if command -v python3 >/dev/null 2>&1; then
+    # Stamp every line with a wall clock timestamp so makepkg's phase banners
+    # ("==> Starting build()...") become a measured download/compile/package
+    # breakdown instead of a guess.
+    run_build 2>&1 | python3 "$stamper" stamp --log "$build_log" ||
+        yay_status="${PIPESTATUS[0]}"
+else
+    run_build || yay_status=$?
+fi
+timing_end build "$([[ "$yay_status" == "0" ]] && echo ok || echo failed)"
+
+if command -v ccache >/dev/null 2>&1; then
+    ccache -s >"${output_dir}/ccache-stats.txt" 2>&1 || true
+fi
 
 mapfile -d '' package_files < <(
     find "$package_dir" -maxdepth 1 -type f \
@@ -241,32 +327,58 @@ if (( ${#package_files[@]} == 0 )); then
 fi
 
 if (( yay_status != 0 )); then
-    printf \
-        'yay exited with status %d after producing the target package; continuing without installing it.\n' \
-        "$yay_status"
+    printf 'yay exited with status %d after producing package files; attempting explicit install for runtime verification.\n' "$yay_status" >&2
 fi
 
+# yay may build successfully but decline installation because a package-level
+# conflict exists. The builder is disposable: remove only explicitly declared
+# conflicts from .SRCINFO, never virtual provides, then install for real checks.
+install_built_package() {
+    local package_file="$1" srcinfo="$package_dir/.SRCINFO" conflict current
+    if pacman -U --noconfirm -- "$package_file"; then return 0; fi
+    printf 'Initial install failed; checking declared .SRCINFO conflicts.\n' >&2
+    mapfile -t conflicts < <(awk -F ' = ' '$1 == "conflict" {sub(/[<>=].*$/, "", $2); if ($2 != "") print $2}' "$srcinfo" | sort -u)
+    ((${#conflicts[@]} > 0)) || { echo 'No declared conflicts; refusing blind removal.' >&2; return 1; }
+    mapfile -t installed < <(pacman -Qq)
+    remove=()
+    for conflict in "${conflicts[@]}"; do
+        for current in "${installed[@]}"; do [[ "$current" == "$conflict" ]] && remove+=("$current"); done
+    done
+    ((${#remove[@]} > 0)) || { echo 'Declared conflicts are not installed; refusing blind removal.' >&2; return 1; }
+    printf 'Removing declared conflicting package(s) from disposable builder: %s\n' "${remove[*]}" >&2
+    pacman -Rdd --noconfirm -- "${remove[@]}"
+    pacman -U --noconfirm -- "$package_file"
+}
+for package_file in "${package_files[@]}"; do install_built_package "$package_file"; done
+
+timing_begin verify
 for package_file in "${package_files[@]}"; do
     filename="$(basename "$package_file")"
     printf 'Running namcap on %s...\n' "$filename"
-    bash "${workspace_dir}/scripts/run-namcap.sh" "$package_file"
+    bash "${workspace_dir}/scripts/run-namcap.sh" "$package_file" 2>&1 | tee -a "${output_dir}/namcap.txt"
     cp "$package_file" "$output_dir/"
     bsdtar -xOf "$package_file" .PKGINFO > "${output_dir}/${filename}.PKGINFO"
     bsdtar -xOf "$package_file" .BUILDINFO > "${output_dir}/${filename}.BUILDINFO"
     bash "${workspace_dir}/scripts/verify-build-dependencies.sh" "${output_dir}/${filename}.BUILDINFO"
 done
 
-printf "Running installed-package runtime smoke test...
-"
+timing_end verify
+timing_begin smoke
+printf 'Running installed-package runtime verification...\n'
 while IFS= read -r package_name_from_info; do
     [[ -n "$package_name_from_info" ]] || continue
-    bash "${workspace_dir}/scripts/runtime-smoke-test.sh" "$package_name_from_info"
+    # Resolves shared libraries, checks SONAMEs/symlinks/permissions against
+    # pacman's own file database, and runs the declared smoke commands.
+    bash "${workspace_dir}/scripts/runtime-verify.sh" \
+        --package "$package_name_from_info" \
+        --json-out "${output_dir}/${package_name_from_info}.runtime.json"
 done < <(
     for package_file in "${package_files[@]}"; do
         bsdtar -xOf "$package_file" .PKGINFO | awk -F" = " '$1 == "pkgname" {print $2; exit}'
     done | sort -u
 )
 
+timing_end smoke
 cp "${source_dir}/PKGBUILD" "$output_dir/PKGBUILD.used"
 cp "${source_dir}/.SRCINFO" "$output_dir/SRCINFO.used"
 cp "${workspace_dir}/scripts/install-built-package.sh" "$output_dir/"

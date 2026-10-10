@@ -1,0 +1,65 @@
+# Smoke tests and expected payloads per package.
+#
+# A successful makepkg run only proves that a package file exists. These
+# entries prove that the artifact is *usable*: the expected binaries are
+# installed, executable, and start. Commands must be non-interactive, must not
+# need a display, and must exit 0 quickly.
+#
+# Consumed by scripts/runtime-verify.sh.
+
+defaults:
+  timeout_seconds: 30
+
+packages:
+  ffmpeg-full:
+    binaries:
+      - ffmpeg
+      - ffprobe
+    commands:
+      - "ffmpeg -version"
+      - "ffprobe -version"
+    timeout_seconds: 60
+  mpeghdec:
+    binaries:
+      - mpeghdec
+    commands:
+      - "mpeghdec --help"
+    allow_failure: true
+  quirc:
+    libraries:
+      - libquirc.so
+  xclip-git:
+    binaries:
+      - xclip
+    commands:
+      - "xclip -version"
+    timeout_seconds: 20
+  sing-box-ebpf:
+    binaries:
+      - sing-box
+    commands:
+      - "sing-box version"
+  sing-box-panel:
+    binaries:
+      - singbox-panel
+  svt-jpeg-xs-git:
+    libraries:
+      - libSvtJpegxs.so
+  vapoursynth-plugin-mlrt-ncnn-runtime:
+    libraries:
+      - libvsmodel.so
+  linuxqq-wayland-fix-git:
+    libraries:
+      - libclipsync.so
+  scx-scheds-git:
+    binaries:
+      - scx_central
+    allow_failure: true
+  daed-emo:
+    binaries:
+      - dae
+    allow_failure: true
+  linuxqq-clipsync-git:
+    note: "transitional meta package: no payload of its own"
+  sing-box-rule-sets:
+    note: "rule-set data package: no executable payload"

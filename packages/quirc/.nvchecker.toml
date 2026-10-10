@@ -1,0 +1,5 @@
+[quirc]
+source = "github"
+github = "dlbeer/quirc"
+use_max_tag = true
+prefix = "v"

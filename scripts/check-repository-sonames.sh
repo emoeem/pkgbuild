@@ -2,9 +2,14 @@
 # Detect published packages whose linked SONAMEs are no longer provided by the
 # current repositories.
 #
-# Runs inside the CachyOS-v3 container used by the build and maintenance
-# workflows (it needs pacman, expac and bsdtar), but every input is a path so
-# it can also be exercised by hand in that container.
+# Runs inside the container used by the build and maintenance workflows — the
+# repository's own builder image, ghcr.io/<owner>/pkgbuild-builder:latest, which
+# is built FROM the official CachyOS x86-64-v3 image — because it needs pacman,
+# expac and bsdtar. That image is pulled anonymously from GHCR; the CachyOS base
+# image on Docker Hub is not, and an unauthenticated Docker Hub pull is rate
+# limited per runner IP (`toomanyrequests`, run 37989749507, `docker run` exit
+# 125). Every input is a path, so the script can also be exercised by hand in
+# that container.
 #
 # Usage: check-repository-sonames.sh <published-dir> <out-dir> [packages-dir]
 #
@@ -143,11 +148,13 @@ fi
 # ---------------------------------------------------------------------------
 # Inspect every published package.
 # ---------------------------------------------------------------------------
+scanned=0
 for package_file in "$published"/*.pkg.tar.zst; do
     [[ -e "$package_file" ]] || continue
     pkgname="$(bsdtar -xOf "$package_file" .BUILDINFO 2>/dev/null |
         awk -F ' = ' '$1 == "pkgname" { print $2; exit }')"
     [[ -n "$pkgname" ]] || continue
+    scanned=$((scanned + 1))
 
     declared="$(bsdtar -xOf "$package_file" .PKGINFO .BUILDINFO 2>/dev/null |
         awk -F ' = ' '$1 == "depend" || $1 == "depends" { print $2 }' |
@@ -179,4 +186,16 @@ done
 
 sort -u -o "$out_dir/stale.txt" "$out_dir/stale.txt"
 sort -u -o "$out_dir/orphans.txt" "$out_dir/orphans.txt"
+
+# 干净时也必须有 SUMMARY 输出：否则「检测器崩了 / 什么都没扫到」与
+# 「确实没有漂移」在日志和工作流断言里无法区分。
+stale_unique="$(wc -l < "$out_dir/stale.txt")"
+orphan_unique="$(wc -l < "$out_dir/orphans.txt")"
+printf 'SUMMARY packages=%d stale=%d orphans=%d providers=%d\n' \
+    "$scanned" "$stale_unique" "$orphan_unique" "$provider_count" \
+    >> "$out_dir/report.txt"
+if (( scanned == 0 )); then
+    printf 'No published package could be inspected; refusing to report a clean scan.\n' >&2
+    exit 3
+fi
 cat "$out_dir/report.txt"

@@ -1,0 +1,62 @@
+# Configure-stage failures shared by cmake/meson/autotools/pkg-config.
+rules:
+  - id: pkgconfig-missing
+    category: DependencyError
+    stage: configure
+    summary: pkg-config cannot find a .pc file for a dependency.
+    confidence: high
+    patterns:
+      - "Package ['][A-Za-z0-9_.+-]+['] not found"
+      - "No package ['][^']+['] found"
+      - "required packages were not found"
+      - "checking for [A-Za-z0-9_]+[.]pc[.]?[.]?[.]? no"
+    extract:
+      package: "Package [']([A-Za-z0-9_.+-]+)['] not found"
+    root_cause: "pkg-config cannot resolve {package}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: cmake-configure
+    category: DependencyError
+    stage: configure
+    summary: CMake configuration failed.
+    confidence: high
+    patterns:
+      - "CMake Error"
+      - "CMake Error at .* [(]find_package[)]"
+    extract:
+      dependency: "Could NOT find ([A-Za-z0-9_.+-]+)"
+    root_cause: "CMake configuration failed"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: meson-configure
+    category: DependencyError
+    stage: configure
+    summary: Meson setup failed.
+    confidence: high
+    patterns:
+      - "meson[.]build[.].*: ERROR:"
+      - "Dependency .* not found"
+    extract:
+      dependency: 'Dependency "([A-Za-z0-9_.+-]+)" not found'
+    root_cause: "meson could not resolve {dependency}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
+  - id: autotools-configure
+    category: BuildError
+    stage: configure
+    summary: autoconf/configure failed.
+    confidence: medium
+    patterns:
+      - "configure: error:"
+      - "configure: WARNING: unrecognized options"
+    root_cause: "autotools configure failure"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false

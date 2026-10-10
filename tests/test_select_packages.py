@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -11,14 +12,25 @@ MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
 
+
+def git_environment():
+    """Environment without inherited GIT_* so the fixture repo is the only one.
+
+    Git exports GIT_DIR / GIT_WORK_TREE to hook processes and other test suites
+    leak them too; they outrank the `-C <fixture>` used here, which would point
+    the fixture's commits at the real repository.
+    """
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+
 class SelectPackagesTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         (self.root / "packages").mkdir()
-        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
-        subprocess.run(["git", "-C", str(self.root), "config", "user.email", "test@example.invalid"], check=True)
-        subprocess.run(["git", "-C", str(self.root), "config", "user.name", "test"], check=True)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, env=git_environment())
+        subprocess.run(["git", "-C", str(self.root), "config", "user.email", "test@example.invalid"], check=True, env=git_environment())
+        subprocess.run(["git", "-C", str(self.root), "config", "user.name", "test"], check=True, env=git_environment())
 
     def tearDown(self):
         self.temp.cleanup()
@@ -35,9 +47,11 @@ class SelectPackagesTests(unittest.TestCase):
         (directory / "PKGBUILD").write_text("pkgname=test\n", encoding="utf-8")
 
     def commit(self, message):
-        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
-        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", message], check=True)
-        return subprocess.check_output(["git", "-C", str(self.root), "rev-parse", "HEAD"], text=True).strip()
+        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True, env=git_environment())
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", message], check=True, env=git_environment())
+        return subprocess.check_output(
+            ["git", "-C", str(self.root), "rev-parse", "HEAD"], text=True, env=git_environment()
+        ).strip()
 
     def select(self, before, after):
         return MODULE.select(self.root, "changed", before, after)
@@ -92,6 +106,17 @@ class SelectPackagesTests(unittest.TestCase):
         (self.root / "scripts/build-in-arch.sh").write_text("changed\n", encoding="utf-8")
         after = self.commit("build infrastructure")
         self.assertEqual(self.select(before, after), [])
+
+    def test_zero_before_sha_rebuilds_everything(self):
+        self.add_package("foo")
+        self.add_package("bar")
+        after = self.commit("base")
+        self.assertEqual(self.select("0" * 40, after), ["bar", "foo"])
+
+    def test_empty_before_rebuilds_everything(self):
+        self.add_package("foo")
+        after = self.commit("base")
+        self.assertEqual(self.select("", after), ["foo"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Configure the third-party pacman repositories that the build container also
-# uses, inside a throwaway container. Mirrors .github/builder/Dockerfile.
+# uses, inside a throwaway container. Mirrors .github/builder/Dockerfile, and
+# works both from the CachyOS base image (nothing configured yet) and from the
+# builder image itself (chaotic-aur is already configured there; that section is
+# kept rather than appended a second time).
 #
 # Without this the maintenance and drift containers only know core/extra and
 # the CachyOS repositories, so packages that come from chaotic-aur (openapv,
@@ -71,8 +74,12 @@ configure_keyring_repo() {
                 "${mirror}/chaotic-keyring.pkg.tar.zst" \
                 "${mirror}/chaotic-mirrorlist.pkg.tar.zst" > /dev/null &&
             [[ -f /etc/pacman.d/chaotic-mirrorlist ]]; then
-            printf '%s\n' '[chaotic-aur]' 'Include = /etc/pacman.d/chaotic-mirrorlist' \
-                >> /etc/pacman.conf
+            # Only a container that starts without chaotic-aur needs the include
+            # appended; the builder image already carries the section.
+            if ! chaotic_section_configured; then
+                printf '%s\n' '[chaotic-aur]' \
+                    'Include = /etc/pacman.d/chaotic-mirrorlist' >> /etc/pacman.conf
+            fi
             return 0
         fi
         printf 'chaotic-keyring/chaotic-mirrorlist unavailable from %s\n' "$mirror" >&2
@@ -81,6 +88,10 @@ configure_keyring_repo() {
 }
 
 configure_unsigned_repo() {
+    if chaotic_section_configured; then
+        printf '%s\n' 'chaotic-aur is already configured; keeping that section' >&2
+        return 0
+    fi
     {
         printf '%s\n' '[chaotic-aur]' 'SigLevel = Never' 'Usage = Sync Search'
         local mirror
@@ -88,6 +99,16 @@ configure_unsigned_repo() {
             printf 'Server = %s/$arch\n' "$mirror"
         done
     } >> /etc/pacman.conf
+}
+
+# True when pacman.conf already declares chaotic-aur. The builder image ships
+# such a section, and appending a second one is worse than useless: pacman
+# reports `could not register 'chaotic-aur' database (database already
+# registered)` on every later call (exit code stays 0, but the log is noise) and
+# it registers the *first* section, so an appended fallback would never be used.
+# Keep what the image configured instead of duplicating it.
+chaotic_section_configured() {
+    grep -qx '\[chaotic-aur\]' /etc/pacman.conf
 }
 
 # Drop the section this script appended so the other route can replace it. Safe

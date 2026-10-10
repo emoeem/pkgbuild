@@ -1,144 +1,65 @@
 #!/usr/bin/env python3
+"""Select the package bases that a change needs to rebuild.
+
+Thin CLI over scripts/lib/pkgbuild_lib.py, which owns the graph semantics:
+provider edges (pkgname + provides), depends/makedepends/checkdepends, overlay
+targeting and infrastructure paths.  The functions below are compatibility
+wrappers so tests and workflows keep their existing contract.
+"""
 
 import argparse
 import json
-import re
-import subprocess
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 
-PACKAGE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9@._+-]+$")
-DEPENDENCY_OPERATOR_PATTERN = re.compile(r"^([^<>=]+)(?:[<>=].*)?$")
+from pkgbuild_lib import (  # noqa: E402
+    PACKAGE_NAME_PATTERN,
+    PackageMetadata,
+    available_packages,
+    changed_files,
+    classify_changes,
+    dumps,
+    graph_consumers,
+    load_packages,
+    package_dirs,
+    parse_srcinfo as _parse_srcinfo,
+    transitive_closure,
+)
 
 
-def package_dirs(root: Path) -> list[Path]:
-    return sorted(
-        path.parent
-        for path in (root / "packages").glob("*/PKGBUILD")
-        if path.is_file() and PACKAGE_NAME_PATTERN.fullmatch(path.parent.name)
-    )
+def _packages(root: Path) -> dict[str, PackageMetadata]:
+    return load_packages(root)
 
 
 def parse_srcinfo(path: Path) -> tuple[set[str], set[str], set[str]]:
     """Return package names, provided names and dependency names from .SRCINFO."""
-    packages: set[str] = set()
-    provides: set[str] = set()
-    depends: set[str] = set()
-    current_pkg = False
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("pkgname = "):
-            packages.add(line.removeprefix("pkgname = "))
-            current_pkg = True
-        elif current_pkg and line.startswith("\tprovides = "):
-            provides.add(line.removeprefix("\tprovides = "))
-        elif current_pkg and line.startswith("\tdepends = "):
-            depends.add(line.removeprefix("\tdepends = "))
-        elif current_pkg and line.startswith("	makedepends = "):
-            depends.add(line.removeprefix("	makedepends = "))
-        elif current_pkg and line.startswith("	checkdepends = "):
-            depends.add(line.removeprefix("	checkdepends = "))
-    return packages, provides, depends
-
-
-def dependency_name(dependency: str) -> str:
-    match = DEPENDENCY_OPERATOR_PATTERN.match(dependency)
-    return match.group(1) if match else dependency
+    metadata = _parse_srcinfo(path)
+    return (
+        set(metadata.packages),
+        set(metadata.provides),
+        set(metadata.all_dependencies()),
+    )
 
 
 def dependency_graph(root: Path) -> dict[str, set[str]]:
-    """Map each provider package to package bases which consume it.
-
-    A dependency may be satisfied by a package's own pkgname or any provides
-    entry. This covers virtual packages and soname provides without needing
-    to evaluate pacman's full dependency solver.
-    """
-    provider_to_consumers: dict[str, set[str]] = {}
-    metadata: list[tuple[str, set[str], set[str]]] = []
-    for directory in package_dirs(root):
-        srcinfo = directory / ".SRCINFO"
-        if not srcinfo.is_file():
-            continue
-        names, provides, depends = parse_srcinfo(srcinfo)
-        if not names:
-            names = {directory.name}
-        metadata.append((directory.name, names | provides, depends))
-
-    for package_base, provided_names, depends in metadata:
-        for provided in provided_names:
-            provider_to_consumers.setdefault(provided, set())
-        for dependency in depends:
-            name = dependency_name(dependency)
-            for provided in provided_names:
-                provider_to_consumers.setdefault(provided, set())
-            provider_to_consumers.setdefault(name, set()).add(package_base)
-    return provider_to_consumers
-
-
-def available_packages(root: Path) -> list[str]:
-    return [path.name for path in package_dirs(root)]
+    """Map each provider package to the package bases which consume it."""
+    return graph_consumers(_packages(root))
 
 
 def changed_paths(root: Path, before: str, after: str) -> list[str]:
-    if not before or set(before) == {"0"}:
-        return ["scripts/"]
-    exists = subprocess.run(
-        ["git", "cat-file", "-e", f"{before}^{{commit}}"],
-        cwd=root,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode == 0
-    if exists:
-        diff_args = ["git", "diff", "--name-only", before, after]
-    else:
-        # Force-pushed histories can make github.event.before unavailable in
-        # a fresh checkout. Fall back to the new commit's tree rather than
-        # failing package selection altogether.
-        diff_args = ["git", "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", after]
-    result = subprocess.run(
-        diff_args,
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return [line for line in result.stdout.splitlines() if line]
+    return changed_files(root, before, after)
 
 
 def affected_packages(root: Path, paths: list[str], available: set[str]) -> set[str]:
-    selected: set[str] = set()
-    infrastructure = False
-    for path in paths:
-        parts = path.split("/")
-        if path.startswith("config/"):
-            infrastructure = True
-        if len(parts) >= 3 and parts[0] == "packages" and parts[1] in available:
-            selected.add(parts[1])
-        if len(parts) == 3 and parts[0:2] == ["scripts", "overlays"]:
-            overlay_package = parts[2].removesuffix(".sh")
-            if overlay_package in available:
-                selected.add(overlay_package)
-    if infrastructure:
+    packages = _packages(root)
+    impact = classify_changes(root, paths, packages)
+    if impact.infrastructure_changed:
         return set(available)
-
-    graph = dependency_graph(root)
-    changed = True
-    while changed:
-        changed = False
-        for provider in list(selected):
-            for consumer in graph.get(provider, set()):
-                if consumer in available and consumer not in selected:
-                    selected.add(consumer)
-                    changed = True
-            directory = root / "packages" / provider
-            srcinfo = directory / ".SRCINFO"
-            if srcinfo.is_file():
-                names, provides, _ = parse_srcinfo(srcinfo)
-                for provided in names | provides:
-                    for consumer in graph.get(provided, set()):
-                        if consumer in available and consumer not in selected:
-                            selected.add(consumer)
-                            changed = True
-    return selected
+    return transitive_closure(
+        impact.direct | impact.overlays, packages, graph_consumers(packages)
+    )
 
 
 def select(root: Path, selection: str, before: str, after: str) -> list[str]:
@@ -147,7 +68,15 @@ def select(root: Path, selection: str, before: str, after: str) -> list[str]:
     if selection in ("", "all"):
         selected = available
     elif selection == "changed":
-        selected = sorted(affected_packages(root, changed_paths(root, before, after), available_set))
+        if not before or set(before) == {"0"}:
+            # The diff is unknowable (fresh history or an all-zero
+            # github.event.before): rebuild everything rather than nothing,
+            # matching remove.yml's handling of the same situation.
+            selected = available
+        else:
+            selected = sorted(
+                affected_packages(root, changed_paths(root, before, after), available_set)
+            )
     else:
         selected = sorted({item.strip() for item in selection.split(",") if item.strip()})
 
@@ -161,13 +90,13 @@ def select(root: Path, selection: str, before: str, after: str) -> list[str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--selection", default="all")
     parser.add_argument("--before", default="")
     parser.add_argument("--after", default="HEAD")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     args = parser.parse_args()
-    print(json.dumps(select(args.root.resolve(), args.selection, args.before, args.after), separators=(",", ":")))
+    print(dumps(select(args.root.resolve(), args.selection, args.before, args.after)))
 
 
 if __name__ == "__main__":

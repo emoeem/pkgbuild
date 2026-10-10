@@ -11,7 +11,6 @@ repository_dir="${1:?usage: verify-repository-elf.sh <repository-dir>}"
 
 failures=0
 declare -A soname_owner=()
-declare -A private_sonames=()
 declare -A package_provides=()
 declare -A package_conflicts=()
 
@@ -88,7 +87,6 @@ for package_file in "${package_files[@]}"; do
         fi
       else
         soname_owner["$soname"]="$pkgname"
-        private_sonames["$soname"]=1
       fi
     done < <(
       readelf -d "$elf" 2>/dev/null |
@@ -97,44 +95,23 @@ for package_file in "${package_files[@]}"; do
   done < <(
     find "$tmpdir" -type f -print0 |
       while IFS= read -r -d '' f; do
-        [[ "$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')" == "7f454c46" ]] &&
-          printf '%s\0' "$f"
-      done
-  )
-  rm -rf "$tmpdir"
-done
-# Re-scan NEEDED entries and only enforce providers that are part of this
-# private repository. External Arch/CachyOS/AUR providers are intentionally
-# outside this script's trust boundary and are checked by maintenance.yml.
-for package_file in "${package_files[@]}"; do
-  pkgname="$(tar -xOf "$package_file" .PKGINFO |
-    awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
-  tmpdir="$(mktemp -d)"
-  tar -xf "$package_file" -C "$tmpdir"
-  while IFS= read -r -d '' elf; do
-    while IFS= read -r needed; do
-      [[ -n "$needed" ]] || continue
-      if [[ -n "${private_sonames[$needed]:-}" &&
-            -z "${soname_owner[$needed]:-}" ]]; then
-        fail "$pkgname needs private SONAME $needed but no owner exists"
-      fi
-    done < <(
-      readelf -d "$elf" 2>/dev/null |
-        awk '/NEEDED/ {gsub(/[\\[\\]]/, "", $NF); print $NF}'
-    )
-  done < <(
-    find "$tmpdir" -type f -print0 |
-      while IFS= read -r -d '' f; do
-        [[ "$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')" == "7f454c46" ]] &&
-          printf '%s\0' "$f"
+        magic=''
+        LC_ALL=C IFS= read -r -N 4 magic < "$f" 2>/dev/null || true
+        [[ "$magic" == $'\x7fELF' ]] && printf '%s\0' "$f"
       done
   )
   rm -rf "$tmpdir"
 done
 
+# 旧实现还有第二遍完整解包检查「NEEDED 的私有 SONAME 没有主人」；由于
+# private_sonames 与 soname_owner 总是同时写入，其失败条件恒为假（死代码）。
+# 已发布包对外的 NEEDED 漂移（openvino 这类外部提供者换 SONAME）由
+# maintenance.yml / ABI watch 的 soname 扫描负责，这里只保留 SONAME 唯一性
+# （含互斥替代豁免）检查，并把两遍解包合并为一遍。
+
 printf 'Verified ELF ABI metadata for %d package asset(s).\n' "${#package_files[@]}"
 if (( failures > 0 )); then
-  printf 'ELF repository verification found %d failure(s).\n' "$failures" >&2
+  printf 'ELF repository verification found %d failure(s).\n' "$failures"
   exit 1
 fi
 printf 'ELF repository verification passed.\n'
