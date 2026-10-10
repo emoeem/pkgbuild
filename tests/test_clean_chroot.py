@@ -37,7 +37,7 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn('CLEAN_CHROOT_BUILD=', workflow)
         self.assertIn('REQUESTED_BUILD_MODE', workflow)
         self.assertIn('build_mode=legacy', workflow)
-        self.assertIn('container_security_args+=(--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined)', workflow)
+        self.assertIn('container_security_args+=(--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cgroupns=private --volume /sys/fs/cgroup:/sys/fs/cgroup:rw)', workflow)
         self.assertIn('if [[ "$build_mode" == chroot ]]', workflow)
         self.assertIn("inputs.build_mode != 'chroot' && !cancelled() && needs.build.result == 'failure'", workflow)
         self.assertIn("inputs.build_mode != 'chroot' && (!cancelled() && needs.build.result == 'success'", workflow)

@@ -297,7 +297,7 @@ jobs:
             "$BUILDER_IMAGE" bash -lc 'shopt -s nullglob; packages=(/repo/*.pkg.tar.zst); if (( ${#packages[@]} > 0 )); then rm -f /repo/emoeem.db* /repo/emoeem.files*; repo-add --remove /repo/emoeem.db.tar.gz "${packages[@]}"; fi'
           container_security_args=()
           if [[ "$build_mode" == chroot ]]; then
-            container_security_args+=(--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined)
+            container_security_args+=(--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cgroupns=private --volume /sys/fs/cgroup:/sys/fs/cgroup:rw)
           fi
           docker run --rm "${container_security_args[@]}" \
             --shm-size 2g \
