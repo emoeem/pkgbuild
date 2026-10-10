@@ -101,16 +101,25 @@ jobs:
         # tests/run-all.sh is the same entry point used locally, so the local
         # and CI definitions of "verified" cannot drift apart.
         #
-        # 先复制一份再跑，而不是直接在只读挂载里跑：容器默认是 root，而
-        # /workspace 的属主是 runner（uid 1001），git 会拒绝以 root 操作别人的
-        # 仓库（fatal: detected dubious ownership in repository），凡是问 git 的
-        # 检查（tests/test_workflow_references.py 的 `git ls-files`、manifest 门禁
-        # 的 workflow 跟踪校验）都会假失败。复制到 /tmp/ws 后属主与运行用户一致，
-        # 顺带解掉只读挂载对测试夹具的限制。挂载仍然保持只读：源仓库不会被改。
+        # 两条约束决定了这里的形式，缺一个套件就会假红（见 run 38036330468）：
+        #
+        # 1. 必须以非 root 跑。makepkg 拒绝以 root 运行，而 test-package-audit.sh
+        #    和 test_auto_repair.sh 的 .SRCINFO/updpkgsums 修复路径都要调 makepkg。
+        #    builder 是镜像里建好的无特权用户（带 HOME 和 passwordless sudo），
+        #    正是为此存在。
+        # 2. 必须复制一份再跑，而不是直接读只读挂载。checkout 的属主是 runner
+        #    （uid 1001），容器里的用户是 builder（uid 1000），git 会拒绝跨属主
+        #    仓库（fatal: detected dubious ownership in repository），于是
+        #    tests/test_workflow_references.py 的 `git ls-files`、manifest 门禁的
+        #    workflow 跟踪校验都会失败。以非 root 复制时 cp 无法保留属主，副本
+        #    自然属于 builder，检查就与本地一致了。
+        #
+        # 挂载仍然只读：源仓库不会被测试改动。
         shell: bash
         run: |
           set -Eeuo pipefail
           docker run --pull always --rm \
+            --user builder \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
             bash -c 'set -Eeuo pipefail; cp -a /workspace /tmp/ws && cd /tmp/ws && bash tests/run-all.sh'
