@@ -54,7 +54,11 @@ timing_total() {
 timing_resources() {
     local out_file="$1"
     local build_dir="$2"
-    local source_cache_dir="$3"
+    # Not "source_cache_dir": build-in-arch.sh declares that name readonly at
+    # top level, and "local source_cache_dir" then trips
+    # "local: source_cache_dir: readonly variable" (exit 1) under set -e,
+    # aborting every build before it starts.
+    local sources_dir="$3"
     local package_bytes="${4:-0}"
 
     : >"$out_file"
@@ -89,8 +93,8 @@ timing_resources() {
     bytes="$(du -sb "$build_dir" 2>/dev/null | awk '{ print $1 }')"
     printf 'build_dir_bytes=%s\n' "${bytes:-0}" >>"$out_file"
 
-    if [[ -d "$source_cache_dir" ]]; then
-        bytes="$(du -sb "$source_cache_dir" 2>/dev/null | awk '{ print $1 }')"
+    if [[ -d "$sources_dir" ]]; then
+        bytes="$(du -sb "$sources_dir" 2>/dev/null | awk '{ print $1 }')"
         printf 'source_cache_bytes=%s\n' "${bytes:-0}" >>"$out_file"
     fi
 

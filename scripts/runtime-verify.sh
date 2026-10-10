@@ -112,8 +112,13 @@ check_elf() {
         local base_name
         base_name="$(basename "$file")"
         if [[ "$base_name" =~ [.]so([.][0-9]+)*$ ]]; then
+            # readelf prints "Library soname: [libfoo.so.1]"; the bracket
+            # expression [][] strips exactly the surrounding brackets. The
+            # previous /[][\\[\\]]/ never matched, so every correctly built
+            # library was reported as soname-mismatch and every gate that
+            # depends on this check was a false alarm.
             declared="$(readelf -d "$target$file" 2>/dev/null |
-                awk '/SONAME/ {gsub(/[][\\[\\]]/, "", $NF); print $NF}')"
+                awk '/SONAME/ {gsub(/[][]/, "", $NF); print $NF}')"
             if [[ -n "$declared" && "$declared" != "$base_name" ]]; then
                 note_failure "$package_name" "soname-mismatch" "$file declares $declared"
             elif [[ -z "$declared" && "$base_name" =~ [.]so[.][0-9] ]]; then

@@ -10,6 +10,9 @@
 # warning, because blocking a build on a monitoring API would be worse than the
 # ordering hazard it prevents.
 #
+# A prerequisite that has no job in this run is skipped as well: it is not being
+# rebuilt, so the published version is what the builder links against.
+#
 # Usage: wait-for-build-dependencies.sh --package NAME --run-id ID
 set -Eeuo pipefail
 
@@ -60,6 +63,7 @@ while (( SECONDS < deadline )); do
 
     pending=()
     failed=()
+    absent=()
     for dependency in "${dependency_names[@]}"; do
         read -r status conclusion < <(
             python3 -c '
@@ -81,6 +85,14 @@ else:
                     *) failed+=("$dependency") ;;
                 esac
                 ;;
+            missing)
+                # The prerequisite is not in this run's matrix, so the builder
+                # links against its already published version: nothing to wait
+                # for. Counting it as pending deadlocked ffmpeg-full for the
+                # whole timeout whenever its prerequisites were not rebuilt in
+                # the same run (mpeghdec / svt-jpeg-xs-git in run 38036057599).
+                absent+=("$dependency")
+                ;;
             *)
                 pending+=("$dependency")
                 ;;
@@ -92,6 +104,9 @@ else:
         exit 1
     fi
     if (( ${#pending[@]} == 0 )); then
+        if (( ${#absent[@]} > 0 )); then
+            printf 'Not part of this run (using the published version): %s\n' "${absent[*]}"
+        fi
         printf 'All in-repo prerequisites finished successfully.\n'
         exit 0
     fi

@@ -47,6 +47,9 @@ ln -sf libfake.so.99 "$pkg/usr/lib/libfake.so"
 gcc -o "$pkg/usr/bin/broken" "$work/fake.c" -L"$pkg/usr/lib" -lfake
 rm -f "$pkg/usr/lib/libfake.so"
 ln -sf /nonexistent/target "$pkg/usr/lib/libdangling.so"
+# A versioned library with no SONAME at all: the quirc 1.2 defect, where the
+# installed name promises a version the loader can never resolve.
+gcc -shared -fPIC -o "$pkg/usr/lib/libnosoname.so.1" "$work/helper.c"
 printf 'x\n' >"$pkg/etc/wide-open.conf"
 chmod 777 "$pkg/etc/wide-open.conf"
 printf 'pkgname = faultfixture\npkgver = 1.0-1\narch = x86_64\n' >"$pkg/.PKGINFO"
@@ -61,7 +64,7 @@ python3 - "$work/report.json" <<'PY' || exit 1
 import json, sys
 report = json.load(open(sys.argv[1], encoding="utf-8"))
 checks = {finding["check"] for finding in report["findings"]}
-expected = {"broken-symlink", "soname-mismatch", "world-writable", "unresolved-library"}
+expected = {"broken-symlink", "soname-mismatch", "missing-soname", "world-writable", "unresolved-library"}
 missing = expected - checks
 if missing:
     raise SystemExit(f"missing failure class(es): {sorted(missing)} (got {sorted(checks)})")
@@ -72,8 +75,12 @@ PY
 
 printf '%s\n' '2/3: a healthy package passes'
 ok="$work/ok"
-mkdir -p "$ok/usr/bin"
+mkdir -p "$ok/usr/bin" "$ok/usr/lib"
 cp /usr/bin/true "$ok/usr/bin/ok-true"
+# A versioned library whose SONAME matches its file name is the normal case;
+# without it this suite only ever saw a mismatching SONAME, which is how a
+# bracket-stripping bug could report every real library as broken.
+gcc -shared -fPIC -Wl,-soname,libok.so.1 -o "$ok/usr/lib/libok.so.1" "$work/helper.c"
 printf 'pkgname = okfixture\npkgver = 1.0-1\narch = x86_64\n' >"$ok/.PKGINFO"
 pack "$ok" "$work/okfixture.pkg.tar.zst"
 bash "$root/scripts/runtime-verify.sh" --file "$work/okfixture.pkg.tar.zst" >/dev/null ||
