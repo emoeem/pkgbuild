@@ -200,7 +200,9 @@ jobs:
             mapfile -t packages < <(find "$extract_dir" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print)
             ((${#packages[@]} > 0)) || { echo "No package files in prerequisite artifact: $dep" >&2; exit 1; }
             for package_file in "${packages[@]}"; do
-              pkgname="$(bsdtar -xOf "$package_file" .PKGINFO | awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
+              # hosted runner 没有 bsdtar（libarchive-tools），GNU tar 的 --zstd
+              # 足以只读 .PKGINFO 这一个成员。
+              pkgname="$(tar --zstd -xOf "$package_file" .PKGINFO | awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
               [[ -n "$pkgname" ]] || { echo "Missing pkgname in $package_file" >&2; exit 1; }
               find localrepo/x86_64 -maxdepth 1 -type f -name "${pkgname}-*.pkg.tar.zst" -delete
               cp "$package_file" localrepo/x86_64/
