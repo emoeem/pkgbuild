@@ -210,8 +210,9 @@ fi
 # 规则必须对依赖的依赖同样成立（见 find-uninstallable-dependencies.sh 的说明）：
 # 仓库里有同名包、但依赖闭包装不上的依赖，要先把真正缺的那个名字从 AUR 装好，
 # 否则 pacman 会直接 "could not satisfy dependencies"，目标包连编译都不会开始
-# （run 38025497233 的 linuxqq-clipsync-git：yay -S --aur 仍会把仓库里的同名
-# 副本当成满足条件，只有把缺件本体装进容器才能让仓库副本变得可安装）。
+# （run 38025497233：yay -S --aur 仍会把仓库里的同名副本当成满足条件，只有把缺件
+# 本体装进容器才能让仓库副本变得可安装；触发那个 run 的桩包此后已退役，但规则对
+# 任何此类依赖仍然成立）。
 # 装好一轮后重新探测，覆盖"缺件本身也依赖缺件"的链条；最多三轮。
 for _ in 1 2 3; do
     mapfile -t aur_dependencies < <(

@@ -3,7 +3,7 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前维护 12 个 package base。
+当前维护 11 个 package base。
 
 ## Features
 
@@ -21,7 +21,6 @@
 | --- | --- | --- |
 | `ffmpeg-full` | `x86_64` | 启用大量编解码器、CUDA 和 Whisper 支持的 FFmpeg |
 | `ggml-cuda-git` | `x86_64`, `aarch64` | CUDA 优化的 GGML |
-| `linuxqq-clipsync-git` | `x86_64` | Linux QQ Wayland 剪贴板同步 |
 | `llama.cpp-cuda` | `x86_64` | CUDA 优化的 llama.cpp stable 构建 |
 | `llama.cpp-cuda-git` | `x86_64` | CUDA 优化的 llama.cpp development 构建 |
 | `scx-scheds-git` | `x86_64` | sched_ext 调度器集合 |

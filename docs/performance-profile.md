@@ -21,7 +21,6 @@
 | `llama.cpp-cuda` | Zen3 + O3 + GGML LTO + CUDA 89 | 本机推理核心 |
 | `whisper-cpp-cuda-git` | Zen3 + O3 + CUDA GGML | ASR CPU/CUDA 路径 |
 | `scx-scheds-git` | Zen3 Rust target，保留 `!lto` | PKGBUILD 已明确禁用 makepkg LTO |
-| `daed-emo` | GOAMD64=v3 | Go 优化收益主要由 Go 工具链控制 |
 | C/C++/CMake 编解码库 | Zen3 + O3 | 适合本机 profile |
 | `xclip-git` / 纯脚本 / `-any` 包 | 不追求 LTO | 本地机器码收益很小 |
 

@@ -14,8 +14,8 @@ permissions:
   actions: write
 
 concurrency:
-  # Shared with sync.yml and sync-dae-release.yml: all three commit to main,
-  # so they must not race each other into non-fast-forward push failures.
+  # Shared with sync.yml: both commit to main, so they must not race each other
+  # into non-fast-forward push failures.
   group: main-branch-updates
   cancel-in-progress: false
 

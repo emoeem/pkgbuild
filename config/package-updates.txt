@@ -14,7 +14,6 @@
 # updater exists; `manual` is a deliberate statement of staleness, not a
 # default.  See docs/build-pipeline.md.
 
-daed-emo workflow .github/workflows/sync-dae-release.yml
 sing-box-rule-sets workflow .github/workflows/refresh-rule-sets.yml
 sing-box-ebpf manual upstream tag is pinned by hand in the PKGBUILD; no release automation upstream
 sing-box-panel manual source lives in this repo plus a pinned zashboard archive; bumped by hand

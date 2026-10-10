@@ -7,7 +7,8 @@ set -Eeuo pipefail
 # 必须对依赖的依赖同样成立：本仓库自己也可能收录了某个依赖的副本，而那个副本的
 # 依赖只在 AUR 里（linuxqq-wayland-fix-git -> linuxqq）。pacman 这时不会回退到
 # AUR，而是直接 "could not satisfy dependencies"，目标包连编译都不会开始
-# （run 38023434807 的 linuxqq-clipsync-git）。
+# （run 38023434807 就是这种情形；触发它的那个桩包此后已退役，但规则本身对任何
+# 此类依赖仍然成立）。
 #
 # 做法：对目标自己声明的每个依赖先做两次探测——
 #   * pacman -Si 找不到同名包 → 纯 AUR 依赖，yay 自己会从 AUR 解决，跳过；
