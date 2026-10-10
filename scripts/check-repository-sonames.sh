@@ -2,9 +2,14 @@
 # Detect published packages whose linked SONAMEs are no longer provided by the
 # current repositories.
 #
-# Runs inside the CachyOS-v3 container used by the build and maintenance
-# workflows (it needs pacman, expac and bsdtar), but every input is a path so
-# it can also be exercised by hand in that container.
+# Runs inside the container used by the build and maintenance workflows — the
+# repository's own builder image, ghcr.io/<owner>/pkgbuild-builder:latest, which
+# is built FROM the official CachyOS x86-64-v3 image — because it needs pacman,
+# expac and bsdtar. That image is pulled anonymously from GHCR; the CachyOS base
+# image on Docker Hub is not, and an unauthenticated Docker Hub pull is rate
+# limited per runner IP (`toomanyrequests`, run 37989749507, `docker run` exit
+# 125). Every input is a path, so the script can also be exercised by hand in
+# that container.
 #
 # Usage: check-repository-sonames.sh <published-dir> <out-dir> [packages-dir]
 #

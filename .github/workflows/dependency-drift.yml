@@ -16,6 +16,12 @@ permissions:
 jobs:
   detect:
     runs-on: ubuntu-24.04
+    env:
+      # 检测容器来自 GHCR，不是 Docker Hub：Docker Hub 的未认证拉取按 runner
+      # 出口 IP 限速，共享 runner 地址随时会拿到 `toomanyrequests`（exit 125），
+      # 而这个 job 用 `|| true` 兜住了容器失败，所以它不会变红——只会静悄悄地
+      # 报告「没有漂移」。用本仓库自己发布的 builder 镜像，匿名拉取无凭据、无限速。
+      BUILDER_IMAGE: ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -44,7 +50,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/published:/published:ro" \
             --env "LOCAL_REPO_DIR=/published/x86_64" \
-            docker.io/cachyos/cachyos-v3:latest \
+            "$BUILDER_IMAGE" \
             bash -c 'bash /workspace/scripts/setup-container-repos.sh || echo "WARNING: chaotic-aur unavailable, drift only covers the remaining repositories" >&2; bash /workspace/scripts/check-dependency-drift.sh /published/x86_64 /workspace' \
             > drift/report.txt || true
           cat drift/report.txt

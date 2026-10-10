@@ -61,6 +61,14 @@ jobs:
   check-sonames:
     name: Detect outdated soname dependencies
     runs-on: ubuntu-24.04
+    env:
+      # 检测容器和 package build 用同一份 builder 镜像：它由本仓库发布到 GHCR，
+      # 匿名拉取不受 Docker Hub 的「每 IP 未认证拉取」限速影响。直接拉
+      # docker.io/cachyos/cachyos-v3:latest 会被限速成
+      # `toomanyrequests: You have reached your unauthenticated pull rate limit`
+      # （run 37989749507，docker run exit 125）——检测器本身没有任何问题，
+      # 却让每天一次的 soname 复查整个 job 变红。
+      BUILDER_IMAGE: ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest
     outputs:
       stale: ${{ steps.dispatch.outputs.stale }}
     steps:
@@ -85,7 +93,7 @@ jobs:
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/maintenance-out:/out" \
-            docker.io/cachyos/cachyos-v3:latest \
+            "$BUILDER_IMAGE" \
             bash /workspace/scripts/check-repository-sonames.sh \
               /workspace/published/x86_64 /out /workspace/packages
 

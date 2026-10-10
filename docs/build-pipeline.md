@@ -29,6 +29,8 @@
 
 使用预构建镜像后，package job 不再重复执行 CachyOS repository bootstrap 和 yay bootstrap。`build-in-arch.sh` 的本地路径要求宿主机本身是 CachyOS 且启用 `cachyos-v3`，不会再在 Arch 容器里临时拼装 CachyOS 仓库。
 
+依赖漂移检测（`dependency-drift.yml`）和 soname 复查（`maintenance.yml`）里的检测容器也拉同一份镜像（`BUILDER_IMAGE`），不再从 Docker Hub 匿名拉 `docker.io/cachyos/cachyos-v3`：Docker Hub 的未认证拉取按 runner 出口 IP 限速，共享 runner 会直接拿到 `toomanyrequests`（maintenance run 37989749507 就是这么失败的，`docker run` exit 125，而检测器本身没有任何问题）。GHCR 的匿名拉取不需要凭据也不吃这个限速；builder 镜像本来就基于同一个 CachyOS-v3 镜像并已配好 chaotic-aur（`[chaotic-aur]` 是该文件最后一段，所以 `remove_chaotic_section` 仍然安全），检测器的 provider 集合只多不少。`setup-container-repos.sh` 因此只在容器里还没有 `[chaotic-aur]` 段时才追加配置：重复声明会让 pacman 每次都报 `could not register 'chaotic-aur' database (database already registered)`，而且生效的始终是第一段。
+
 ## 3. Repository Integration Tests
 
 `tests/test_select_packages.py` 覆盖：

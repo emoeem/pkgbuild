@@ -17,6 +17,10 @@ on:
       - "tests/**"
       - ".github/builder/**"
       - ".github/workflows/check.yml"
+      # tests/test_workflow_images.py asserts invariants of these two, so an
+      # edit to either one must re-run it.
+      - ".github/workflows/dependency-drift.yml"
+      - ".github/workflows/maintenance.yml"
 
 permissions:
   contents: read
@@ -64,6 +68,8 @@ jobs:
         run: python tests/test_select_packages.py
       - name: Run ELF SONAME fault-injection test
         run: bash tests/test_elf_soname.sh
+      - name: Run workflow image tests
+        run: python tests/test_workflow_images.py
       - name: Run package audit in prepared builder
         shell: bash
         run: |
