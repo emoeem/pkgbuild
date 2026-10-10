@@ -58,7 +58,7 @@ jobs:
       - name: Set up CachyOS builder
         if: steps.update.outputs.changed == 'true'
         id: builder
-        uses: ./.github/actions/setup-builder
+        uses: $/.github/actions/setup-builder
         with:
           package_name: sing-box-ebpf
           generation: ${{ steps.generation.outputs.value }}
@@ -68,6 +68,9 @@ jobs:
         if: steps.update.outputs.changed == 'true'
         env:
           BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+          # 经 env 间接传递而不是内插进 run 块：模板展开发生在 bash 解析之前，
+          # 值一旦可被外部影响就是代码注入位（zizmor template-injection）。
+          BUILDER_GENERATION: ${{ steps.generation.outputs.value }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -83,7 +86,7 @@ jobs:
             --env LOCAL_REPO_MOUNT=/run/pkgbuild-localrepo \
             --env LOCAL_REPO_NAME=emoeem \
             --env CLEAN_CHROOT_BUILD=0 \
-            --env BUILDER_GENERATION="${{ steps.generation.outputs.value }}" \
+            --env BUILDER_GENERATION="$BUILDER_GENERATION" \
             --env MAKE_JOBS=2 \
             --env BUMP_PKGREL=false \
             --env PACKAGE_NAME=sing-box-ebpf \
