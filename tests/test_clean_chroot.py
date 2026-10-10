@@ -13,7 +13,9 @@ class CleanChrootTests(unittest.TestCase):
     def test_chroot_is_reflink_copy_and_disposable(self):
         script = (ROOT / 'scripts/build-in-clean-chroot.sh').read_text()
         self.assertIn('cp --reflink=auto -a', script)
-        self.assertIn("trap 'rm -rf -- \"$work_root\" \"$nspawn_wrapper_dir\"' EXIT INT TERM", script)
+        self.assertIn('cleanup_paths=("$nspawn_wrapper_dir")', script)
+        self.assertIn('cleanup_paths+=("$work_root")', script)
+        self.assertIn('trap cleanup EXIT INT TERM', script)
         self.assertIn('makechrootpkg -c -u', script)
         self.assertIn('base_packages=(base-devel gcc-objc ccache)', script)
         self.assertIn('export CARGO_HOME=/cache/cargo', script)
@@ -22,6 +24,7 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn('baseline_name="baseline-${generation}-${architecture}-${fingerprint}"', script)
         self.assertIn('baseline_archive="$cache_dir/chroot/${baseline_name}.tar.zst"', script)
         self.assertIn('runtime_root="/tmp/pkgbuild-chroot-${fingerprint}"', script)
+        self.assertLess(script.index('nspawn_wrapper_dir="$(mktemp -d'), script.index('mkarchroot -C'))
 
     def test_repo_order_and_read_only_bind(self):
         script = (ROOT / 'scripts/build-in-clean-chroot.sh').read_text()
@@ -41,7 +44,7 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn('arch-nspawn -c "$cache_dir/pacman" "$work_root/root" pacman -Syu --noconfirm', script)
         self.assertIn('systemd-nspawn --link-journal=no "$@"', script)
         self.assertIn('PATH="$nspawn_wrapper_dir:/usr/lib/ccache/bin:$PATH"', script)
-        self.assertIn('uses: ./.github/actions/setup-builder', workflow)
+        self.assertIn('uses: $/.github/actions/setup-builder', workflow)
         self.assertIn('selected_deps=[d for d in deps if d in selected]; sys.stdout.write(\"\\n\".join(selected_deps))', workflow)
         local_runner = (ROOT / 'scripts/parallel-build.sh').read_text()
         self.assertNotIn('--cap-add SYS_ADMIN', local_runner)

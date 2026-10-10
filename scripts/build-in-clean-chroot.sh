@@ -41,6 +41,21 @@ if 'options' not in by_name: raise SystemExit('Builder pacman.conf missing [opti
 other = [section for section in other if not re.match(r'\s*\[(?:emoeem|emoeem-staging)\]', section)]
 Path(sys.argv[1]).write_text(''.join(options + [by_name['options']] + [by_name[n] for n in order] + other), encoding='utf-8')
 PY
+# Install the wrapper before mkarchroot: baseline creation itself invokes
+# arch-nspawn for package hooks, so creating it only before makechrootpkg is too late.
+# arch-nspawn invokes systemd-nspawn by name through PATH. Docker builders do
+# not have a host systemd machine-id/journal to link; systemd-nspawn otherwise
+# fails in setup_journal and leaves its mount-tunnel cleanup error in the log.
+nspawn_wrapper_dir="$(mktemp -d "/tmp/pkgbuild-nspawn-${package_name}.XXXXXX")"
+cat > "$nspawn_wrapper_dir/systemd-nspawn" <<'__NSPAWN_WRAPPER__'
+#!/usr/bin/env bash
+exec /usr/bin/systemd-nspawn --link-journal=no "$@"
+__NSPAWN_WRAPPER__
+chmod 0755 "$nspawn_wrapper_dir/systemd-nspawn"
+cleanup_paths=("$nspawn_wrapper_dir")
+cleanup() { rm -rf -- "${cleanup_paths[@]}"; }
+trap cleanup EXIT INT TERM
+export PATH="$nspawn_wrapper_dir:$PATH"
 fingerprint="$( { cat "$base_config"; printf '\n%s\n%s\nflavor=%s\n' "$generation" "$architecture" "$builder_flavor"; sha256sum /etc/makepkg.conf /etc/makepkg.conf.d/90-emo-native.conf "$0" 2>/dev/null || true; } | sha256sum | cut -c1-20)"
 baseline_name="baseline-${generation}-${architecture}-${fingerprint}"
 cache_fs="$(stat -f -c %T "$cache_dir/chroot")"
@@ -97,17 +112,8 @@ __CACHE_ENV__
     baseline_root="$baseline/root"
     work_parent="$cache_dir/chroot"
 fi
-# arch-nspawn invokes systemd-nspawn by name through PATH. Docker builders do
-# not have a host systemd machine-id/journal to link; systemd-nspawn otherwise
-# fails in setup_journal and leaves its mount-tunnel cleanup error in the log.
-nspawn_wrapper_dir="$(mktemp -d "/tmp/pkgbuild-nspawn-${package_name}.XXXXXX")"
-cat > "$nspawn_wrapper_dir/systemd-nspawn" <<'__NSPAWN_WRAPPER__'
-#!/usr/bin/env bash
-exec /usr/bin/systemd-nspawn --link-journal=no "$@"
-__NSPAWN_WRAPPER__
-chmod 0755 "$nspawn_wrapper_dir/systemd-nspawn"
 work_root="$(mktemp -d "$work_parent/work-${package_name}.XXXXXX")"
-trap 'rm -rf -- "$work_root" "$nspawn_wrapper_dir"' EXIT INT TERM
+cleanup_paths+=("$work_root")
 mkdir -p "$work_root/root"
 cp --reflink=auto -a "$baseline_root/." "$work_root/root/"
 sed -i '/^\[options\]$/a CacheDir = /cache/pacman' "$work_root/root/etc/pacman.conf"
