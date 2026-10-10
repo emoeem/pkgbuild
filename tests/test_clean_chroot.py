@@ -38,6 +38,7 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn('REQUESTED_BUILD_MODE', workflow)
         self.assertIn('build_mode=legacy', workflow)
         self.assertIn('runner_cgroup_dir="/sys/fs/cgroup${runner_cgroup%/}"', workflow)
+        self.assertIn('--cgroup-parent="$runner_cgroup" --cgroupns=host', workflow)
         self.assertIn('--cgroupns=host --volume "$runner_cgroup_dir:$runner_cgroup_dir:rw"', workflow)
         self.assertNotIn('--volume /sys/fs/cgroup:/sys/fs/cgroup:rw', workflow)
         self.assertIn('if [[ "$build_mode" == chroot ]]', workflow)

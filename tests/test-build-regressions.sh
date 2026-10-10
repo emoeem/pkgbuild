@@ -99,6 +99,8 @@ grep -Fq -- 'cleanup() { rm -rf -- "${cleanup_paths[@]}"; }' "$root/scripts/buil
     || fail 'clean-chroot does not clean up the temporary nspawn wrapper'
 grep -Fq -- 'cleanup_paths+=("$work_root")' "$root/scripts/build-in-clean-chroot.sh" \
     || fail 'clean-chroot work root is not registered for cleanup'
+grep -Fq -- '--cgroup-parent="$runner_cgroup" --cgroupns=host' "$root/.github/workflows/build.yml" \
+    || fail 'clean-chroot container is not nested under the delegated job cgroup'
 grep -Fq -- '--cgroupns=host --volume "$runner_cgroup_dir:$runner_cgroup_dir:rw"' "$root/.github/workflows/build.yml" \
     || fail 'clean-chroot does not scope writable cgroup access to the current job'
 grep -Fq -- '[[ -z "$runner_cgroup" || "$runner_cgroup" == / ]]' "$root/.github/workflows/build.yml" \

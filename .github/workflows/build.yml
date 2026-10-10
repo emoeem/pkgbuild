@@ -310,7 +310,7 @@ jobs:
               exit 1
             fi
             echo "Clean-chroot cgroup delegation is scoped to $runner_cgroup"
-            container_security_args+=(--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cgroupns=host --volume "$runner_cgroup_dir:$runner_cgroup_dir:rw")
+            container_security_args+=(--cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cgroup-parent="$runner_cgroup" --cgroupns=host --volume "$runner_cgroup_dir:$runner_cgroup_dir:rw")
           fi
           docker run --rm "${container_security_args[@]}" \
             --shm-size 2g \
