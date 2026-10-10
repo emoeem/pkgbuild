@@ -59,7 +59,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p published/x86_64
-          rm -f published/x86_64/*.pkg.tar.zst
+          rm -f published/x86_64/*.pkg.tar.zst published/x86_64/*.db* published/x86_64/*.files*
           if ! gh release view repo --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # 首次发布前的自举状态：没有可观察的仓库不算失败，否则这个
             # workflow 在第一次 publish 前会永远红着。
@@ -67,14 +67,24 @@ jobs:
             printf 'count=0\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # 数据库文件必须和包一起下载：两个检测器都会把 published 目录注册进
+          # pacman.conf（soname 检测用原目录、version 检测用其副本），没有
+          # emoeem.db 时 pacman -Sy 同步本地仓库会直接失败，把整个 watch 变红。
           gh release download repo --repo "$GITHUB_REPOSITORY" \
-            --pattern '*.pkg.tar.zst' --dir published/x86_64 --clobber
+            --pattern '*.pkg.tar.zst' \
+            --pattern '*.db' --pattern '*.db.sig' \
+            --pattern '*.files' --pattern '*.files.sig' \
+            --dir published/x86_64 --clobber
           count="$(find published/x86_64 -maxdepth 1 -name '*.pkg.tar.zst' | wc -l)"
           printf 'Published packages downloaded: %s\n' "$count"
           printf 'count=%s\n' "$count" >> "$GITHUB_OUTPUT"
           # 下载失败必须报错；绝不允许被当成「无漂移」。
           if (( count == 0 )); then
             printf '::error::No published package could be downloaded; refusing to report "no drift".\n'
+            exit 1
+          fi
+          if [[ ! -s published/x86_64/emoeem.db ]]; then
+            printf '::error::Published release has packages but no emoeem.db; the detectors cannot sync the local repository.\n'
             exit 1
           fi
 
