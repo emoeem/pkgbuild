@@ -256,6 +256,21 @@ if [[ "${VALIDATE_ONLY:-0}" == "1" ]]; then
 fi
 
 printf 'Resolving dependencies, building and installing %s...\n' "$package_name"
+# 给安装类 pacman 调用注入 --ask=4:yay 的依赖事务可能把与本包冲突的仓库包
+# 一并装进来(scx-scheds-git 的依赖树里带着 extra/scx-scheds,125 MiB,实测
+# 2026-10-11),makepkg --install 收尾的 pacman -U 撞冲突时 --noconfirm 对
+# "Remove ...?" 的默认答案是 N,整次安装中止。devtools 在 chroot 里同样用
+# --ask=4 处理 install_pkgs;一次性容器里自动移除是安全语义。
+pacman_shim_dir="$(mktemp -d /tmp/pkgbuild-pacman-shim.XXXXXX)"
+cat > "$pacman_shim_dir/pacman" <<'__PACMAN_SHIM__'
+#!/usr/bin/env bash
+case "${1:-}" in
+    -S*|-U*|-R*) exec /usr/bin/pacman --ask=4 "$@" ;;
+    *)           exec /usr/bin/pacman "$@" ;;
+esac
+__PACMAN_SHIM__
+chmod 0755 "$pacman_shim_dir/pacman"
+PATH="$pacman_shim_dir:$PATH"
 if [[ "$package_name" == "ffmpeg-full" ]]; then
     # Resolve virtual/provider dependencies non-interactively and pin them to
     # the same concrete packages selected by this local CachyOS-v3 profile.
