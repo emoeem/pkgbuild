@@ -114,7 +114,11 @@ fi
 arch-nspawn "$work/root" pacman -Syu --noconfirm --ask=4 "$package_name"
 installed="$(arch-nspawn "$work/root" pacman -Q "$package_name")"
 if [[ "$package_name" == sing-box-ebpf ]]; then
-    if arch-nspawn "$work/root" pacman -Q sing-box >/dev/null 2>&1; then
+    # pacman -Q 会按 provides 匹配:sing-box-ebpf provides=sing-box,拿它查
+    # sing-box 永远命中新包自己(2026-10-11 实测:事务里明明 removing
+    # sing-box,检查却报 remains installed)。查精确包名列表才能判定上游
+    # 包真的被移除。
+    if arch-nspawn "$work/root" pacman -Qq | grep -qx 'sing-box'; then
         echo 'Upgrade path failed: official sing-box remains installed after installing sing-box-ebpf.' >&2
         exit 1
     fi

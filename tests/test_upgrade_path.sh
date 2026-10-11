@@ -30,6 +30,7 @@ if [[ "$1" == pacman ]]; then
       if [[ "$target" == linuxqq-clipsync-git ]]; then touch "$MOCK_STATE/linuxqq-clipsync-git"; fi
       ;;
     -U) touch "$MOCK_STATE/linuxqq-clipsync-git" ;;
+    -Qq) ls "$MOCK_STATE" ;;
     -Q)
       package="${2:-}"
       [[ -f "$MOCK_STATE/$package" ]] || exit 1
