@@ -43,6 +43,23 @@ jobs:
           fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
+      - name: Download published repository database
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: repo
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .cache/published
+          # 只取 db(几 KiB),不拖几百 MiB 的包文件。还没有 release 的首次
+          # 运行:留空,checker 回退 PKGBUILD 基线。
+          if gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern 'emoeem.db' --dir .cache/published --clobber; then
+            ls -la .cache/published
+          else
+            echo 'No published repository release yet; using PKGBUILD baselines.'
+          fi
+
       - name: Check versions in CachyOS builder
         shell: bash
         env:
@@ -50,6 +67,10 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p .cache/upstream
+          published_args=()
+          if [[ -f .cache/published/emoeem.db ]]; then
+            published_args+=(--published-db /workspace/.cache/published/emoeem.db)
+          fi
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             "$BUILDER_IMAGE" \
@@ -59,10 +80,11 @@ jobs:
               --oldver /workspace/.cache/upstream/oldver.json \
               --newver /workspace/.cache/upstream/newver.json \
               --report /workspace/.cache/upstream/report.json \
+              "${published_args[@]}" \
               --run
           cat .cache/upstream/report.json
 
-      - name: Open or update upstream version issues
+      - name: Open, update or close upstream version issues
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -80,8 +102,28 @@ jobs:
             package="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["package"])' "$record")"
             current="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["current"])' "$record")"
             upstream="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["upstream"])' "$record")"
-            title="[upstream] $package: $upstream available (PKGBUILD: $current)"
-            issue="$(gh issue list --state open --limit 100 --json number,title --search "$package in:title" | python3 -c 'import json,sys; p=sys.argv[1]; rows=json.load(sys.stdin); print(next((x["number"] for x in rows if x["title"]==p), ""))' "$title")"
-            body="Upstream version detected by nvchecker.\n\n- Package: $package\n- PKGBUILD pkgver baseline: $current\n- Upstream: $upstream\n\nNo PKGBUILD was modified automatically. Review source checksums, packaging changes and rebuild impact before updating."
+            title="[upstream] $package: $upstream available (published: $current)"
+            # 按前缀找既有 issue:基线语义改过(PKGBUILD → published),前缀
+            # 匹配让旧格式的 issue 继续被评论而不是孤儿化。
+            issue="$(gh issue list --state open --limit 100 --json number,title --search "$package in:title" | python3 -c 'import json,sys; p=sys.argv[1]; prefix="[upstream] "+p+":"; rows=json.load(sys.stdin); print(next((str(x["number"]) for x in rows if x["title"].startswith(prefix)), ""))' "$package")"
+            body="Upstream version detected by nvchecker.\n\n- Package: $package\n- Published repository baseline: $current\n- Upstream: $upstream\n\nNo PKGBUILD was modified automatically. Review source checksums, packaging changes and rebuild impact before updating."
             if [[ -n "$issue" ]]; then gh issue comment "$issue" --body "$body"; else gh issue create --title "$title" --body "$body"; fi
           done < "$RUNNER_TEMP/upstream-issues.jsonl"
+          # 已解决的关闭:本轮 updates 没有的包,其 open 的 [upstream] issue
+          # 视为已追平(或已发布),不再留成永久挂账。
+          python3 - <<'PY' > "$RUNNER_TEMP/upstream-packages.txt"
+          import json
+          from pathlib import Path
+          data = json.loads(Path('.cache/upstream/report.json').read_text())
+          for update in data.get('updates', []):
+              print(update['package'])
+          PY
+          while IFS= read -r issue_json; do
+            [[ -n "$issue_json" ]] || continue
+            number="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["number"])' "$issue_json")"
+            title="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["title"])' "$issue_json")"
+            package="${title#\[upstream\] }"; package="${package%%:*}"
+            if ! grep -qxF "$package" "$RUNNER_TEMP/upstream-packages.txt"; then
+              gh issue close "$number" --reason completed --comment "No longer reported: the published repository is current with upstream for $package (or the package left the tracked set). Closing as resolved."
+            fi
+          done < <(gh issue list --state open --limit 100 --json number,title --search "[upstream] in:title" | jq -c '.[]')

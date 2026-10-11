@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run nvchecker using package-local source definitions and PKGBUILD baselines."""
 from __future__ import annotations
-import argparse, json, re, subprocess, sys, tomllib
+import argparse, io, json, re, subprocess, sys, tarfile, tomllib
 from pathlib import Path
 
 
@@ -32,6 +32,69 @@ def load_definitions(root: Path) -> tuple[dict[str, dict], dict[str, str]]:
         definitions[name] = config
         baselines[name] = current
     return definitions, baselines
+
+
+def parse_db_members(fileobj) -> dict:
+    """repo-add 数据库(解压后的 tar)-> {包名: 完整版本}。
+
+    布局:<name>-<version>/desc,内含 %NAME%/%VERSION% 字段块。
+    """
+    versions: dict[str, str] = {}
+    with tarfile.open(fileobj=fileobj, mode='r:') as tar:
+        for member in tar:
+            if not member.isfile() or not member.name.endswith('/desc'):
+                continue
+            fields: dict[str, list[str]] = {}
+            key = None
+            for line in tar.extractfile(member).read().decode(encoding='utf-8').splitlines():
+                if line.startswith('%'):
+                    key = line.strip('%')
+                    fields[key] = []
+                elif key and line:
+                    fields[key].append(line)
+            name = (fields.get('NAME') or [''])[0]
+            version = (fields.get('VERSION') or [''])[0]
+            if name and version:
+                versions[name] = version
+    return versions
+
+
+def read_published_versions(db_path: Path) -> dict:
+    zstd = subprocess.run(['zstd', '-dc', '--', str(db_path)], check=True, capture_output=True).stdout
+    return parse_db_members(io.BytesIO(zstd))
+
+
+def published_baseline(version: str, definition: dict) -> str:
+    """把发布的完整版本归一成可与上游比较的基线。
+
+    剥 epoch 与 pkgrel(pkgver 按 Arch 规则不含 '-');git 提交源与
+    load_definitions 同款取 .g<sha> 短哈希。
+    """
+    text = re.sub(r'^\d+:', '', version)
+    text = text.rsplit('-', 1)[0]
+    if definition.get('source') == 'git' and definition.get('use_commit'):
+        match = re.search(r'\.g([0-9a-f]{7,})$', text)
+        if match:
+            return match.group(1)[:7]
+    return text
+
+
+def resolve_baselines(definitions: dict, pkgbuild_baselines: dict, published: dict | None) -> tuple[dict, dict]:
+    """基线优先取「已发布的版本」,PKGBUILD 只作未发布包的回退。
+
+    -git 包的 pkgver 不回写进仓库,PKGBUILD 基线必然落后于已发布产物;
+    与上游比对的正确问题是「发布的东西旧不旧」,所以基线应以发布仓库为准
+    (2026-10-11 实测 svt 已发布 r123.ge5a61be 却按 PKGBUILD 的 r5.ge0940ac
+    误报更新)。
+    """
+    baselines = dict(pkgbuild_baselines)
+    origin = {name: 'pkgbuild' for name in baselines}
+    if published:
+        for name in baselines:
+            if name in published:
+                baselines[name] = published_baseline(published[name], definitions[name])
+                origin[name] = 'published'
+    return baselines, origin
 
 
 def validate_new_versions(expected: set[str], versions: dict) -> None:
@@ -79,9 +142,13 @@ def main() -> int:
     parser.add_argument('--oldver', type=Path, required=True)
     parser.add_argument('--newver', type=Path, required=True)
     parser.add_argument('--report', type=Path, required=True)
+    parser.add_argument('--published-db', type=Path,
+                        help='published repository db; its versions override PKGBUILD baselines when given')
     parser.add_argument('--run', action='store_true', help='execute nvchecker and nvcmp')
     args = parser.parse_args()
     definitions, baselines = load_definitions(args.root)
+    published = read_published_versions(args.published_db) if args.published_db else None
+    baselines, baseline_origin = resolve_baselines(definitions, baselines, published)
     args.config.parent.mkdir(parents=True, exist_ok=True)
     config = {'__config__': {'oldver': str(args.oldver), 'newver': str(args.newver), 'max_concurrency': 4}}
     config.update(definitions)
@@ -107,10 +174,10 @@ def main() -> int:
         validate_new_versions(set(definitions), new_versions)
         result = subprocess.run(['nvcmp', '-c', str(args.config)], check=True, capture_output=True, text=True)
         updates = [update for line in result.stdout.splitlines() if (update := parse_nvcmp_line(line))]
-        args.report.write_text(json.dumps({'updates': updates}, indent=2) + '\n', encoding='utf-8')
-        print(json.dumps({'updates': updates}))
+        args.report.write_text(json.dumps({'updates': updates, 'baselines': baselines, 'baseline_origin': baseline_origin}, indent=2) + '\n', encoding='utf-8')
+        print(json.dumps({'updates': updates, 'baseline_origin': baseline_origin}))
     else:
-        args.report.write_text(json.dumps({'packages': sorted(definitions), 'baselines': baselines}, indent=2) + '\n', encoding='utf-8')
+        args.report.write_text(json.dumps({'packages': sorted(definitions), 'baselines': baselines, 'baseline_origin': baseline_origin}, indent=2) + '\n', encoding='utf-8')
     return 0
 
 if __name__ == '__main__':

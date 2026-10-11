@@ -84,6 +84,49 @@ class UpstreamVersionTests(unittest.TestCase):
         self.assertEqual({'package': 'svt-jpeg-xs-git', 'current': 'e0940ac', 'upstream': 'e5a61be'}, backward)
         self.assertIsNone(_MODULE.parse_nvcmp_line('nothing to compare here'))
 
+    def test_published_baseline_normalization(self):
+        # 发布版本 -> 可比基线:剥 epoch/pkgrel,git 提交源取 .g<sha> 短哈希
+        git_def = {'source': 'git', 'use_commit': True}
+        release_def = {'source': 'github'}
+        self.assertEqual('e5a61be', _MODULE.published_baseline('0.9.0.r123.ge5a61be-1', git_def))
+        self.assertEqual('v15.14', _MODULE.published_baseline('v15.14-2', release_def))
+        self.assertEqual('9.0.2', _MODULE.published_baseline('1:9.0.2-2.6', release_def))
+        self.assertEqual('1.2', _MODULE.published_baseline('1.2', release_def))
+
+    def test_resolve_baselines_prefers_published_and_falls_back(self):
+        definitions = {'a': {'source': 'github'}, 'b': {'source': 'git', 'use_commit': True}}
+        # PKGBUILD 侧基线由 load_definitions 归一过(use_commit 已取短哈希)
+        pkgbuild = {'a': 'old', 'b': 'deadbee'}
+        baselines, origin = _MODULE.resolve_baselines(definitions, pkgbuild, {'a': 'new-3'})
+        self.assertEqual('new', baselines['a'])
+        self.assertEqual('published', origin['a'])
+        self.assertEqual('deadbee', baselines['b'])
+        self.assertEqual('pkgbuild', origin['b'])
+        # 仓库还没有发布时(首次运行),全部回退 PKGBUILD
+        baselines, origin = _MODULE.resolve_baselines(definitions, pkgbuild, None)
+        self.assertEqual('old', baselines['a'])
+        self.assertEqual('pkgbuild', origin['a'])
+
+    def test_parse_db_members_reads_repo_add_layout(self):
+        import io
+        import tarfile
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode='w:') as tar:
+            for entry, name, version in (
+                ('ffmpeg-full-9.0.2-2.6', 'ffmpeg-full', '9.0.2-2.6'),
+                ('svt-jpeg-xs-git-0.9.0.r123.ge5a61be-1', 'svt-jpeg-xs-git', '0.9.0.r123.ge5a61be-1'),
+            ):
+                desc = f'%FILENAME%\n{entry}-x86_64.pkg.tar.zst\n%NAME%\n{name}\n%VERSION%\n{version}\n%BASE%\n{name}\n'
+                info = tarfile.TarInfo(f'{entry}/desc')
+                payload = desc.encode(encoding='utf-8')
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+        buffer.seek(0)
+        self.assertEqual(
+            {'ffmpeg-full': '9.0.2-2.6', 'svt-jpeg-xs-git': '0.9.0.r123.ge5a61be-1'},
+            _MODULE.parse_db_members(buffer),
+        )
+
     def test_literal_pkgver_parser(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'PKGBUILD'
