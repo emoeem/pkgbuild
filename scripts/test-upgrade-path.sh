@@ -17,8 +17,11 @@ if [[ -z "$old_pkg" && "$package_name" != sing-box-ebpf ]]; then
     echo "UPGRADE_PATH=UNVERIFIABLE: no previous $package_name package in the published repository; no upgrade success is claimed." >&2
     exit 0
 fi
+# 哨兵:chroot 构建留下的 pacman-base.conf(树形态)或 runner 缓存里的
+# baseline 归档(纯 legacy run 的常态)任一存在即可继续。
 base_config="$cache_dir/chroot/pacman-base.conf"
-if [[ ! -f "$base_config" ]]; then
+cached_archive="$(find "$cache_dir/chroot/baselines" -maxdepth 1 -type f -name 'baseline-*.tar.zst' -print -quit 2>/dev/null || true)"
+if [[ ! -f "$base_config" && -z "$cached_archive" ]]; then
     # The baseline fixture only exists once a chroot-mode build (or a warm
     # baseline cache) creates it. Legacy-mode runs legitimately have none:
     # failing the build would block publishing a verified package because a
