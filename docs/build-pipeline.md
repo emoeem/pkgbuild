@@ -230,6 +230,18 @@ The 2026-10-10 rootless-container probe and its exact failure evidence are archi
 
 ## 7. Shadow run acceptance: legacy vs clean chroot
 
+> **Decision (2026-10-11): legacy remains the default build mode; this exercise is closed at 0/3.**
+> The choice follows the repository's stated goal — maximize automated error handling —
+> where the evidence is one-sided: every detector and self-healing mechanism that caught
+> real defects (ABI watch, runtime verification, build-failure auto-repair) runs on the
+> legacy path, while the clean-chroot CI plumbing consumed 10+ fix commits without one
+> end-to-end successful CI build. Clean chroot is retained **only** as the baseline
+> source for the upgrade-path test (`scripts/test-upgrade-path.sh` reads
+> `$CACHE_DIR/chroot`), which runs on manual `build_mode=chroot` dispatches and on warm
+> baseline caches. The N=3 procedure below is preserved verbatim so the promotion can be
+> revisited with the same gate if hermetic build-time dependency interception is ever
+> wanted.
+
 ### Build mode control
 
 `build.yml` exposes `workflow_dispatch` input `build_mode=legacy|chroot`, defaulting to `legacy`. Push-triggered builds always force `legacy`, regardless of input context. `legacy` calls the existing `build-in-arch.sh` build path with `CLEAN_CHROOT_BUILD=0`; `chroot` delegates to `scripts/build-in-clean-chroot.sh`. A chroot dispatch is a true shadow run: it uploads the package artifact for comparison but skips repository publication, automatic repair/push, namcap issue mutation and success-based closure of existing build-failure issues. The workflow default is intentionally **not** switched by this change.
