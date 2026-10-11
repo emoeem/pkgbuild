@@ -110,9 +110,9 @@ jobs:
             body="$(printf 'Upstream version detected by nvchecker.\n\n- Package: %s\n- Published repository baseline: %s\n- Upstream: %s\n\nNo PKGBUILD was modified automatically. Review source checksums, packaging changes and rebuild impact before updating.' "$package" "$current" "$upstream")"
             if [[ -n "$issue" ]]; then
               # 内容去重:长期 blocked 的更新(如 mlrt 的 Linux 构件上游没发)
-              # 不该每天重复评论;上游版本变了才追加一条。
-              last="$(gh issue view "$issue" --json comments --jq '.comments[-1].body // ""')"
-              if [[ "$last" != *"- Upstream: $upstream"* ]]; then
+              # 不该每天重复评论;上游版本变了才追加一条。查 body 和全部评论:
+              # 人工调查评论会顶到末尾,只看最后一条会漏判。
+              if ! gh issue view "$issue" --json body,comments --jq '.body, (.comments[].body)' | grep -qF -- "- Upstream: $upstream"; then
                 gh issue comment "$issue" --body "$body"
               fi
             else
