@@ -29,7 +29,14 @@ if [[ ! -f "$base_config" ]]; then
     exit 0
 fi
 work="$(mktemp -d "$cache_dir/chroot/upgrade-${package_name}.XXXXXX")"
-trap 'rm -rf -- "$work"' EXIT INT TERM
+# 容器里跑 arch-nspawn 需要同一个 nspawn 垫片(见 lib/nspawn-shim.sh),否则
+# 裸 nspawn 会在 journal 链接上失败——baseline 一就位这里就会真的执行。
+upgrade_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/nspawn-shim.sh
+source "$upgrade_script_dir/lib/nspawn-shim.sh"
+shim_dir="$(nspawn_shim_install "/tmp/pkgbuild-upgrade-nspawn-${package_name}.XXXXXX")"
+trap 'rm -rf -- "$work" "$shim_dir"' EXIT INT TERM
+PATH="$shim_dir:$PATH"
 mkdir -p "$work/root"
 baseline_root="$(find "$cache_dir/chroot" -mindepth 2 -maxdepth 2 -type d -path '*/baseline-*/root' -print -quit)"
 if [[ -n "$baseline_root" ]]; then

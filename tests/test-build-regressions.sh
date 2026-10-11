@@ -91,8 +91,15 @@ printf '%s\n' '6/6: verify clean-chroot systemd-nspawn disables host journal lin
 # Docker builders do not have a host machine-id/journal. devtools' arch-nspawn
 # inherits PATH, so the temporary wrapper must disable journal linking without
 # patching the installed devtools binary or changing the host configuration.
-grep -Fq -- 'systemd-nspawn --link-journal=no --keep-unit "$@"' "$root/scripts/build-in-clean-chroot.sh" \
-    || fail 'clean-chroot does not disable systemd-nspawn host journal linking'
+# The wrapper itself lives in scripts/lib/nspawn-shim.sh, shared with the
+# upgrade-path test; the build script must source it and keep the shim ahead
+# of the system PATH.
+grep -Fq -- 'systemd-nspawn --link-journal=no --keep-unit "$@"' "$root/scripts/lib/nspawn-shim.sh" \
+    || fail 'nspawn shim does not disable host journal linking'
+grep -Fq -- 'source "$script_dir/lib/nspawn-shim.sh"' "$root/scripts/build-in-clean-chroot.sh" \
+    || fail 'clean-chroot does not use the shared nspawn shim'
+grep -Fq -- 'nspawn_shim_install' "$root/scripts/test-upgrade-path.sh" \
+    || fail 'upgrade-path test does not use the shared nspawn shim'
 grep -Fq -- 'PATH="$nspawn_wrapper_dir:/usr/lib/ccache/bin:$PATH"' "$root/scripts/build-in-clean-chroot.sh" \
     || fail 'clean-chroot nspawn wrapper is not ahead of the system PATH'
 grep -Fq -- 'cleanup() { rm -rf -- "${cleanup_paths[@]}"; }' "$root/scripts/build-in-clean-chroot.sh" \

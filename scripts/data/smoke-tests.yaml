@@ -20,10 +20,9 @@ packages:
       - "ffprobe -version"
     timeout_seconds: 60
   mpeghdec:
+    # 上游装的是 mpeghDecoder / mpeghUiManager,不是 mpeghdec（2026-10-11 实测）
     binaries:
-      - mpeghdec
-    commands:
-      - "mpeghdec --help"
+      - mpeghDecoder
     allow_failure: true
   quirc:
     libraries:
@@ -40,8 +39,9 @@ packages:
     commands:
       - "sing-box version"
   sing-box-panel:
+    # 包内安装名是 sing-box-panel（源文件叫 singbox-panel,装到 /usr/bin 时改了名）
     binaries:
-      - singbox-panel
+      - sing-box-panel
   svt-jpeg-xs-git:
     libraries:
       - libSvtJpegxs.so
@@ -52,12 +52,9 @@ packages:
     libraries:
       - libclipsync.so
   scx-scheds-git:
+    # 上游调度器名单随版本变动（scx_central 已被移除），选一个长期存在的做代表
     binaries:
-      - scx_central
-    allow_failure: true
-  daed-emo:
-    binaries:
-      - dae
+      - scx_bpfland
     allow_failure: true
   linuxqq-clipsync-git:
     note: "transitional meta package: no payload of its own"

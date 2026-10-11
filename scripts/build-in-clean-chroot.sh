@@ -46,12 +46,10 @@ PY
 # arch-nspawn invokes systemd-nspawn by name through PATH. Docker builders do
 # not have a host systemd machine-id/journal to link; systemd-nspawn otherwise
 # fails in setup_journal and leaves its mount-tunnel cleanup error in the log.
-nspawn_wrapper_dir="$(mktemp -d "/tmp/pkgbuild-nspawn-${package_name}.XXXXXX")"
-cat > "$nspawn_wrapper_dir/systemd-nspawn" <<'__NSPAWN_WRAPPER__'
-#!/usr/bin/env bash
-exec /usr/bin/systemd-nspawn --link-journal=no --keep-unit "$@"
-__NSPAWN_WRAPPER__
-chmod 0755 "$nspawn_wrapper_dir/systemd-nspawn"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/nspawn-shim.sh
+source "$script_dir/lib/nspawn-shim.sh"
+nspawn_wrapper_dir="$(nspawn_shim_install "/tmp/pkgbuild-nspawn-${package_name}.XXXXXX")"
 cleanup_paths=("$nspawn_wrapper_dir")
 cleanup() { rm -rf -- "${cleanup_paths[@]}"; }
 trap cleanup EXIT INT TERM
@@ -155,6 +153,10 @@ else
     arch-nspawn -c "$cache_dir/pacman" "$work_root/root" pacman -Syu --noconfirm
 fi
 cd "$source_dir"
+# makechrootpkg 用 ${SUDO_USER:-$USER} 决定 chroot 内的 makepkg 用户;docker
+# 容器默认两者都不设,结果是 `id -u ''` 直接炸掉源码下载(2026-10-11 实测)。
+# builder 是本镜像的构建用户,存在且与 yay 路径一致。
+export SUDO_USER=builder
 args=(makechrootpkg -c -u -r "$work_root" -l "pkgbuild-${package_name}")
 [[ ! -d "$repo_dir" ]] || args+=( -D "$repo_dir" )
 for mount in "${cache_mounts[@]}"; do args+=("$mount"); done
