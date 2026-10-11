@@ -1,0 +1,64 @@
+name: Full repository install test
+
+on:
+  schedule:
+    - cron: "41 6 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-repository-install-test
+  cancel-in-progress: false
+
+jobs:
+  install-all-published-packages:
+    name: Install every published package in a disposable CachyOS container
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up CachyOS builder
+        id: builder
+        uses: ./.github/actions/setup-builder
+        with:
+          restore-caches: 'false'
+
+      - name: Download the current published repository and all packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p published/x86_64 incoming
+          gh release download repo --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.pkg.tar.zst' --dir incoming --clobber
+          gh release download repo --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.db' --pattern '*.db.sig' \
+            --pattern '*.files' --pattern '*.files.sig' \
+            --dir published/x86_64 --clobber
+          cp incoming/*.pkg.tar.zst published/x86_64/
+          count="$(find incoming -maxdepth 1 -type f -name '*.pkg.tar.zst' | wc -l)"
+          [[ "$count" -gt 0 ]] || { echo 'No published packages downloaded.' >&2; exit 1; }
+          [[ -s published/x86_64/emoeem.db ]] || { echo 'Published repository database missing.' >&2; exit 1; }
+          echo "Downloaded $count published package artifacts."
+
+      - name: Install all packages and verify installed runtime
+        shell: bash
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+        run: |
+          set -Eeuo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/published/x86_64:/repository:ro" \
+            --volume "$GITHUB_WORKSPACE/incoming:/incoming:ro" \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --env INSTALL_TEST_ALL=1 \
+            --env REPOSITORY_NAME=emoeem \
+            "$BUILDER_IMAGE" \
+            bash /workspace/scripts/repository-install-test.sh
