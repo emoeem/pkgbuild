@@ -1,0 +1,3 @@
+# glibc 隐式满足是 Arch 打包的普遍约定(基础系统必装),namcap 的这条 W
+# 属于噪音;显式声明反而偏离官方包的风格。
+quirc W: Dependency glibc detected and implicitly satisfied (libraries ['usr/lib/libc.so.6'] needed in files ['usr/bin/quirc-scanner', 'usr/lib/libquirc.so.1.2', 'usr/bin/quirc-demo'])

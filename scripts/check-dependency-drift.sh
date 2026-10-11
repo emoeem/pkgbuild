@@ -23,6 +23,9 @@ if [[ -n "${LOCAL_REPO_DIR:-}" ]]; then
         printf '[emoeem]\nSigLevel = Never\nServer = file://%s\n' "$local_copy" > /tmp/emo-repo.conf
         awk '/^\[emoeem\]$/{skip=1;next} skip && /^\[/{skip=0} !skip{print}' /etc/pacman.conf >> /tmp/emo-repo.conf
         cat /tmp/emo-repo.conf > /etc/pacman.conf
+        # 注册后立即同步:emoeem 内部包互相依赖时 pacman -Si 才能解析到已发布
+        # 版本,否则这些依赖全部计入 unresolved,变成漏报的漂移盲区。
+        pacman -Sy --noconfirm >/dev/null
     fi
 fi
 

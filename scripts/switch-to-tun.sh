@@ -32,7 +32,18 @@ say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31mFATAL\033[0m %s\n' "$*" >&2; exit 1; }
 
-[[ $EUID -eq 0 ]] || die "需要 root：sudo $0"
+# 直接执行也能用（装到 PATH 的裸命令或 Toolbox Hub 的 program 都是本脚本，
+# 都没经过 sudo）—— 不是 root 就自己 exec sudo（交互模式已接管终端，能正常提示密码）。
+if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+    command -v sudo >/dev/null 2>&1 || { printf 'FATAL 需要 root，但没装 sudo\n' >&2; exit 1; }
+    # 必须换算成**绝对路径**再交给 sudo：在 shell 里敲裸命令名时 $0 不含路径，
+    # 而 sudo 默认用 secure_path（/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin），
+    # 里面没有 ~/.local/bin —— 裸名字会在 sudo 那一层报「找不到命令」。
+    self="$0"
+    [[ $self == */* ]] || self="$(command -v -- "$self" 2>/dev/null || true)"
+    [[ -n $self && -e $self ]] || { printf 'FATAL 定位不到脚本自身：%s\n' "$0" >&2; exit 1; }
+    exec sudo -- "$self" "$@"
+fi
 [[ -f $CONF ]] || die "找不到 $CONF"
 command -v python3 >/dev/null || die "需要 python3"
 

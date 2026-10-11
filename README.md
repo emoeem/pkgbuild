@@ -104,6 +104,11 @@ lyc8503 `geosite-cn`、`geosite-geolocation-!cn`）的 sha256，**有变化才**
 
 ## sing-box 运维脚本
 
+> **单一事实来源**：本仓库 `scripts/` 下的版本是唯一权威副本。`~/code/toolbox-hub/scripts/sing-box/`
+> 是带注解头（`# sing-box-*:summary=...`，供 Toolbox Hub 目录用）的**镜像**，体与仓库逐字节一致；
+> `~/.local/bin/sing-box-*` 是安装副本。改脚本只改仓库，然后用 toolbox-hub 的 `install.sh` 或
+> 直接 `install -m755` 重新落盘。所有脚本对非 root 调用会自动 `exec sudo` 自身（绝对路径已处理）。
+
 `scripts/` 下有四个配合 `sing-box-ebpf` / `sing-box-rule-sets` 使用的运维脚本（都可重复执行、都走
 "改配置 → `sing-box check` → 备份 → 原子替换 → 重启 → 健康检查 → 失败自动回滚" 的安全管线）：
 

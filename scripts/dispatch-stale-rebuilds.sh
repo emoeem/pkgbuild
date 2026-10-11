@@ -19,7 +19,9 @@ jobs_tsv="$(mktemp)"
 trap 'rm -f "$runs_tsv" "$jobs_tsv"' EXIT
 
 # run_id / status / conclusion / created_epoch
-gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=workflow_dispatch&per_page=50" \
+# 只看 build.yml 且不限触发方式：push 与 workflow_dispatch 都会排队
+# "Build <pkg>" 作业,漏掉 push 会把正在重建的包再 dispatch 一遍。
+gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?per_page=50" \
   --jq '.workflow_runs[] | [.id, .status, (.conclusion // ""), ((.created_at | fromdateiso8601))] | @tsv' \
   > "$runs_tsv"
 
