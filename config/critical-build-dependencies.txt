@@ -1,0 +1,3 @@
+# Packages whose in-repository ABI dependencies must be ordered before build.
+# If GitHub Actions status cannot be read, these packages fail closed.
+ffmpeg-full
