@@ -92,14 +92,26 @@ arch-nspawn "$work/root" pacman -Syu --noconfirm
 if [[ "$package_name" == sing-box-ebpf ]]; then
     # The transition is from an upstream package name, not an older private
     # release. Install the official package, then let pacman apply conflicts / provides.
-    arch-nspawn "$work/root" pacman -S --needed --noconfirm cachyos-v3/sing-box
+    # 上游包不住在固定仓库:cachyos-v3/sing-box 实测 target not found(本机
+    # 为 cachyos-extra-v3,2026-10-11),按 pacman.conf 优先级从已同步数据库
+    # 找第一个携带真实包名 sing-box 的仓库。不能裸 -S sing-box:staging 里
+    # 只有 provides(即新包自己),会解析过去让测试空转。
+    upstream_repo="$(arch-nspawn "$work/root" pacman -Sl | awk '$2 == "sing-box" {print $1; exit}')"
+    if [[ -z "$upstream_repo" ]]; then
+        printf '::warning::No configured repository carries upstream sing-box; upgrade-path test skipped for %s.\n' "$package_name"
+        echo 'UPGRADE_PATH=UNVERIFIABLE: upstream sing-box absent from all configured repositories; no upgrade success is claimed.' >&2
+        exit 0
+    fi
+    arch-nspawn "$work/root" pacman -S --needed --noconfirm "${upstream_repo}/sing-box"
 else
     mapfile -t dependencies < <(bsdtar -xOf "$old_pkg" .PKGINFO | awk -F ' = ' '$1 == "depend" {print $2}')
     if ((${#dependencies[@]} > 0)); then arch-nspawn "$work/root" pacman -S --needed --noconfirm "${dependencies[@]}"; fi
     # Install the old private release first to exercise the upgrade transaction.
     arch-nspawn "$work/root" pacman -U --noconfirm /tmp/old.pkg.tar.zst
 fi
-arch-nspawn "$work/root" pacman -Syu --noconfirm "$package_name"
+# conflicts 移除问题在 --noconfirm 下照默认答 N,事务直接失败(--ask=4 与
+# build-in-arch.sh 的 pacman 垫片同语义:一次性容器里自动接受冲突移除)。
+arch-nspawn "$work/root" pacman -Syu --noconfirm --ask=4 "$package_name"
 installed="$(arch-nspawn "$work/root" pacman -Q "$package_name")"
 if [[ "$package_name" == sing-box-ebpf ]]; then
     if arch-nspawn "$work/root" pacman -Q sing-box >/dev/null 2>&1; then

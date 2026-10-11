@@ -73,7 +73,7 @@ class CleanChrootTests(unittest.TestCase):
         script = (ROOT / 'scripts/test-upgrade-path.sh').read_text()
         self.assertIn("previous repository package set", script)
         self.assertIn('emoeem-staging', script)
-        self.assertIn('pacman -Syu --noconfirm "$package_name"', script)
+        self.assertIn('pacman -Syu --noconfirm --ask=4 "$package_name"', script)
         self.assertIn('sing-box-ebpf', script)
 
 if __name__ == '__main__': unittest.main()

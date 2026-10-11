@@ -16,8 +16,13 @@ printf '%s\n' "$*" >> "$MOCK_LOG"
 if [[ "$1" == pacman ]]; then
   shift
   case "${1:-}" in
+    -Sl)
+      # The upgrade script resolves the upstream sing-box repo from synced
+      # databases by exact package name; answer with a repo other than the
+      # previously hardcoded cachyos-v3 to prove nothing is pinned.
+      printf '%s\n' 'cachyos-v3 zlib 1:1.3.2-3.1' 'chaotic-aur sing-box 1.10.0-5' ;;
     -S)
-      if [[ "${*: -1}" == cachyos-v3/sing-box ]]; then touch "$MOCK_STATE/sing-box"; fi
+      if [[ "${*: -1}" == */sing-box ]]; then touch "$MOCK_STATE/sing-box"; fi
       ;;
     -Syu)
       target="${*: -1}"
@@ -62,7 +67,7 @@ make_pkg "$tmp/new" sing-box-ebpf 2.0-1
 PACKAGE_NAME=sing-box-ebpf PATH="$tmp/bin:$PATH" bash "$script" "$tmp/new" "$tmp/old" "$tmp/cache" > "$tmp/replace.out"
 grep -q 'Replacement path passed' "$tmp/replace.out"
 grep -q 'UPGRADE_PATH=PASS: sing-box-ebpf' "$tmp/replace.out"
-grep -q 'pacman -S --needed --noconfirm cachyos-v3/sing-box' "$MOCK_LOG"
+grep -q 'pacman -S --needed --noconfirm chaotic-aur/sing-box' "$MOCK_LOG"
 # Missing prior private artifact is explicitly unverified, never a false pass.
 mkdir -p "$tmp/new2" "$tmp/old2"
 make_pkg "$tmp/new2" linuxqq-clipsync-git 1.2-1
