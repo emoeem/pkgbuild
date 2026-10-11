@@ -39,6 +39,60 @@ for package_name in "${package_names[@]}"; do
     mkdir -p "$staged_dir"
     cp -a "$checkout_dir"/. "$staged_dir"/
     rm -rf "$staged_dir/.git"
+
+    # Preserve repository-owned files before applying overlays. PKGBUILD must
+    # come from AUR and then receive its explicit overlay; .SRCINFO is regenerated
+    # from that result. The source URL/commit are refreshed from AUR every run.
+    # Everything else in the current package tree is local state: local-only
+    # files are restored, and conflicting local files win with a warning. This
+    # deliberately includes hidden metadata such as .nvchecker.toml,
+    # .namcap-ignore and .gitignore, as well as local patches/assets.
+    if [[ -d "$package_dir" ]]; then
+        preserved_manifest="$temporary_dir/preserved-files-$package_name"
+        git -C "$repo_root" ls-files --cached --others --exclude-standard -z -- \
+            "packages/$package_name" > "$preserved_manifest"
+        while IFS= read -r -d '' tracked_path; do
+            local_path="$repo_root/$tracked_path"
+            relative_path="${tracked_path#"packages/$package_name"/}"
+            case "$relative_path" in
+                PKGBUILD|.SRCINFO|.aur-url|.aur-commit)
+                    continue
+                    ;;
+            esac
+            staged_path="$staged_dir/$relative_path"
+            if [[ -d "$local_path" && ! -L "$local_path" ]]; then
+                if [[ -e "$staged_path" && ( ! -d "$staged_path" || -L "$staged_path" ) ]]; then
+                    printf 'warning: %s: local directory replaces conflicting AUR path %s\n' \
+                        "$package_name" "$relative_path" >&2
+                    rm -rf "$staged_path"
+                fi
+                mkdir -p "$staged_path"
+                continue
+            fi
+
+            mkdir -p "$(dirname "$staged_path")"
+            if [[ -e "$staged_path" || -L "$staged_path" ]]; then
+                if [[ -L "$local_path" && -L "$staged_path" ]]; then
+                    if [[ "$(readlink "$local_path")" != "$(readlink "$staged_path")" ]]; then
+                        printf 'warning: %s: keeping local version of conflicting file %s\n' \
+                            "$package_name" "$relative_path" >&2
+                    fi
+                elif [[ -f "$local_path" && -f "$staged_path" ]]; then
+                    if ! cmp -s -- "$local_path" "$staged_path"; then
+                        printf 'warning: %s: keeping local version of conflicting file %s\n' \
+                            "$package_name" "$relative_path" >&2
+                    fi
+                else
+                    printf 'warning: %s: keeping local version of conflicting path %s\n' \
+                        "$package_name" "$relative_path" >&2
+                    rm -rf "$staged_path"
+                fi
+            fi
+            rm -rf "$staged_path"
+            cp -a -- "$local_path" "$staged_path"
+        done < "$preserved_manifest"
+    fi
+
     printf '%s\n' "$aur_url" > "$staged_dir/.aur-url"
     printf '%s\n' "$aur_commit" > "$staged_dir/.aur-commit"
 
