@@ -23,8 +23,24 @@ nspawn_shim_install() {
 # 必现 "Attempted to remove disk file system under .../propagate/..." 警告
 # (2026-10-11)。进入前把传播改成 slave 是 systemd 文档给出的标准缓解;
 # 两个调用方(chroot 构建、升级路径测试)都持有 CAP_SYS_ADMIN。
-mount --make-rslave / 2>/dev/null || true
-exec /usr/bin/systemd-nspawn --link-journal=no --keep-unit "$@"
+mount --make-rslave /
+printf 'nspawn-shim: propagation after make-rslave: ' >&2
+findmnt -o PROPAGATION -T / 2>/dev/null | tail -1 >&2
+/usr/bin/systemd-nspawn --link-journal=no --keep-unit "$@"
+rc=$?
+# 诊断(2026-10-11):nspawn 一退出就检查容器根的 /etc/makepkg.conf——
+# arch-nspawn 的 $1 就是容器根,把「文件消失的时刻」钉死在 nspawn 退出上。
+root_arg="${1:-}"
+if [[ -d "$root_arg" ]]; then
+    if [[ -f "$root_arg/etc/makepkg.conf" ]]; then
+        printf 'nspawn-shim: post-exit %s/etc/makepkg.conf EXISTS\n' "$root_arg" >&2
+    else
+        printf 'nspawn-shim: post-exit %s/etc/makepkg.conf GONE\n' "$root_arg" >&2
+        findmnt -T "$root_arg/etc" >&2 || true
+        ls -la "$root_arg/etc/" 2>&1 | head -25 >&2
+    fi
+fi
+exit $rc
 __NSPAWN_WRAPPER__
     chmod 0755 "$dir/systemd-nspawn" || { rm -rf "$dir"; return 1; }
     printf '%s\n' "$dir"
