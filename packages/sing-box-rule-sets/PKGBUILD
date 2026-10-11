@@ -22,10 +22,17 @@
 #   lyc8503/sing-box-rules   → 仓库未附许可证文件，数据移植自 Loyalsoldier/v2ray-rules-dat（GPL-3.0），
 #                              故归入本包的 GPL-3.0-or-later；用它的理由见下方注释。
 #
-# 升级方式：`pkgver` 用日期；改了远程源就用 `scripts/refresh-rule-sets.sh` 自动比对 sha256 并提交。
+# 升级方式：`pkgver` 用日期；`scripts/refresh-rule-sets.sh` 每天比对上游内容
+# （哈希记录在同目录 .source-hashes）并在有变化时提交 + 触发重建发布。
+#
+# 为什么远程源全部 SKIP：这些上游全部日更甚至 8 小时一更，而钉死在 PKGBUILD
+# 里的哈希只有每天一次的 refresh 会更新——两次 refresh 之间的任何构建重新下载
+# 上游内容就必然校验失败（2026-10-11 anti-ad.txt 实测）。SKIP 之后构建永远
+# 可重复；完整性由 refresh 工作流在下载时校验（SRS magic / 规模下限），
+# 内容基准则由每天带日期版本的发布固化。
 
 pkgname=sing-box-rule-sets
-pkgver=20261010
+pkgver=20261011
 pkgrel=1
 pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, Loyalsoldier enhanced geosite (cn/non-cn), always-direct list, CN ad-SDK extras'
 arch=('any')
@@ -53,12 +60,12 @@ source=(
     'LICENSE-anti-AD'
 )
 sha256sums=(
-    '103d157a4e0a67e69a34dd00c8b54c532668a116656bd1b5db790ed8ecdfe3ac'
-    'd5a12d61f726d63c0835fd7233de1b3186204aed51c07167f9650936224293ec'
-    'df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f'
-    'fa096b4d8a5dd2a78523bc728918b82363f21c9f1a9a9091e2883a3249d81657'
-    '5f136bb81bbe2198d248f65d288ae00e972fd0e6e25b6903f624c808972f7e4c'
-    '3e26a72e0800ccbcf9a941762a5159f7e6950f172e732aa24778c6c6788fb834'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
     'SKIP'
     'SKIP'
     'SKIP'
