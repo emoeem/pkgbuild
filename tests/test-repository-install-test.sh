@@ -5,9 +5,10 @@ script="$root/scripts/repository-install-test.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT INT TERM
 mkdir -p "$tmp/bin" "$tmp/repository" "$tmp/incoming" "$tmp/workspace/scripts" "$tmp/state"
+cp "$root/scripts/select-incoming-packages.sh" "$tmp/workspace/scripts/"
 touch "$tmp/repository/emoeem.db"
 printf '[options]\nArchitecture = auto\n' > "$tmp/pacman.conf"
-printf 'pkgname = demo\npkgver = 1.0-1\n' > "$tmp/incoming/demo-1.0-1-x86_64.pkg.tar.zst"
+printf 'pkgname = demo\npkgver = 1.0\npkgrel = 1\n' > "$tmp/incoming/demo-1.0-1-x86_64.pkg.tar.zst"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/workspace/scripts/runtime-verify.sh"
 chmod +x "$tmp/workspace/scripts/runtime-verify.sh"
 export MOCK_LOG="$tmp/state/pacman.log"
@@ -34,7 +35,7 @@ MOCK
 cat > "$tmp/bin/bsdtar" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-printf 'pkgname = demo\npkgver = 1.0-1\n'
+printf 'pkgname = demo\npkgver = 1.0\npkgrel = 1\n'
 MOCK
 chmod +x "$tmp/bin/pacman" "$tmp/bin/bsdtar"
 
