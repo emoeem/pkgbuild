@@ -42,7 +42,8 @@ baseline_root="$(find "$cache_dir/chroot" -mindepth 2 -maxdepth 2 -type d -path 
 if [[ -n "$baseline_root" ]]; then
     cp --reflink=auto -a "$baseline_root/." "$work/root/"
 else
-    baseline_archive="$(find "$cache_dir/chroot" -maxdepth 1 -type f -name 'baseline-*.tar.zst' -print -quit)"
+    # 容器内打的归档(baselines/ 子目录)是 runner 缓存的单元;树是构建期产物。
+    baseline_archive="$(find "$cache_dir/chroot/baselines" -maxdepth 1 -type f -name 'baseline-*.tar.zst' -print -quit 2>/dev/null)"
     if [[ -z "$baseline_archive" ]]; then
         printf '::warning::No cached clean-chroot baseline archive; upgrade-path test skipped for %s.\n' "$package_name"
         echo 'UPGRADE_PATH=UNVERIFIABLE: no clean-chroot baseline fixture; no upgrade success is claimed.' >&2

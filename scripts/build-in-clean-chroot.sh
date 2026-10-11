@@ -57,43 +57,28 @@ export PATH="$nspawn_wrapper_dir:$PATH"
 fingerprint="$( { cat "$base_config"; printf '\n%s\n%s\nflavor=%s\n' "$generation" "$architecture" "$builder_flavor"; sha256sum /etc/makepkg.conf /etc/makepkg.conf.d/90-emo-native.conf "$0" 2>/dev/null || true; } | sha256sum | cut -c1-20)"
 baseline_name="baseline-${generation}-${architecture}-${fingerprint}"
 cache_fs="$(stat -f -c %T "$cache_dir/chroot")"
+# 基线以「容器内 root 打包的归档」为缓存单元:树里有 0700 的 gnupg 目录,
+# runner 侧 actions/cache 的 tar 读不动(实测 exit 2 静默丢缓存);归档文件
+# 本身 644,runner 可读,解包在容器内 root 完成。btrfs 上树放 /tmp 避免
+# devtools 的子卷尝试,非 btrfs 树直接落盘供同 run 多包复用(FINGERPRINT 命中)。
+baseline_archive="$cache_dir/chroot/baselines/${baseline_name}.tar.zst"
 if [[ "$cache_fs" == btrfs ]]; then
-    # devtools automatically attempts btrfs subvolumes when the chroot root is
-    # on btrfs. Keep the requested ordinary-copy strategy by extracting the
-    # cached baseline archive into the container's overlay /tmp instead.
     runtime_root="/tmp/pkgbuild-chroot-${fingerprint}"
     baseline="$runtime_root/$baseline_name"
-    baseline_archive="$cache_dir/chroot/${baseline_name}.tar.zst"
-    mkdir -p "$runtime_root"
-    if [[ -s "$baseline_archive" ]]; then
-        mkdir -p "$baseline"
-        tar --zstd -xf "$baseline_archive" -C "$baseline"
-    else
-        mkdir -p "$baseline"
-        echo "Creating clean CachyOS-v3 chroot baseline $fingerprint (btrfs cache uses an archive)"
-        base_packages=(base-devel gcc-objc ccache cachyos-mirrorlist cachyos-v3-mirrorlist chaotic-keyring chaotic-mirrorlist)
-        if [[ "$builder_flavor" == 1 ]]; then base_packages+=(cuda gcc15); fi
-        mkarchroot -C "$base_config" -c "$cache_dir/pacman" "$baseline/root" "${base_packages[@]}"
-        install -d "$baseline/root/etc/makepkg.conf.d"
-        [[ ! -f /etc/makepkg.conf.d/90-emo-native.conf ]] || install -m0644 /etc/makepkg.conf.d/90-emo-native.conf "$baseline/root/etc/makepkg.conf.d/90-emo-native.conf"
-        cat >> "$baseline/root/etc/makepkg.conf.d/90-emo-native.conf" <<'__CACHE_ENV__'
-export CARGO_HOME=/cache/cargo
-export CCACHE_DIR=/cache/ccache
-export CCACHE_MAXSIZE=2G
-export PATH=/usr/lib/ccache/bin:$PATH
-__CACHE_ENV__
-        printf '%s\n' "$fingerprint" > "$baseline/FINGERPRINT"
-        tar --zstd -cf "${baseline_archive}.tmp" -C "$baseline" root FINGERPRINT
-        mv -f "${baseline_archive}.tmp" "$baseline_archive"
-    fi
-    baseline_root="$baseline/root"
     work_parent="$runtime_root"
 else
     baseline="$cache_dir/chroot/$baseline_name"
-    mkdir -p "$baseline"
-    if [[ ! -f "$baseline/FINGERPRINT" || ! -x "$baseline/root/usr/bin/bash" ]]; then
-        rm -rf "$baseline/root"
+    work_parent="$cache_dir/chroot"
+fi
+mkdir -p "$baseline"
+if [[ ! -f "$baseline/FINGERPRINT" || ! -x "$baseline/root/usr/bin/bash" ]]; then
+    rm -rf "$baseline/root"
+    if [[ -s "$baseline_archive" ]]; then
+        echo "Extracting cached clean CachyOS-v3 chroot baseline $fingerprint"
+        tar --zstd -xf "$baseline_archive" -C "$baseline"
+    else
         echo "Creating clean CachyOS-v3 chroot baseline $fingerprint"
+        mkdir -p "$baseline"
         base_packages=(base-devel gcc-objc ccache cachyos-mirrorlist cachyos-v3-mirrorlist chaotic-keyring chaotic-mirrorlist)
         if [[ "$builder_flavor" == 1 ]]; then base_packages+=(cuda gcc15); fi
         mkarchroot -C "$base_config" -c "$cache_dir/pacman" "$baseline/root" "${base_packages[@]}"
@@ -107,17 +92,22 @@ export PATH=/usr/lib/ccache/bin:$PATH
 __CACHE_ENV__
         printf '%s\n' "$fingerprint" > "$baseline/FINGERPRINT"
     fi
-    # mkarchroot 之后基线必须自带 makepkg.conf(宿主侧 download_sources 会拿
-    # 副本的它当 --config);缺失说明上游包集变了,在这里炸比在
-    # makechrootpkg 里炸出一个难读的 not found 强。
-    if [[ ! -f "$baseline/root/etc/makepkg.conf" ]]; then
-        printf 'baseline %s lacks /etc/makepkg.conf; base image package set changed?\n' "$baseline_name" >&2
-        ls -la "$baseline/root/etc/" >&2 | head -30
-        exit 3
-    fi
-    baseline_root="$baseline/root"
-    work_parent="$cache_dir/chroot"
 fi
+# mkarchroot 之后基线必须自带 makepkg.conf(宿主侧 download_sources 会拿
+# 副本的它当 --config);缺失说明上游包集变了,在这里炸比在
+# makechrootpkg 里炸出一个难读的 not found 强。
+if [[ ! -f "$baseline/root/etc/makepkg.conf" ]]; then
+    printf 'baseline %s lacks /etc/makepkg.conf; base image package set changed?\n' "$baseline_name" >&2
+    ls -la "$baseline/root/etc/" >&2 | head -30
+    exit 3
+fi
+# 归档缺失时(首次创建,或旧版缓存布局)补写一份,供 runner 侧缓存保存。
+if [[ ! -s "$baseline_archive" ]]; then
+    mkdir -p "$cache_dir/chroot/baselines"
+    tar --zstd -cf "${baseline_archive}.tmp" -C "$baseline" root FINGERPRINT
+    mv -f "${baseline_archive}.tmp" "$baseline_archive"
+fi
+baseline_root="$baseline/root"
 work_root="$(mktemp -d "$work_parent/work-${package_name}.XXXXXX")"
 # makechrootpkg 的 download_sources 以 sudo -u builder 在宿主侧跑 makepkg,
 # 而 mktemp -d 是 700 root:root——builder 连路径都穿越不了,对

@@ -36,7 +36,10 @@ runs:
       if: inputs.restore-caches == 'true'
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
-        path: .cache/pkgbuild/chroot/baseline-*
+        # 只缓存容器内打好的归档(baselines/ 子目录):基线树里有 0700 的
+        # gnupg 目录,runner 侧 tar 读不动,直接缓存整个 chroot 目录会静默
+        # 丢缓存(实测 exit 2)。
+        path: .cache/pkgbuild/chroot/baselines
         key: chroot-v1-${{ inputs.generation }}-x86_64-v3-${{ inputs.flavor }}-${{ hashFiles('.github/builder/Dockerfile', 'config/emo-native-flags.conf', 'scripts/build-in-clean-chroot.sh') }}
         restore-keys: |
           chroot-v1-${{ inputs.generation }}-x86_64-v3-${{ inputs.flavor }}-
