@@ -69,4 +69,18 @@ make_pkg "$tmp/new2" linuxqq-clipsync-git 1.2-1
 PACKAGE_NAME=linuxqq-clipsync-git PATH="$tmp/bin:$PATH" bash "$script" "$tmp/new2" "$tmp/old2" "$tmp/cache" > "$tmp/missing.out" 2>&1
 grep -q 'UPGRADE_PATH=UNVERIFIABLE' "$tmp/missing.out"
 ! grep -q 'UPGRADE_PATH=PASS' "$tmp/missing.out"
-printf 'upgrade path tests passed: normal upgrade, official-package replacement, missing-old explicit unverified\n'
+# A missing clean-chroot baseline skips loudly instead of failing the build:
+# legacy-mode runs have no baseline fixture, and a good package must not be
+# blocked by an absent test prerequisite. sing-box-ebpf takes the replacement
+# path, which reaches the baseline lookup instead of exiting on missing-old.
+mkdir -p "$tmp/new3"
+make_pkg "$tmp/new3" sing-box-ebpf 2.1-1
+mv "$tmp/cache/chroot/pacman-base.conf" "$tmp/cache/chroot/pacman-base.conf.saved"
+PACKAGE_NAME=sing-box-ebpf PATH="$tmp/bin:$PATH" bash "$script" "$tmp/new3" "$tmp/old2" "$tmp/cache" > "$tmp/no-baseline.out" 2>&1
+rc=$?
+mv "$tmp/cache/chroot/pacman-base.conf.saved" "$tmp/cache/chroot/pacman-base.conf"
+(( rc == 0 ))
+grep -q 'UPGRADE_PATH=UNVERIFIABLE' "$tmp/no-baseline.out"
+grep -q '::warning::' "$tmp/no-baseline.out"
+! grep -q 'UPGRADE_PATH=PASS' "$tmp/no-baseline.out"
+printf 'upgrade path tests passed: normal upgrade, official-package replacement, missing-old explicit unverified, missing-baseline loud skip\n'
