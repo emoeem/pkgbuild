@@ -393,6 +393,13 @@ if (( yay_status != 0 )); then
     printf 'yay exited with status %d after producing package files; verification continues on the produced artifacts.\n' "$yay_status" >&2
 fi
 
+if [[ "$CLEAN_CHROOT_BUILD" == "1" ]]; then
+    # chroot 模式的包在 chroot 内构建,外层容器从未安装它;运行时校验按
+    # 「已安装」检查 /usr/bin/<binary>,先把产物装进容器(等价于 legacy 里
+    # yay -Bi 的收尾安装)。依赖缺失时 pacman 从同步仓库解析,冲突走 --ask=4。
+    pacman -U --noconfirm --ask=4 -- "${package_files[@]}"
+fi
+
 timing_begin verify
 for package_file in "${package_files[@]}"; do
     filename="$(basename "$package_file")"
