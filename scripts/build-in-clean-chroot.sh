@@ -161,6 +161,39 @@ else
     arch-nspawn -c "$cache_dir/pacman" "$work_root/root" pacman -Syu --noconfirm
 fi
 cd "$source_dir"
+# 诊断(2026-10-11):副本在 rsync 后缺 /etc/makepkg.conf,而 baseline 断言
+# 证明基线有它。给 rsync 包一层日志,一次运行拿到全部事实:root 侧是否仍有
+# 该文件、rsync 的参数与退出码、副本 /etc 的实际内容,以及 root 路径上的
+# 残留挂载(nspawn 退出的 mount-propagation 警告一直在日志里出现)。
+if [[ ! -f "$work_root/root/etc/makepkg.conf" ]]; then
+    printf '!! work root lost /etc/makepkg.conf before makechrootpkg\n' >&2
+    findmnt -T "$work_root/root/etc" >&2 || true
+    ls -la "$work_root/root/etc/" >&2 | head -30
+    exit 3
+fi
+findmnt -T "$work_root/root/etc" >&2 || true
+rsync_diag_dir="$(mktemp -d /tmp/pkgbuild-rsync-diag.XXXXXX)"
+cat > "$rsync_diag_dir/rsync" <<'__RSYNC_DIAG__'
+#!/usr/bin/env bash
+dest="${*: -1}"
+printf 'rsync-call: %s\n' "$*" >&2
+/usr/bin/rsync "$@"
+rc=$?
+printf 'rsync-exit: %s\n' "$rc" >&2
+if (( rc == 0 )) && [[ -d "$dest" ]]; then
+    if [[ -f "$dest/etc/makepkg.conf" ]]; then
+        printf 'copy has etc/makepkg.conf\n' >&2
+    else
+        printf '!! copy %s lacks etc/makepkg.conf after sync\n' "$dest" >&2
+        findmnt -T "$dest/etc" >&2 || true
+        ls -la "$dest/etc/" >&2 | head -30
+    fi
+fi
+exit $rc
+__RSYNC_DIAG__
+chmod 0755 "$rsync_diag_dir/rsync"
+cleanup_paths+=("$rsync_diag_dir")
+PATH="$rsync_diag_dir:$PATH"
 # makechrootpkg 用 ${SUDO_USER:-$USER} 决定 chroot 内的 makepkg 用户;docker
 # 容器默认两者都不设,结果是 `id -u ''` 直接炸掉源码下载(2026-10-11 实测)。
 # builder 是本镜像的构建用户,存在且与 yay 路径一致。

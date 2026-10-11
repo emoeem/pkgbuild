@@ -269,7 +269,8 @@ fi
 # 包构建成功却发布不出去。声明冲突即宣告替代,提前移除(一次性容器,
 # -Rdd 不必顾及其依赖方)。
 mapfile -t declared_conflicts < <(
-    awk -F' = ' '$1 == "conflicts" {print $2}' "$package_dir/.SRCINFO" 2>/dev/null |
+    awk -F ' = ' '{sub(/^[ \t]+/, "", $1)} $1 == "conflicts" {print $2}' \
+        "$package_dir/.SRCINFO" 2>/dev/null |
         sed 's/[<>=].*//'
 )
 for conflict in "${declared_conflicts[@]}"; do
