@@ -4,7 +4,7 @@
 _pkgname="quirc"
 pkgname="$_pkgname"
 pkgver=1.2
-pkgrel=4
+pkgrel=5
 pkgdesc="QR decoder library"
 url="https://github.com/dlbeer/quirc"
 license=('ISC')
@@ -23,7 +23,12 @@ sha256sums=('73c12ea33d337ec38fb81218c7674f57dba7ec0570bddd5c7f7a977c0deb64c5')
 
 build() {
   cd "$_pkgsrc"
-  CFLAGS+=" -fPIC" make libquirc.so quirc-demo quirc-scanner
+  # 上游 lib/Makefile 链接 libquirc.so.1.2 时不设 SONAME，运行时校验会把
+  # 「有版本名的库没有 SONAME」判为缺陷：依赖方会在 NEEDED 里记下完整
+  # 小版本号，1.3 一出就断。这里通过 makepkg 的 LDFLAGS 传给上游链接行。
+  CFLAGS+=" -fPIC" \
+    LDFLAGS+=" -Wl,-soname,libquirc.so.1" \
+    make libquirc.so quirc-demo quirc-scanner
 }
 
 package() {
@@ -31,7 +36,8 @@ package() {
   install -Dm644 "lib/quirc.h" "$pkgdir/usr/include/quirc.h"
 
   install -Dm644 "libquirc.so.$pkgver" -t "$pkgdir/usr/lib/"
-  ln -s "libquirc.so.$pkgver" "$pkgdir/usr/lib/libquirc.so"
+  ln -s "libquirc.so.$pkgver" "$pkgdir/usr/lib/libquirc.so.1"
+  ln -s "libquirc.so.1" "$pkgdir/usr/lib/libquirc.so"
 
   install -Dm755 quirc-demo -t "$pkgdir/usr/bin/"
   install -Dm755 quirc-scanner -t "$pkgdir/usr/bin/"
