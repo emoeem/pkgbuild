@@ -1,4 +1,5 @@
 [quirc]
-source = "git"
-git = "https://github.com/dlbeer/quirc.git"
+source = "github"
+github = "dlbeer/quirc"
+use_max_tag = true
 prefix = "v"
