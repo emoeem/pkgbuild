@@ -24,5 +24,8 @@ mount --make-rslave / 2>/dev/null || true
 exec /usr/bin/systemd-nspawn --link-journal=no --keep-unit "$@"
 __NSPAWN_WRAPPER__
     chmod 0755 "$dir/systemd-nspawn" || { rm -rf "$dir"; return 1; }
+    # 同上:shim 目录会前插进 PATH,而 chroot 内的 makepkg 以 builder(同
+    # UID)运行——700 的目录会让它 PATH 搜索时直接 EACCES。
+    chmod 0755 "$dir" || { rm -rf "$dir"; return 1; }
     printf '%s\n' "$dir"
 }

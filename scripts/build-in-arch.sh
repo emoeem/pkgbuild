@@ -270,6 +270,10 @@ case "${1:-}" in
 esac
 __PACMAN_SHIM__
 chmod 0755 "$pacman_shim_dir/pacman"
+# mktemp -d 是 700 root;这个目录会前插进 PATH,makepkg 以 builder 运行时
+# PATH 搜索在第一个目录就吃到 EACCES,把后续所有工具的 spawn(rustfmt 等)
+# 打成 Permission denied。必须放开。
+chmod 0755 "$pacman_shim_dir"
 PATH="$pacman_shim_dir:$PATH"
 if [[ "$package_name" == "ffmpeg-full" ]]; then
     # Resolve virtual/provider dependencies non-interactively and pin them to
