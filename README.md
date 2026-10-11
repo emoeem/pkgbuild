@@ -30,9 +30,7 @@
 
 | Package | Arch | 说明 |
 | --- | --- | --- |
-| `daed-emo` | `x86_64` | dae 的现代化 Web 仪表盘（上游主线，x86-64-v3/AVX2 构建） |
 | `ffmpeg-full` | `x86_64` | 启用大量编解码器、CUDA 和 Whisper 支持的 FFmpeg |
-| `linuxqq-clipsync-git` | `any` | 过渡元包（无文件），仅依赖 `linuxqq-wayland-fix-git`，安装时自动接替 |
 | `linuxqq-wayland-fix-git` | `x86_64` | 修复 Linux QQ 在 Wayland 下的屏幕共享、声音共享、剪贴板和截图 |
 | `mpeghdec` | `x86_64` | Fraunhofer MPEG-H 解码器 |
 | `quirc` | `x86_64` | QR 解码库 |
