@@ -34,19 +34,29 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
         template_ver="$(awk -F= '/^pkgver=/{print $2; exit}' "${root}/packages/${name}/PKGBUILD")"
         pkgrel="$(awk -F= '/^pkgrel=/{print $2; exit}' "${root}/packages/${name}/PKGBUILD")"
         # .SRCINFO for a VCS package records the pkgver at the last metadata
-        # refresh, while pkgver() resolves a newer commit during makepkg. Strip
-        # the cached .rN.gHASH suffix to get the stable upstream version prefix.
+        # refresh, while pkgver() resolves a newer commit during makepkg. Two
+        # shapes exist: "<base>.rN.gHASH" (svt) and the bare "rN.<hash>" when
+        # upstream has no conventional version number (linuxqq-wayland-fix-git).
+        # Strip the cached suffix for the first; the whole version is the
+        # resolved part for the second.
         template_base="${template_ver%%.r[0-9]*.g*}"
         actual_ver="${actual%-*}"
         actual_rel="${actual##*-}"
+        resolved_suffix=""
         if grep -qE '^pkgver\(\)[[:space:]]*\{' "${root}/packages/${name}/PKGBUILD" \
-            && [[ "$actual_rel" == "$pkgrel" ]] \
-            && [[ "$actual_ver" == "$template_base".r* ]]; then
-            resolved_suffix="${actual_ver#"$template_base".r}"
-            if [[ "$resolved_suffix" =~ ^[0-9]+\.g[0-9a-f]+$ ]]; then
-                printf 'Accepted resolved git pkgver for %s: %s (template=%s)\n' "$name" "$actual" "$expected"
-                continue
+            && [[ "$actual_rel" == "$pkgrel" ]]; then
+            if [[ "$template_base" != "$template_ver" && "$actual_ver" == "$template_base".r* ]]; then
+                suffix="${actual_ver#"$template_base".r}"
+                if [[ "$suffix" =~ ^[0-9]+\.g[0-9a-f]+$ ]]; then
+                    resolved_suffix="$suffix"
+                fi
+            elif [[ "$template_ver" =~ ^r[0-9]+\.[0-9a-f]+$ && "$actual_ver" =~ ^r[0-9]+\.[0-9a-f]+$ ]]; then
+                resolved_suffix="${actual_ver#r}"
             fi
+        fi
+        if [[ -n "$resolved_suffix" ]]; then
+            printf 'Accepted resolved git pkgver for %s: %s (template=%s)\n' "$name" "$actual" "$expected"
+            continue
         fi
         bumped_rel="$(next_pkgrel "$pkgrel")"
         if [[ -n "$bumped_rel" && "$actual" == "${expected%-*}-${bumped_rel}" ]]; then

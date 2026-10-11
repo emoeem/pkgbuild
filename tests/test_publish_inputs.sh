@@ -40,6 +40,23 @@ output="$(run_case)"
 grep -q 'Accepted resolved git pkgver for svt-jpeg-xs-git' <<<"$output"
 echo 'ok: resolved VCS pkgver is accepted when stable prefix and pkgrel match'
 
+# Bare rN.<hash> VCS packages (upstream has no conventional version number)
+# resolve the same way; the whole version is the dynamic part.
+rm -f "$tmp/incoming"/*
+make_case linuxqq-wayland-fix-git r111.01bdc03 1 r117.48cebc7-1 yes
+output="$(run_case)"
+grep -q 'Accepted resolved git pkgver for linuxqq-wayland-fix-git' <<<"$output"
+echo 'ok: bare rN.<hash> VCS pkgver is accepted when pkgrel matches'
+
+rm -f "$tmp/incoming"/*
+make_case linuxqq-wayland-fix-git r111.01bdc03 1 r117.48cebc7-2 yes
+if output="$(run_case 2>&1)"; then
+    echo 'expected bare rN.<hash> pkgrel mismatch to fail' >&2
+    exit 1
+fi
+grep -q 'Publication mismatch for linuxqq-wayland-fix-git' <<<"$output"
+echo 'ok: bare rN.<hash> with mismatched pkgrel is rejected'
+
 # A regular package still requires an exact source version (unless pkgrel is intentionally bumped).
 rm -f "$tmp/incoming"/*
 make_case stable-demo 1.0 1 1.0-1 no
