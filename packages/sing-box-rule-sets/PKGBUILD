@@ -25,15 +25,13 @@
 # 升级方式：`pkgver` 用日期；`scripts/refresh-rule-sets.sh` 每天比对上游内容
 # （哈希记录在同目录 .source-hashes）并在有变化时提交 + 触发重建发布。
 #
-# 为什么远程源全部 SKIP：这些上游全部日更甚至 8 小时一更，而钉死在 PKGBUILD
-# 里的哈希只有每天一次的 refresh 会更新——两次 refresh 之间的任何构建重新下载
-# 上游内容就必然校验失败（2026-10-11 anti-ad.txt 实测）。SKIP 之后构建永远
-# 可重复；完整性由 refresh 工作流在下载时校验（SRS magic / 规模下限），
-# 内容基准则由每天带日期版本的发布固化。
+# 每日 refresh 将远程源的 SHA-256 写入 sha256sums，并把远程哈希记录到
+# .source-hashes。makepkg 会再次验证实际下载内容；若源在 refresh 与构建之间
+# 发生变化，构建会失败并等待下一次 refresh，不会静默打包未经记录的内容。
 
 pkgname=sing-box-rule-sets
 pkgver=20261011
-pkgrel=1
+pkgrel=2
 pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, Loyalsoldier enhanced geosite (cn/non-cn), always-direct list, CN ad-SDK extras'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
@@ -60,15 +58,15 @@ source=(
     'LICENSE-anti-AD'
 )
 sha256sums=(
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
+    '605bf9cf8197ad5ca94794379e8a24007e0d5862c591a592939fac869b8c6b9a'
+    'd5a12d61f726d63c0835fd7233de1b3186204aed51c07167f9650936224293ec'
+    'df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f'
+    '0920997bcd2eb60a186bd141aa9258f111f5704733e81cc5df535351838d627b'
+    '5f136bb81bbe2198d248f65d288ae00e972fd0e6e25b6903f624c808972f7e4c'
+    '8673436c8dcfe3a81731ee8f428205c439b4e7769309f31cf92d69676225df27'
+    'ba3a2f0b5371bdd6e5e79479215bf04da1343cb347a065dd6e722ab51aae14a8'
+    '40e95f074c514a98fb3d78903e87a407a2f4780900fcbba9cda671c4f035f18a'
+    '01e7be5ef36f71e2f068985983b0f9306e3a71bb0a24b06b00ae9d6a539aa46d'
 )
 
 _rule_sets=(

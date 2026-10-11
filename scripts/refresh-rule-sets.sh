@@ -3,9 +3,9 @@
 # 哈希记录在 .source-hashes 里比对，有变化就更新 pkgver（日期）并生成 .SRCINFO，
 # 供 CI 提交后自动重建包。没有变化则什么都不做（退出码 0）。
 #
-# PKGBUILD 里的 sha256sums 全部是 SKIP（上游日更，钉哈希必然在两次 refresh
-# 之间漂移，2026-10-11 anti-ad.txt 实测），所以本脚本不再改写哈希数组，
-# 只负责：可达性/合法性校验、变化检测、日期版本化。
+# 刷新阶段校验每份远程源并记录 SHA-256；同一组哈希同时写入 PKGBUILD 的
+# sha256sums，让 makepkg 在构建下载阶段再次验证。若上游在刷新与构建之间变化，
+# 构建会失败关闭，而不是把未经记录的新内容打进软件包。
 #
 # 用法：scripts/refresh-rule-sets.sh [--check]
 #   --check  只报告是否有变化，不写文件（供本地预览）
@@ -42,8 +42,8 @@ readonly -a urls=(
     "https://raw.githubusercontent.com/lyc8503/sing-box-rules/rule-set-geosite/geosite-cn.srs"
     "https://raw.githubusercontent.com/lyc8503/sing-box-rules/rule-set-geosite/geosite-geolocation-!cn.srs"
 )
-# 内容基线的落点：哈希不再进 PKGBUILD（那里是 SKIP），但「上游变了没有」
-# 仍然要可审计地记录在仓库里，--check 与无人值守运行才有可比对象。
+# .source-hashes 是六份远程源的审计基线；PKGBUILD sha256sums 还包含三份
+# 仓库内源文件的哈希，数组顺序必须与 source 完全一致。
 readonly hashes_file="${pkg_dir}/.source-hashes"
 
 [[ -f "$pkgbuild" ]] || { printf 'missing %s\n' "$pkgbuild" >&2; exit 1; }
@@ -63,7 +63,7 @@ for i in "${!urls[@]}"; do
         exit 1
     fi
     [[ -s "$out" ]] || { printf 'empty download: %s\n' "$url" >&2; exit 1; }
-    # SKIP 意味着 makepkg 不再是完整性关卡，这里就是唯一关卡：远程 .srs 必须
+    # refresh 阶段先检查内容，makepkg 再用相同 SHA-256 校验下载：远程 .srs 必须
     # 带 SRS magic，AdGuard 文本必须有实质内容（万行级），防止 404 页面或
     # 截断响应被当成合法规则集打进包里。
     case "$url" in
@@ -82,17 +82,48 @@ done
 
 mapfile -t old_sums < <(cat "$hashes_file" 2>/dev/null || true)
 
-changed=0
+source_changed=0
 for ((i = 0; i < ${#urls[@]}; i++)); do
     if [[ "${old_sums[$i]:-}" != "${new_sums[$i]}" ]]; then
         printf 'changed: source %d\n  old %s\n  new %s\n' "$i" "${old_sums[$i]:-<none>}" "${new_sums[$i]}"
-        changed=1
+        source_changed=1
     fi
 done
 
-if (( ! changed )); then
-    printf 'No rule-set source changed; nothing to do.\n'
+# The final three source entries are repository-maintained files; makepkg must
+# verify them too. The checksum order mirrors PKGBUILD's source array exactly.
+expected_sums=(
+    "${new_sums[@]}"
+    "$(sha256sum "$pkg_dir/must-direct.json" | cut -d' ' -f1)"
+    "$(sha256sum "$pkg_dir/ads-extra.json" | cut -d' ' -f1)"
+    "$(sha256sum "$pkg_dir/LICENSE-anti-AD" | cut -d' ' -f1)"
+)
+
+# Determine whether this is initial SKIP migration, an upstream change, or a
+# change to one of the local source files.
+checksum_state="$(python3 - "$pkgbuild" "${expected_sums[@]}" <<'PY'
+import re, sys, pathlib
+s = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+m = re.search(r"^sha256sums=\(\s*(.*?)^\)", s, re.M | re.S)
+current = re.findall(r"['\"]([^'\"]+)['\"]", m.group(1)) if m else []
+expected = sys.argv[2:]
+if current == expected:
+    print("match")
+elif any(value == "SKIP" for value in current):
+    print("skip")
+elif len(current) == len(expected) and current[-3:] != expected[-3:]:
+    print("local-changed")
+else:
+    print("mismatch")
+PY
+)"
+
+if (( ! source_changed )) && [[ "$checksum_state" == match ]]; then
+    printf 'No rule-set source or checksum change; nothing to do.\n'
     exit 0
+fi
+if [[ "$checksum_state" == local-changed ]]; then
+    printf 'Local rule-set source changed; package release will be incremented.\n'
 fi
 if (( CHECK_ONLY )); then
     printf 'Changes detected (--check: not modifying anything).\n'
@@ -100,35 +131,74 @@ if (( CHECK_ONLY )); then
 fi
 
 new_date="$(date -u +%Y%m%d)"
-python3 - "$pkgbuild" "$new_date" <<'PY'
+python3 - "$pkgbuild" "$new_date" "$source_changed" "$checksum_state" "${expected_sums[@]}" <<'PY'
 import re, sys, pathlib
-path, date_ = sys.argv[1], sys.argv[2]
+path, date_, source_changed, checksum_state = sys.argv[1:5]
+checksums = sys.argv[5:]
 p = pathlib.Path(path)
 s = p.read_text(encoding="utf-8")
-# sha256sums 全部是 SKIP，这里只做日期版本化
-s = re.sub(r"^pkgver=.*$", f"pkgver={date_}", s, count=1, flags=re.M)
-s = re.sub(r"^pkgrel=\d+$", "pkgrel=1", s, count=1, flags=re.M)
+if source_changed == "1":
+    current_ver = re.search(r"^pkgver=(.*)$", s, re.M)
+    if current_ver and current_ver.group(1) == date_:
+        m = re.search(r"^pkgrel=(\d+)$", s, re.M)
+        if not m:
+            raise SystemExit("unable to find pkgrel in PKGBUILD")
+        s = s[:m.start(1)] + str(int(m.group(1)) + 1) + s[m.end(1):]
+    else:
+        s = re.sub(r"^pkgver=.*$", f"pkgver={date_}", s, count=1, flags=re.M)
+        s = re.sub(r"^pkgrel=\d+$", "pkgrel=1", s, count=1, flags=re.M)
+elif checksum_state == "local-changed":
+    m = re.search(r"^pkgrel=(\d+)$", s, re.M)
+    if not m:
+        raise SystemExit("unable to find pkgrel in PKGBUILD")
+    s = s[:m.start(1)] + str(int(m.group(1)) + 1) + s[m.end(1):]
+block = "sha256sums=(\n" + "".join(f"    '{value}'\n" for value in checksums) + ")"
+s, count = re.subn(r"^sha256sums=\(\s*.*?^\)", lambda _: block, s, count=1, flags=re.M | re.S)
+if count != 1:
+    raise SystemExit("unable to replace sha256sums array")
 p.write_text(s, encoding="utf-8")
-print(f"PKGBUILD updated: pkgver={date_}")
+print(f"PKGBUILD checksum array updated ({len(checksums)} sources)")
+if source_changed == "1":
+    print(f"PKGBUILD updated for source change on {date_}")
+elif checksum_state == "local-changed":
+    print("PKGBUILD pkgrel incremented for local source change")
 PY
 
-printf '%s\n' "${new_sums[@]}" > "$hashes_file"
-printf 'Updated %s\n' "${hashes_file#"$repo_root"/}"
-
 if command -v makepkg >/dev/null 2>&1; then
-    ( cd "$pkg_dir" && BUILDDIR="$(mktemp -d)" SRCDEST="$work" PKGDEST="$work" LOGDEST="$work" makepkg --printsrcinfo > "$srcinfo" )
+    mkdir -p "$work/build"
+    ( cd "$pkg_dir" && BUILDDIR="$work/build" SRCDEST="$work" PKGDEST="$work" LOGDEST="$work" makepkg --printsrcinfo > "$srcinfo" )
 else
-    # 调度 runner（ubuntu）没有 makepkg：pkgver/pkgrel 是标量，直接改写；
-    # sha256sums 保持 SKIP，与 PKGBUILD 一致——一旦写出真实哈希就会被
-    # builder 容器里的 check-package.sh 正确拦下（2026-10-05 实测翻过车）。
-    python3 - "$srcinfo" "$new_date" <<'PY'
+    # The scheduled Ubuntu runner has no makepkg; mirror metadata and checksums
+    # into .SRCINFO so the next CachyOS check can validate the same source list.
+    python3 - "$srcinfo" "$new_date" "$source_changed" "$checksum_state" "${expected_sums[@]}" <<'PY'
 import re, sys, pathlib
-path, date_ = sys.argv[1], sys.argv[2]
+path, date_, source_changed, checksum_state = sys.argv[1:5]
+checksums = sys.argv[5:]
 p = pathlib.Path(path)
-s = p.read_text(encoding="utf-8")
-s = re.sub(r"^(\tpkgver = ).*$", rf"\g<1>{date_}", s, count=1, flags=re.M)
-s = re.sub(r"^(\tpkgrel = ).*$", r"\g<1>1", s, count=1, flags=re.M)
-p.write_text(s, encoding="utf-8")
+lines = p.read_text(encoding="utf-8").splitlines()
+if source_changed == "1":
+    current_ver = next((line.split(" = ", 1)[1] for line in lines if line.startswith("\tpkgver = ")), "")
+    if current_ver == date_:
+        for i, line in enumerate(lines):
+            if line.startswith("\tpkgrel = "):
+                lines[i] = re.sub(r"^(\tpkgrel = )(\d+)$", lambda m: m.group(1) + str(int(m.group(2)) + 1), line)
+                break
+    else:
+        lines = [re.sub(r"^(\tpkgver = ).*$", rf"\g<1>{date_}", line) if line.startswith("\tpkgver = ") else line for line in lines]
+        lines = [re.sub(r"^(\tpkgrel = ).*$", r"\g<1>1", line) if line.startswith("\tpkgrel = ") else line for line in lines]
+elif checksum_state == "local-changed":
+    for i, line in enumerate(lines):
+        if line.startswith("\tpkgrel = "):
+            lines[i] = re.sub(r"^(\tpkgrel = )(\d+)$", lambda m: m.group(1) + str(int(m.group(2)) + 1), line)
+            break
+indices = [i for i, line in enumerate(lines) if line.startswith("\tsha256sums = ")]
+if len(indices) != len(checksums):
+    raise SystemExit(f".SRCINFO has {len(indices)} sha256sums entries; expected {len(checksums)}")
+for i, value in zip(indices, checksums):
+    lines[i] = f"\tsha256sums = {value}"
+p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 fi
 printf 'Updated %s\n' "${srcinfo#"$repo_root"/}"
+printf '%s\n' "${new_sums[@]}" > "$hashes_file"
+printf 'Updated %s\n' "${hashes_file#"$repo_root"/}"
