@@ -17,30 +17,11 @@ nspawn_shim_install() {
     dir="$(mktemp -d "${1:-/tmp/pkgbuild-nspawn-shim.XXXXXX}")" || return 1
     cat > "$dir/systemd-nspawn" <<'__NSPAWN_WRAPPER__'
 #!/usr/bin/env bash
-# Docker 默认把 / 设为 rshared 挂载传播:nspawn 退出清理时的 umount 会穿透
-# 回宿主(docker)命名空间,把刚被它当容器根用过的目录整个清空——实测副本
-# 的 /etc/makepkg.conf 在 update-first 的 nspawn 退出后 50ms 内消失,同时
-# 必现 "Attempted to remove disk file system under .../propagate/..." 警告
-# (2026-10-11)。进入前把传播改成 slave 是 systemd 文档给出的标准缓解;
+# Docker 下 / 的挂载传播默认偏 shared,nspawn 的 umount 可能穿透回宿主命名
+# 空间。进入前改成 slave 是 systemd 文档对容器内跑 nspawn 的标准缓解;
 # 两个调用方(chroot 构建、升级路径测试)都持有 CAP_SYS_ADMIN。
-mount --make-rslave /
-printf 'nspawn-shim: propagation after make-rslave: ' >&2
-findmnt -o PROPAGATION -T / 2>/dev/null | tail -1 >&2
-/usr/bin/systemd-nspawn --link-journal=no --keep-unit "$@"
-rc=$?
-# 诊断(2026-10-11):nspawn 一退出就检查容器根的 /etc/makepkg.conf——
-# arch-nspawn 的 $1 就是容器根,把「文件消失的时刻」钉死在 nspawn 退出上。
-root_arg="${1:-}"
-if [[ -d "$root_arg" ]]; then
-    if [[ -f "$root_arg/etc/makepkg.conf" ]]; then
-        printf 'nspawn-shim: post-exit %s/etc/makepkg.conf EXISTS\n' "$root_arg" >&2
-    else
-        printf 'nspawn-shim: post-exit %s/etc/makepkg.conf GONE\n' "$root_arg" >&2
-        findmnt -T "$root_arg/etc" >&2 || true
-        ls -la "$root_arg/etc/" 2>&1 | head -25 >&2
-    fi
-fi
-exit $rc
+mount --make-rslave / 2>/dev/null || true
+exec /usr/bin/systemd-nspawn --link-journal=no --keep-unit "$@"
 __NSPAWN_WRAPPER__
     chmod 0755 "$dir/systemd-nspawn" || { rm -rf "$dir"; return 1; }
     printf '%s\n' "$dir"

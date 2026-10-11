@@ -119,6 +119,12 @@ __CACHE_ENV__
     work_parent="$cache_dir/chroot"
 fi
 work_root="$(mktemp -d "$work_parent/work-${package_name}.XXXXXX")"
+# makechrootpkg 的 download_sources 以 sudo -u builder 在宿主侧跑 makepkg,
+# 而 mktemp -d 是 700 root:root——builder 连路径都穿越不了,对
+# --config=$copydir/etc/makepkg.conf 的 -f 检查直接报 not found(2026-10-11
+# 实测,rsync 后文件明明存在:诊断以 root 检查、makepkg 以 builder 检查)。
+# 标准的 archbuild 全程同一用户,不会踩这个;我们的根在 root 手里。
+chmod 0755 "$work_root"
 cleanup_paths+=("$work_root")
 mkdir -p "$work_root/root"
 cp --reflink=auto -a "$baseline_root/." "$work_root/root/"
@@ -142,6 +148,12 @@ cache_mounts=()
 for path in "$cache_dir/pacman" "${cache_dir}/sources/${package_name}" "$cache_dir/cargo" "$cache_dir/ccache"; do
     [[ -d "$path" ]] || continue
     mkdir -p "$work_root/root$path"
+    # chroot 内的 builduser 与 builder 同 UID,经 bind 写这些宿主目录时按
+    # 宿主权限判;pacman 缓存只有 chroot 内的 root 读写,不用动。
+    case "$path" in
+        */pacman) ;;
+        *) chown -R builder:builder "$path" 2>/dev/null || true ;;
+    esac
     cache_mounts+=( -d "$path" )
 done
 if [[ -d "$repo_dir" ]] && compgen -G "$repo_dir/*.db*" >/dev/null; then
@@ -161,39 +173,6 @@ else
     arch-nspawn -c "$cache_dir/pacman" "$work_root/root" pacman -Syu --noconfirm
 fi
 cd "$source_dir"
-# 诊断(2026-10-11):副本在 rsync 后缺 /etc/makepkg.conf,而 baseline 断言
-# 证明基线有它。给 rsync 包一层日志,一次运行拿到全部事实:root 侧是否仍有
-# 该文件、rsync 的参数与退出码、副本 /etc 的实际内容,以及 root 路径上的
-# 残留挂载(nspawn 退出的 mount-propagation 警告一直在日志里出现)。
-if [[ ! -f "$work_root/root/etc/makepkg.conf" ]]; then
-    printf '!! work root lost /etc/makepkg.conf before makechrootpkg\n' >&2
-    findmnt -T "$work_root/root/etc" >&2 || true
-    ls -la "$work_root/root/etc/" >&2 | head -30
-    exit 3
-fi
-findmnt -T "$work_root/root/etc" >&2 || true
-rsync_diag_dir="$(mktemp -d /tmp/pkgbuild-rsync-diag.XXXXXX)"
-cat > "$rsync_diag_dir/rsync" <<'__RSYNC_DIAG__'
-#!/usr/bin/env bash
-dest="${*: -1}"
-printf 'rsync-call: %s\n' "$*" >&2
-/usr/bin/rsync "$@"
-rc=$?
-printf 'rsync-exit: %s\n' "$rc" >&2
-if (( rc == 0 )) && [[ -d "$dest" ]]; then
-    if [[ -f "$dest/etc/makepkg.conf" ]]; then
-        printf 'copy has etc/makepkg.conf\n' >&2
-    else
-        printf '!! copy %s lacks etc/makepkg.conf after sync\n' "$dest" >&2
-        findmnt -T "$dest/etc" >&2 || true
-        ls -la "$dest/etc/" >&2 | head -30
-    fi
-fi
-exit $rc
-__RSYNC_DIAG__
-chmod 0755 "$rsync_diag_dir/rsync"
-cleanup_paths+=("$rsync_diag_dir")
-PATH="$rsync_diag_dir:$PATH"
 # makechrootpkg 用 ${SUDO_USER:-$USER} 决定 chroot 内的 makepkg 用户;docker
 # 容器默认两者都不设,结果是 `id -u ''` 直接炸掉源码下载(2026-10-11 实测)。
 # builder 是本镜像的构建用户,存在且与 yay 路径一致。
