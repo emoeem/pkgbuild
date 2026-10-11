@@ -22,9 +22,9 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn('pacman.conf.pkgbuild-base', script)
         self.assertIn('base_packages+=(cuda gcc15)', script)
         self.assertIn('baseline_name="baseline-${generation}-${architecture}-${fingerprint}"', script)
-        self.assertIn('baseline_archive="$cache_dir/chroot/${baseline_name}.tar.zst"', script)
+        self.assertIn('baseline_archive="$cache_dir/chroot/baselines/${baseline_name}.tar.zst"', script)
         self.assertIn('runtime_root="/tmp/pkgbuild-chroot-${fingerprint}"', script)
-        self.assertLess(script.index('nspawn_wrapper_dir="$(mktemp -d'), script.index('mkarchroot -C'))
+        self.assertLess(script.index('nspawn_wrapper_dir="$(nspawn_shim_install'), script.index('mkarchroot -C'))
 
     def test_repo_order_and_read_only_bind(self):
         script = (ROOT / 'scripts/build-in-clean-chroot.sh').read_text()
@@ -47,7 +47,11 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn("inputs.build_mode != 'chroot' && !cancelled() && needs.build.result == 'failure'", workflow)
         self.assertIn("inputs.build_mode != 'chroot' && (!cancelled() && needs.build.result == 'success'", workflow)
         self.assertIn('arch-nspawn -c "$cache_dir/pacman" "$work_root/root" pacman -Syu --noconfirm', script)
-        self.assertIn('systemd-nspawn --link-journal=no --keep-unit "$@"', script)
+        # nspawn 调用必须全部经由 PATH 垫片(rslave 缓解 + --keep-unit)。
+        self.assertIn('source "$script_dir/lib/nspawn-shim.sh"', script)
+        shim = (ROOT / 'scripts/lib/nspawn-shim.sh').read_text()
+        self.assertIn('mount --make-rslave /', shim)
+        self.assertIn('exec /usr/bin/systemd-nspawn --link-journal=no --keep-unit "$@"', shim)
         self.assertIn('PATH="$nspawn_wrapper_dir:/usr/lib/ccache/bin:$PATH"', script)
         self.assertIn('uses: $/.github/actions/setup-builder', workflow)
         self.assertIn('selected_deps=[d for d in deps if d in selected]; sys.stdout.write(\"\\n\".join(selected_deps))', workflow)
