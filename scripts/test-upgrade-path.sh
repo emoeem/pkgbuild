@@ -56,30 +56,37 @@ else
     tar --zstd -xf "$baseline_archive" -C "$work/baseline"
     cp --reflink=auto -a "$work/baseline/root/." "$work/root/"
 fi
-repo_dir="$work/root/tmp/upgrade-repo"
-mkdir -p "$repo_dir"
+# staging 仓库放宿主侧:arch-nspawn 会对 pacman.conf 里的 file:// Server 按
+# 宿主路径做 bind,「容器内路径」(/tmp/upgrade-repo,落在 work root 里)在
+# 宿主侧不存在,nspawn 直接 'Failed to clone'(2026-10-11 首次真跑实测)。
+# 宿主路径同时就是容器内路径,nspawn --bind 两端一致。
+repo_dir="$(mktemp -d /tmp/upgrade-repo.XXXXXX)"
+trap 'rm -rf -- "$work" "$shim_dir" "$repo_dir"' EXIT INT TERM
 # Include the previous repository package set so private dependencies remain
 # resolvable in the disposable chroot. Replace the old target package with the
 # artifact built in this run before generating the temporary database.
 while IFS= read -r -d '' package; do
     cp -f -- "$package" "$repo_dir/"
 done < <(find "$old_dir" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print0)
-if [[ -n "$old_pkg" ]]; then cp -f -- "$old_pkg" "$work/root/tmp/old.pkg.tar.zst"; fi
+if [[ -n "$old_pkg" ]]; then
+    mkdir -p "$work/root/tmp"
+    cp -f -- "$old_pkg" "$work/root/tmp/old.pkg.tar.zst"
+fi
 new_pkgname="$(bsdtar -xOf "$new_pkg" .PKGINFO | awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
 [[ -n "$new_pkgname" ]] || { echo "Missing pkgname in $new_pkg" >&2; exit 2; }
 find "$repo_dir" -maxdepth 1 -type f -name "${new_pkgname}-*.pkg.tar.zst" -delete
 cp -f -- "$new_pkg" "$repo_dir/"
 repo-add --remove "$repo_dir/emoeem-staging.db.tar.gz" "$repo_dir/"*.pkg.tar.zst
-python3 - "$work/root/etc/pacman.conf" <<'PYCONF'
+python3 - "$work/root/etc/pacman.conf" "$repo_dir" <<'PYCONF'
 from pathlib import Path
 import re, sys
-path = Path(sys.argv[1])
-text = path.read_text(encoding='utf-8')
+path, staging_dir = sys.argv[1], sys.argv[2]
+text = Path(path).read_text(encoding='utf-8')
 match = re.search(r'(?m)^\[cachyos-v3\]\s*$', text)
 if not match:
     raise SystemExit('Upgrade chroot config lost the cachyos-v3 repository')
-staging = '[emoeem-staging]\nSigLevel = Never\nServer = file:///tmp/upgrade-repo\n\n'
-path.write_text(text[:match.start()] + staging + text[match.start():], encoding='utf-8')
+staging = f'[emoeem-staging]\nSigLevel = Never\nServer = file://{staging_dir}\n\n'
+Path(path).write_text(text[:match.start()] + staging + text[match.start():], encoding='utf-8')
 PYCONF
 arch-nspawn "$work/root" pacman -Syu --noconfirm
 if [[ "$package_name" == sing-box-ebpf ]]; then
