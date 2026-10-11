@@ -44,17 +44,19 @@ if [[ ! -f "$repository_dir/$repository_name.db" ]]; then
 fi
 
 # --- wire the repository into pacman so dependencies resolve from it --------
-if ! grep -qx "[$repository_name]" /etc/pacman.conf; then
+# PACMAN_CONF 覆盖点默认即 /etc/pacman.conf;测试用它指到临时文件。
+pacman_conf="${PACMAN_CONF:-/etc/pacman.conf}"
+if ! grep -qx "[$repository_name]" "$pacman_conf"; then
     trimmed="$(mktemp)"
     awk -v name="$repository_name" '
         $0 == "[" name "]" {skip=1; next}
         skip && /^\[/ {skip=0}
         !skip {print}
-    ' /etc/pacman.conf >"$trimmed"
+    ' "$pacman_conf" >"$trimmed"
     {
         printf '\n[%s]\nSigLevel = Never\nServer = file://%s\n' "$repository_name" "$repository_dir"
         cat "$trimmed"
-    } >/etc/pacman.conf
+    } >"$pacman_conf"
     rm -f "$trimmed"
 fi
 
@@ -109,9 +111,38 @@ for entry in "${skipped[@]}"; do
 done
 
 printf 'Installing from the repository...\n'
-if ! pacman -U --noconfirm --needed --overwrite '*' "${selected[@]}"; then
-    printf 'FAIL: the repository could not install its own packages.\n' >&2
-    exit 1
+install_log="$(mktemp)"
+trap 'rm -f "$install_log"' EXIT
+if ! pacman -U --noconfirm --needed --overwrite '*' "${selected[@]}" 2>&1 | tee "$install_log"; then
+    # 仓库必须满足「自己的」闭包。依赖里来自外部的包(AUR 等,构建期由 yay
+    # 解析,如 linuxqq-wayland-fix-git 的 linuxqq)在 clean 容器里天然不可
+    # 解析,不算仓库缺陷——对这类缺失按已安装假设重试。缺的若是本仓库自己
+    # 的包,那是真闸门,必须失败(fail closed)。
+    mapfile -t missing < <(sed -n 's/^warning: cannot resolve "\([^"]*\)", a dependency of.*/\1/p' "$install_log" | sort -u)
+    declare -a assume_args=() external=() internal=()
+    for dep in "${missing[@]}"; do
+        [[ -n "$dep" ]] || continue
+        dep_name="${dep%%[<>=]*}"
+        if pacman -Sl "$repository_name" 2>/dev/null | awk '{print $2}' | grep -qxF "$dep_name"; then
+            internal+=("$dep")
+        else
+            external+=("$dep_name")
+            assume_args+=("--assume-installed=$dep_name")
+        fi
+    done
+    if (( ${#internal[@]} > 0 )); then
+        printf 'FAIL: unresolvable dependencies pointing at this repository: %s\n' "${internal[*]}" >&2
+        exit 1
+    fi
+    if (( ${#external[@]} == 0 )); then
+        printf 'FAIL: the repository could not install its own packages (no unresolvable dependency reported).\n' >&2
+        exit 1
+    fi
+    printf 'External dependencies absent from every configured repository; assuming installed: %s\n' "${external[*]}"
+    if ! pacman -U --noconfirm --needed --overwrite '*' "${assume_args[@]}" "${selected[@]}" 2>&1 | tee "$install_log"; then
+        printf 'FAIL: the repository could not install its own packages.\n' >&2
+        exit 1
+    fi
 fi
 
 # --- runtime verification against the installed result ----------------------
