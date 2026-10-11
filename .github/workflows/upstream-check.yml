@@ -108,7 +108,16 @@ jobs:
             issue="$(gh issue list --state open --limit 100 --json number,title --search "$package in:title" | python3 -c 'import json,sys; p=sys.argv[1]; prefix="[upstream] "+p+":"; rows=json.load(sys.stdin); print(next((str(x["number"]) for x in rows if x["title"].startswith(prefix)), ""))' "$package")"
             # printf 解释 \n(bash 双引号不会):body 里要真实换行
             body="$(printf 'Upstream version detected by nvchecker.\n\n- Package: %s\n- Published repository baseline: %s\n- Upstream: %s\n\nNo PKGBUILD was modified automatically. Review source checksums, packaging changes and rebuild impact before updating.' "$package" "$current" "$upstream")"
-            if [[ -n "$issue" ]]; then gh issue comment "$issue" --body "$body"; else gh issue create --title "$title" --body "$body"; fi
+            if [[ -n "$issue" ]]; then
+              # 内容去重:长期 blocked 的更新(如 mlrt 的 Linux 构件上游没发)
+              # 不该每天重复评论;上游版本变了才追加一条。
+              last="$(gh issue view "$issue" --json comments --jq '.comments[-1].body // ""')"
+              if [[ "$last" != *"- Upstream: $upstream"* ]]; then
+                gh issue comment "$issue" --body "$body"
+              fi
+            else
+              gh issue create --title "$title" --body "$body"
+            fi
           done < "$RUNNER_TEMP/upstream-issues.jsonl"
           # 已解决的关闭:本轮 updates 没有的包,其 open 的 [upstream] issue
           # 视为已追平(或已发布),不再留成永久挂账。
