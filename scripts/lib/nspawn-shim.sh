@@ -17,6 +17,13 @@ nspawn_shim_install() {
     dir="$(mktemp -d "${1:-/tmp/pkgbuild-nspawn-shim.XXXXXX}")" || return 1
     cat > "$dir/systemd-nspawn" <<'__NSPAWN_WRAPPER__'
 #!/usr/bin/env bash
+# Docker 默认把 / 设为 rshared 挂载传播:nspawn 退出清理时的 umount 会穿透
+# 回宿主(docker)命名空间,把刚被它当容器根用过的目录整个清空——实测副本
+# 的 /etc/makepkg.conf 在 update-first 的 nspawn 退出后 50ms 内消失,同时
+# 必现 "Attempted to remove disk file system under .../propagate/..." 警告
+# (2026-10-11)。进入前把传播改成 slave 是 systemd 文档给出的标准缓解;
+# 两个调用方(chroot 构建、升级路径测试)都持有 CAP_SYS_ADMIN。
+mount --make-rslave / 2>/dev/null || true
 exec /usr/bin/systemd-nspawn --link-journal=no --keep-unit "$@"
 __NSPAWN_WRAPPER__
     chmod 0755 "$dir/systemd-nspawn" || { rm -rf "$dir"; return 1; }
