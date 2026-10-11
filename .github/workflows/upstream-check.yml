@@ -106,7 +106,8 @@ jobs:
             # 按前缀找既有 issue:基线语义改过(PKGBUILD → published),前缀
             # 匹配让旧格式的 issue 继续被评论而不是孤儿化。
             issue="$(gh issue list --state open --limit 100 --json number,title --search "$package in:title" | python3 -c 'import json,sys; p=sys.argv[1]; prefix="[upstream] "+p+":"; rows=json.load(sys.stdin); print(next((str(x["number"]) for x in rows if x["title"].startswith(prefix)), ""))' "$package")"
-            body="Upstream version detected by nvchecker.\n\n- Package: $package\n- Published repository baseline: $current\n- Upstream: $upstream\n\nNo PKGBUILD was modified automatically. Review source checksums, packaging changes and rebuild impact before updating."
+            # printf 解释 \n(bash 双引号不会):body 里要真实换行
+            body="$(printf 'Upstream version detected by nvchecker.\n\n- Package: %s\n- Published repository baseline: %s\n- Upstream: %s\n\nNo PKGBUILD was modified automatically. Review source checksums, packaging changes and rebuild impact before updating.' "$package" "$current" "$upstream")"
             if [[ -n "$issue" ]]; then gh issue comment "$issue" --body "$body"; else gh issue create --title "$title" --body "$body"; fi
           done < "$RUNNER_TEMP/upstream-issues.jsonl"
           # 已解决的关闭:本轮 updates 没有的包,其 open 的 [upstream] issue
