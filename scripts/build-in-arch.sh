@@ -261,20 +261,19 @@ printf 'Resolving dependencies, building and installing %s...\n' "$package_name"
 # 2026-10-11),makepkg --install 收尾的 pacman -U 撞冲突时 --noconfirm 对
 # "Remove ...?" 的默认答案是 N,整次安装中止。devtools 在 chroot 里同样用
 # --ask=4 处理 install_pkgs;一次性容器里自动移除是安全语义。
-pacman_shim_dir="$(mktemp -d /tmp/pkgbuild-pacman-shim.XXXXXX)"
-cat > "$pacman_shim_dir/pacman" <<'__PACMAN_SHIM__'
+#
+# 垫片必须放 /usr/local/bin 而不是 PATH 前插:makepkg 以 builder 运行,收尾
+# 安装走 `sudo pacman`,sudo 用 secure_path(/usr/local/bin 优先)且不继承
+# 调用者的 PATH——前插只对 root 直调生效。
+install -d /usr/local/bin
+cat > /usr/local/bin/pacman <<'__PACMAN_SHIM__'
 #!/usr/bin/env bash
 case "${1:-}" in
     -S*|-U*|-R*) exec /usr/bin/pacman --ask=4 "$@" ;;
     *)           exec /usr/bin/pacman "$@" ;;
 esac
 __PACMAN_SHIM__
-chmod 0755 "$pacman_shim_dir/pacman"
-# mktemp -d 是 700 root;这个目录会前插进 PATH,makepkg 以 builder 运行时
-# PATH 搜索在第一个目录就吃到 EACCES,把后续所有工具的 spawn(rustfmt 等)
-# 打成 Permission denied。必须放开。
-chmod 0755 "$pacman_shim_dir"
-PATH="$pacman_shim_dir:$PATH"
+chmod 0755 /usr/local/bin/pacman
 if [[ "$package_name" == "ffmpeg-full" ]]; then
     # Resolve virtual/provider dependencies non-interactively and pin them to
     # the same concrete packages selected by this local CachyOS-v3 profile.
