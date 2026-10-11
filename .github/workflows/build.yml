@@ -376,9 +376,12 @@ jobs:
           BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
         run: |
           set -Eeuo pipefail
+          # 与 chroot 构建容器同一能力集:nspawn 要建 /payload 子 cgroup、挂
+          # 内部 tmpfs,非 privileged 容器的 cgroupfs 只读 + AppArmor/seccomp
+          # 限制逐个把它挡死(--ask:实测 tmpfs EPERM、cgroup EROFS,2026-10-11)。
+          # 与 chroot 模式相同的信任模型:仓库 pin 的镜像、一次性 runner。
           docker run --rm \
-            --cap-add SYS_ADMIN --security-opt seccomp=unconfined \
-            --security-opt apparmor=unconfined \
+            --privileged \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/dist:/out:ro" \
             --volume "$GITHUB_WORKSPACE/localrepo/x86_64:/localrepo:ro" \
