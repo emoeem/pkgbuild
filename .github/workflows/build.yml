@@ -378,6 +378,7 @@ jobs:
           set -Eeuo pipefail
           docker run --rm \
             --cap-add SYS_ADMIN --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$GITHUB_WORKSPACE/dist:/out:ro" \
             --volume "$GITHUB_WORKSPACE/localrepo/x86_64:/localrepo:ro" \
