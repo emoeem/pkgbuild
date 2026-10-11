@@ -10,12 +10,16 @@ new_pkg="$(find "$new_dir" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print -qui
 [[ -n "$new_pkg" ]] || { echo "No newly built package in $new_dir" >&2; exit 2; }
 new_name="$(bsdtar -xOf "$new_pkg" .PKGINFO | awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
 [[ "$new_name" == "$package_name" ]] || { echo "Expected $package_name, got $new_name" >&2; exit 2; }
-old_package_name="$package_name"
-if [[ "$package_name" == sing-box-ebpf ]]; then old_package_name=sing-box; fi
-old_pkg="$(find "$old_dir" -maxdepth 1 -type f -name "$old_package_name-*.pkg.tar.zst" -print -quit)"
-if [[ -z "$old_pkg" && "$package_name" != sing-box-ebpf ]]; then
-    echo "UPGRADE_PATH=UNVERIFIABLE: no previous $package_name package in the published repository; no upgrade success is claimed." >&2
-    exit 0
+# sing-box-ebpf 的旧形态是上游包名(转换路径):在发布仓库里按 "sing-box-*"
+# 找旧制品会误匹配 sing-box-ebpf 自己;该分支不用旧制品,只有同名升级分支
+# (linuxqq-clipsync-git)才需要。
+old_pkg=""
+if [[ "$package_name" != sing-box-ebpf ]]; then
+    old_pkg="$(find "$old_dir" -maxdepth 1 -type f -name "${package_name}-*.pkg.tar.zst" -print -quit)"
+    if [[ -z "$old_pkg" ]]; then
+        echo "UPGRADE_PATH=UNVERIFIABLE: no previous $package_name package in the published repository; no upgrade success is claimed." >&2
+        exit 0
+    fi
 fi
 # 哨兵:chroot 构建留下的 pacman-base.conf(树形态)或 runner 缓存里的
 # baseline 归档(纯 legacy run 的常态)任一存在即可继续。
@@ -88,7 +92,10 @@ if not match:
 staging = f'[emoeem-staging]\nSigLevel = Never\nServer = file://{staging_dir}\n\n'
 Path(path).write_text(text[:match.start()] + staging + text[match.start():], encoding='utf-8')
 PYCONF
-arch-nspawn "$work/root" pacman -Syu --noconfirm
+# -c:baseline 的 config 由 mkarchroot -c 写入 CacheDir=/cache/pacman,但不
+# bind 的话 pacman 只能落在 /tmp("couldn't find or create package cache")。
+# 与 build-in-clean-chroot.sh 的 update-first 同款:同路径 rw bind 共享缓存。
+arch-nspawn -c "$cache_dir/pacman" "$work/root" pacman -Syu --noconfirm
 if [[ "$package_name" == sing-box-ebpf ]]; then
     # The transition is from an upstream package name, not an older private
     # release. Install the official package, then let pacman apply conflicts / provides.
@@ -102,16 +109,16 @@ if [[ "$package_name" == sing-box-ebpf ]]; then
         echo 'UPGRADE_PATH=UNVERIFIABLE: upstream sing-box absent from all configured repositories; no upgrade success is claimed.' >&2
         exit 0
     fi
-    arch-nspawn "$work/root" pacman -S --needed --noconfirm "${upstream_repo}/sing-box"
+    arch-nspawn -c "$cache_dir/pacman" "$work/root" pacman -S --needed --noconfirm "${upstream_repo}/sing-box"
 else
     mapfile -t dependencies < <(bsdtar -xOf "$old_pkg" .PKGINFO | awk -F ' = ' '$1 == "depend" {print $2}')
-    if ((${#dependencies[@]} > 0)); then arch-nspawn "$work/root" pacman -S --needed --noconfirm "${dependencies[@]}"; fi
+    if ((${#dependencies[@]} > 0)); then arch-nspawn -c "$cache_dir/pacman" "$work/root" pacman -S --needed --noconfirm "${dependencies[@]}"; fi
     # Install the old private release first to exercise the upgrade transaction.
-    arch-nspawn "$work/root" pacman -U --noconfirm /tmp/old.pkg.tar.zst
+    arch-nspawn -c "$cache_dir/pacman" "$work/root" pacman -U --noconfirm /tmp/old.pkg.tar.zst
 fi
 # conflicts 移除问题在 --noconfirm 下照默认答 N,事务直接失败(--ask=4 与
 # build-in-arch.sh 的 pacman 垫片同语义:一次性容器里自动接受冲突移除)。
-arch-nspawn "$work/root" pacman -Syu --noconfirm --ask=4 "$package_name"
+arch-nspawn -c "$cache_dir/pacman" "$work/root" pacman -Syu --noconfirm --ask=4 "$package_name"
 installed="$(arch-nspawn "$work/root" pacman -Q "$package_name")"
 if [[ "$package_name" == sing-box-ebpf ]]; then
     # pacman -Q 会按 provides 匹配:sing-box-ebpf provides=sing-box,拿它查

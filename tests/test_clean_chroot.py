@@ -46,7 +46,8 @@ class CleanChrootTests(unittest.TestCase):
         self.assertIn('if [[ "$build_mode" == chroot ]]', workflow)
         self.assertIn("inputs.build_mode != 'chroot' && !cancelled() && needs.build.result == 'failure'", workflow)
         self.assertIn("inputs.build_mode != 'chroot' && (!cancelled() && needs.build.result == 'success'", workflow)
-        self.assertIn('arch-nspawn -c "$cache_dir/pacman" "$work_root/root" pacman -Syu --noconfirm', script)
+        self.assertIn('update_args=(arch-nspawn -c "$cache_dir/pacman" "$work_root/root")', script)
+        self.assertIn('until "${update_args[@]}" pacman -Syu --noconfirm; do', script)
         # nspawn 调用必须全部经由 PATH 垫片(rslave 缓解 + --keep-unit)。
         self.assertIn('source "$script_dir/lib/nspawn-shim.sh"', script)
         shim = (ROOT / 'scripts/lib/nspawn-shim.sh').read_text()

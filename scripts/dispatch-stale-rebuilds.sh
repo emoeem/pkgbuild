@@ -38,7 +38,7 @@ done < "$runs_tsv" > "$jobs_tsv"
 
 declare -A active_pkg=() recent_fail_pkg=()
 now="$(date -u +%s)"
-while IFS=$'\t' read -r run_id pkg _job_status job_conclusion; do
+while IFS=$'\t' read -r run_id pkg job_status job_conclusion; do
   [[ -n "$pkg" ]] || continue
   case "$job_status" in
     queued | in_progress) active_pkg["$pkg"]=1 ;;

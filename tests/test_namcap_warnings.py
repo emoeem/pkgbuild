@@ -28,6 +28,23 @@ class NamcapWarningTests(unittest.TestCase):
         self.assertNotEqual(first['key'], other_package['key'])
         self.assertEqual(first['warning_count'], 1)
 
+    def test_bracket_list_order_does_not_change_key(self):
+        # namcap 按 readdir 顺序输出方括号清单;同内容不同序必须同 key,
+        # 否则去重失效、每次构建新建一个 issue。
+        first = self.run_helper("demo W: Dependency glibc detected and implicitly satisfied (libraries ['usr/lib/libc.so.6', 'usr/lib/libm.so.6'] needed in files ['usr/bin/a', 'usr/bin/b'])\n")
+        reordered = self.run_helper("demo W: Dependency glibc detected and implicitly satisfied (libraries ['usr/lib/libm.so.6', 'usr/lib/libc.so.6'] needed in files ['usr/bin/b', 'usr/bin/a'])\n")
+        self.assertEqual(first['key'], reordered['key'])
+        self.assertEqual(first['warnings'], reordered['warnings'])
+
+    def test_ignore_line_matches_despite_list_order(self):
+        # ignore 文件是历史时刻誊写的精确行,清单顺序必须不影响命中。
+        result = self.run_helper(
+            "demo W: Dependency glibc detected (libraries ['a.so', 'b.so'] needed in files ['x', 'y'])\n",
+            "demo W: Dependency glibc detected (libraries ['b.so', 'a.so'] needed in files ['y', 'x'])\n",
+        )
+        self.assertEqual(result['warning_count'], 0)
+        self.assertEqual(len(result['ignored']), 1)
+
     def test_exact_long_term_exemption(self):
         result = self.run_helper("warning: legacy soname is intentional\nwarning: missing dependency\n", "# reviewed\nwarning: legacy soname is intentional\n")
         self.assertEqual(result['warnings'], ['warning: missing dependency'])

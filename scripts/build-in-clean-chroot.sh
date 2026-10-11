@@ -157,11 +157,23 @@ printf 'Clean-chroot build: package=%s baseline=%s repo=%s\n' "$package_name" "$
 # Update this package's disposable work copy before invoking makechrootpkg.
 # This is intentionally not an update of the reusable baseline: every package
 # gets its own current repository state, and no work-root state is cached.
+# CachyOS CDN 会阶段性 404(数据库指向已被清理的池文件,2026-10-11 实测单
+# 镜像瞬态断过一次 build,pacman 换镜像续上)。有限重试:真冲突/真缺依赖
+# 也只多花两轮,比 CDN 瞬态直接炸 build 便宜。
+update_args=(arch-nspawn -c "$cache_dir/pacman" "$work_root/root")
 if [[ -d "$repo_dir" ]] && compgen -G "$repo_dir/*.db*" >/dev/null; then
-    arch-nspawn -c "$cache_dir/pacman" "$work_root/root" --bind="$repo_dir" pacman -Syu --noconfirm
-else
-    arch-nspawn -c "$cache_dir/pacman" "$work_root/root" pacman -Syu --noconfirm
+    update_args+=(--bind="$repo_dir")
 fi
+attempt=1
+until "${update_args[@]}" pacman -Syu --noconfirm; do
+    if ((attempt >= 3)); then
+        echo "Work-root update failed after $attempt attempts" >&2
+        exit 1
+    fi
+    printf 'Work-root update attempt %d failed (upstream mirror transient?); retrying\n' "$attempt" >&2
+    attempt=$((attempt + 1))
+    sleep $((attempt * 20))
+done
 cd "$source_dir"
 # makechrootpkg 用 ${SUDO_USER:-$USER} 决定 chroot 内的 makepkg 用户;docker
 # 容器默认两者都不设,结果是 `id -u ''` 直接炸掉源码下载(2026-10-11 实测)。

@@ -11,6 +11,12 @@ export MOCK_STATE="$tmp/state" MOCK_LOG="$tmp/commands.log"
 cat > "$tmp/bin/arch-nspawn" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+# 跳过 arch-nspawn 的选项(-c 带一个值,--bind=x 自带等号)再丢掉 chroot root,
+# 让后续 case 看到的第一个参数永远是 pacman 子命令。
+while [[ "${1:-}" == -* ]]; do
+  if [[ "$1" == -c ]]; then shift; fi
+  shift
+done
 shift # chroot root
 printf '%s\n' "$*" >> "$MOCK_LOG"
 if [[ "$1" == pacman ]]; then
