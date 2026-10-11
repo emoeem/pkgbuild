@@ -1,0 +1,11 @@
+# linuxqq is an intentional runtime requirement: these hooks target the Linux QQ
+# client even when no direct ELF NEEDED edge exists.
+linuxqq-wayland-fix-git W: Dependency included, but may not be needed ('linuxqq')
+# The helper is upstream-built; LDFLAGS are passed through make. If upstream's
+# build ignores them, this warning remains a documented hardening limitation.
+linuxqq-wayland-fix-git W: ELF file ('usr/lib/linuxqq-wayland-fix/qq-screenshot-helper') lacks FULL RELRO, check LDFLAGS.
+# Chinese documentation filenames are intentional and preserve upstream docs.
+linuxqq-wayland-fix-git W: File name usr/share/doc/linuxqq-wayland-fix/docs/原理详解.md contains non standard characters
+linuxqq-wayland-fix-git W: File name usr/share/doc/linuxqq-wayland-fix/docs/常见问题与排错.md contains non standard characters
+# zlib-ng-compat provides the zlib SONAME in the builder; PKGBUILD declares zlib.
+linuxqq-wayland-fix-git W: Dependency zlib-ng-compat detected and implicitly satisfied (libraries ['usr/lib/libz.so.1'] needed in files ['usr/lib/linuxqq-wayland-fix/qq-screenshot-helper'])

@@ -1,0 +1,5 @@
+# glibc is part of the Arch base system; libX11 is an implicit dependency of
+# libxmu. The helper scripts use /bin/sh, supplied by bash.
+xclip-git W: Dependency glibc detected and implicitly satisfied (libraries ['usr/lib/libc.so.6'] needed in files ['usr/bin/xclip'])
+xclip-git W: Dependency libx11 detected and implicitly satisfied (libraries ['usr/lib/libX11.so.6'] needed in files ['usr/bin/xclip'])
+xclip-git W: Referenced library 'sh' is an uninstalled dependency (needed in files ['usr/bin/xclip-copyfile', 'usr/bin/xclip-cutfile', 'usr/bin/xclip-pastefile'])
