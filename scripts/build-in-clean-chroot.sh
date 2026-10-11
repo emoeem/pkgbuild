@@ -107,6 +107,14 @@ export PATH=/usr/lib/ccache/bin:$PATH
 __CACHE_ENV__
         printf '%s\n' "$fingerprint" > "$baseline/FINGERPRINT"
     fi
+    # mkarchroot 之后基线必须自带 makepkg.conf(宿主侧 download_sources 会拿
+    # 副本的它当 --config);缺失说明上游包集变了,在这里炸比在
+    # makechrootpkg 里炸出一个难读的 not found 强。
+    if [[ ! -f "$baseline/root/etc/makepkg.conf" ]]; then
+        printf 'baseline %s lacks /etc/makepkg.conf; base image package set changed?\n' "$baseline_name" >&2
+        ls -la "$baseline/root/etc/" >&2 | head -30
+        exit 3
+    fi
     baseline_root="$baseline/root"
     work_parent="$cache_dir/chroot"
 fi
