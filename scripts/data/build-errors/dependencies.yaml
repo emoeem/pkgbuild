@@ -1,5 +1,20 @@
 # DependencyError: dependency resolution failed before or while building.
 rules:
+  - id: package-conflict
+    category: DependencyError
+    stage: dependencies
+    summary: The built package conflicts with a package already installed in the build environment.
+    confidence: high
+    patterns:
+      - "are in conflict"
+      - "unresolvable package conflicts detected"
+    extract:
+      conflict: '([A-Za-z0-9@._+:-]+ and [A-Za-z0-9@._+:-]+) are in conflict'
+    root_cause: "package conflict: {conflict}"
+    action:
+      kind: report
+      safe_auto_fix: none
+      retry: false
   - id: pacman-target-not-found
     category: DependencyError
     stage: dependencies

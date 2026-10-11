@@ -78,7 +78,10 @@ done
 
 selected=()
 skipped=()
-for name in "${!chosen_path[*]}"; do
+# 注意必须是 [@]：带引号的 [*] 会把所有键按 IFS 首字符拼成单个词，待测包
+# ≥2 时 name 就成了 "pkg-a pkg-b"，在 set -u 下 chosen_path[$name] 直接
+# unbound 崩溃 —— 这正是多包发布必挂、单包发布侥幸存活的原因。
+for name in "${!chosen_path[@]}"; do
     [[ -n "$name" ]] || continue
     if [[ ",${skip_list}," == *",$name,"* ]]; then
         skipped+=("$name (explicitly skipped)")

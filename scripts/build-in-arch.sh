@@ -263,6 +263,21 @@ if [[ "$package_name" == "ffmpeg-full" ]]; then
         sdl2-compat libglvnd l-smash onetbb tevent \
         tesseract-data-eng tesseract-data-osd
 fi
+# PKGBUILD 声明的 conflicts 若已被镜像提供(基础镜像随上游滚动更新,例如
+# ffmpeg 2:9.0.2 进入基础包集),yay -Bi 收尾的 pacman -U 会撞冲突事务:
+# --noconfirm 对 "Remove ...? [y/N]" 的默认答案是 N,整次安装中止、
+# 包构建成功却发布不出去。声明冲突即宣告替代,提前移除(一次性容器,
+# -Rdd 不必顾及其依赖方)。
+mapfile -t declared_conflicts < <(
+    awk -F' = ' '$1 == "conflicts" {print $2}' "$package_dir/.SRCINFO" 2>/dev/null |
+        sed 's/[<>=].*//'
+)
+for conflict in "${declared_conflicts[@]}"; do
+    if pacman -Qi -- "$conflict" >/dev/null 2>&1; then
+        printf 'Removing %s: declared in conflicts=, provided by the base image.\n' "$conflict"
+        pacman -Rdd --noconfirm -- "$conflict"
+    fi
+done
 run_build() {
     if [[ "$prepared_image" == "1" && "${CLEAN_CHROOT_BUILD:-1}" == "1" ]]; then
         bash "$workspace_dir/scripts/build-in-clean-chroot.sh" "$package_dir" "$output_dir"
@@ -355,7 +370,7 @@ if (( ${#package_files[@]} == 0 )); then
 fi
 
 if (( yay_status != 0 )); then
-    printf 'yay exited with status %d after producing package files; attempting explicit install for runtime verification.\n' "$yay_status" >&2
+    printf 'yay exited with status %d after producing package files; verification continues on the produced artifacts.\n' "$yay_status" >&2
 fi
 
 timing_begin verify

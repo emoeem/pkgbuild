@@ -413,7 +413,11 @@ def main() -> None:
         try:
             root_cause = primary.root_cause.format(**fields)
         except (KeyError, IndexError, ValueError):
-            root_cause = primary.root_cause
+            # A placeholder the extract regex could not fill (for example a
+            # conflict line whose package names do not match the pattern):
+            # keep the message readable instead of shipping a literal
+            # {dependency} template into the issue title.
+            root_cause = re.sub(r"\{[a-z_]+\}", "?", primary.root_cause)
     if not root_cause and fields:
         root_cause = ", ".join(f"{key}={value}" for key, value in sorted(fields.items()))
 
