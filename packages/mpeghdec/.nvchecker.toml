@@ -1,0 +1,5 @@
+[mpeghdec]
+source = "github"
+github = "Fraunhofer-IIS/mpeghdec"
+use_max_tag = true
+prefix = "r"

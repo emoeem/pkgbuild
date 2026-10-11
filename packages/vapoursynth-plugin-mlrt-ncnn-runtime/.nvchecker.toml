@@ -1,0 +1,5 @@
+[vapoursynth-plugin-mlrt-ncnn-runtime]
+source = "github"
+github = "AmusementClub/vs-mlrt"
+use_latest_release = true
+prefix = "v"

@@ -1,0 +1,6 @@
+[svt-jpeg-xs-git]
+source = "git"
+git = "https://github.com/OpenVisualCloud/SVT-JPEG-XS.git"
+use_commit = true
+from_pattern = '^([0-9a-f]{7})[0-9a-f]*$'
+to_pattern = '\1'
