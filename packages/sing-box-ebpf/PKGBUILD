@@ -10,9 +10,16 @@
 # 而且其 Linux 静态构建**已经带 with_ebpf** —— 该仓库的 build-stable.yml 在源码含
 # include/ebpf.go 时会为 linux/android 自动追加这个标签，例如
 #   sing-box-<ver>-linux-amd64v3-musl.tar.gz（静态、CGO+musl、另含 with_naive_outbound）
-# 本包仍选择自己编，图的是 CGO_ENABLED=0 纯 Go 静态（零运行时依赖）+ _commit 钉死源码。
-# 若改成直接封装上游二进制，需要重写 source=/sha256sums= 与 prepare()/build()；届时
-# `sing-box version` 的 Tags 行就是最直接的 with_ebpf 证据。
+#
+# 构建方式（2026-10-12 决定，方案 A「自己编」；不是待办）：
+#   source= 继续指向 pin 死的 tag，prepare() 校验检出的 _commit 与 eBPF 源码，
+#   CGO_ENABLED=0 编纯 Go 静态二进制（零运行时依赖），构建标签由本包 _tags 显式给出。
+#   已评估并放弃方案 B（直接封装上面的上游静态产物）：它是 CGO+musl，标签集由上游
+#   build-stable.yml 决定（含 with_naive_outbound），既丢 _commit 的源码锁定，也丢本包
+#   自己的编译参数，省下的只是一次 Go 构建。
+#   若将来重开这个决定，需重写 source=/sha256sums= 与 prepare()/build()；届时
+#   `sing-box version` 的 Tags 行就是最直接的 with_ebpf 证据。
+#   本段的机制由 tests/test_sing_box_ebpf_build_mode.py 守着。
 #
 # 包与官方 `sing-box` 互斥（conflicts + provides），因为两者都提供 /usr/bin/sing-box
 # 和同名 systemd 单元；两个透明代理也绝不能同时运行。
