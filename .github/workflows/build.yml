@@ -688,7 +688,10 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          bash source/scripts/verify-publish-inputs.sh incoming-packages source
+          # 第三个参数是已发布的仓库目录（fetch 步骤已建好，没有 release 时为空
+          # 目录）：用来拒绝「同 pkgver、pkgrel 没前进」的发布 —— 这种发布对
+          # 已经装了旧版本的机器不是升级，只会静默覆盖仓库里的同名版本。
+          bash source/scripts/verify-publish-inputs.sh incoming-packages source published/x86_64
 
       - name: Update repository database
         shell: bash
