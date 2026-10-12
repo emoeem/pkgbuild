@@ -13,6 +13,10 @@
 # check instead of silently orphaning the package.  Prefer `workflow` when an
 # updater exists; `manual` is a deliberate statement of staleness, not a
 # default.  See docs/build-pipeline.md.
+#
+# scripts/auto-repair.sh reads the `workflow` entries: when the pinned checksums
+# of such a package go stale, the repair hands the re-pin to that workflow
+# instead of rewriting the checksums itself.
 
 sing-box-rule-sets workflow .github/workflows/refresh-rule-sets.yml
 sing-box-ebpf workflow .github/workflows/sing-box-ebpf-update.yml

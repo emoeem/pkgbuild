@@ -8,9 +8,18 @@
 # Every attempt is appended to an audit log so it is always possible to see
 # what was changed, why, by which rule, and whether it was kept or reverted.
 #
+# A source whose checksums this repository pins itself (no .aur-url) is never
+# re-pinned here. Such a failure is handed to the update workflow named for the
+# package in config/package-updates.txt: that workflow validates the upstream
+# content, commits the new hashes and rebuilds the package, exactly as it
+# already does on its own schedule. The repair therefore only decides *when*
+# the re-pin happens; it changes no file in this workspace, and the report
+# records the attempt with status "dispatched" instead of "applied".
+#
 # Levels (AUTO_FIX_LEVEL is the maximum this run may apply):
 #   0  report only, never touch a file
-#   1  safe housekeeping: .SRCINFO regeneration, cache cleanup
+#   1  safe housekeeping: .SRCINFO regeneration, cache cleanup, handing a stale
+#      repository-managed pin to the update workflow that owns it (writes nothing)
 #   2  validated metadata repair: checksum refresh, pkgrel bump
 #   3  repairs that need a rebuild + validation to be trusted
 #   4  forbidden: only a suggested patch is written, never applied
@@ -83,6 +92,48 @@ if [[ ! -f "$package_dir/PKGBUILD" ]]; then
     exit 2
 fi
 
+# config/package-updates.txt maps each package to the workflow that owns its
+# upstream content ("<package> workflow <path>"). A repair uses that entry to
+# hand a stale repository-managed pin over instead of rewriting it itself.
+package_refresh_workflow() {
+    local registry="$root/config/package-updates.txt" name kind path
+    [[ -f "$registry" ]] || return 1
+    while read -r name kind path _; do
+        if [[ -z "$name" || "$name" == \#* ]]; then
+            continue
+        fi
+        if [[ "$name" != "$package_name" || "$kind" != "workflow" ]]; then
+            continue
+        fi
+        # A path that is not a workflow in this repository is not something to
+        # dispatch: refuse rather than guess.
+        [[ "$path" =~ ^\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$ ]] || return 1
+        printf '%s\n' "$path"
+        return 0
+    done <"$registry"
+    return 1
+}
+
+# True while the newest run of the owning workflow is still queued or running.
+# Unreadable state (no gh, no token, no repository, API error) is *not* treated
+# as "in flight": a duplicate dispatch is harmless because the refresh workflow
+# is idempotent, while refusing to hand off would leave the pin stale.
+refresh_workflow_in_flight() {
+    local workflow="$1" state=""
+    if ! command -v gh >/dev/null 2>&1 ||
+        [[ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" || -z "${GITHUB_REPOSITORY:-}" ]]; then
+        printf 'cannot check recent runs of %s (no gh or no repository token); dispatching anyway\n' \
+            "$workflow" >&2
+        return 1
+    fi
+    if ! state="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" \
+        --limit 1 --json status --jq '.[0].status // empty' 2>/dev/null)"; then
+        printf 'cannot read recent runs of %s; dispatching anyway\n' "$workflow" >&2
+        return 1
+    fi
+    [[ -n "$state" && "$state" != "completed" ]]
+}
+
 mapfile -t verdict < <(
     python3 - "$failure_file" <<'PY'
 import json, sys
@@ -125,6 +176,28 @@ case "$category" in
                     strategy="refresh_checksum"
                     strategy_level=2
                     strategy_reason="an AUR-tracked source changed upstream; refresh the declared checksums"
+                elif refresh_workflow="$(package_refresh_workflow)"; then
+                    # This package pins upstream content that the repository
+                    # validates itself. Refreshing the checksums here would mean
+                    # accepting new upstream content on the strength of nothing
+                    # but a failed build, so hand the re-pin to the workflow
+                    # that owns the source instead: it checks the content,
+                    # commits the new hashes and rebuilds the package, and it is
+                    # auditable in the same way its scheduled runs are.
+                    #
+                    # Level 1 on purpose: this strategy writes no file in this
+                    # workspace at all. It only decides *when* the unattended
+                    # workflow the schedule already runs gets to re-pin, so it
+                    # needs no more authority than housekeeping -- which also
+                    # keeps it working at the conservative AUTO_FIX_LEVEL=1 the
+                    # CI sets today.
+                    if refresh_workflow_in_flight "$refresh_workflow"; then
+                        strategy_reason="a run of $refresh_workflow is already in flight; letting it re-pin instead of dispatching a second one"
+                    else
+                        strategy="dispatch_refresh_workflow"
+                        strategy_level=1
+                        strategy_reason="the pinned checksums of a repository-managed source went stale; handing the re-pin to $refresh_workflow, which validates the upstream content, commits the new hashes and rebuilds"
+                    fi
                 else
                     strategy_reason="checksum mismatch on a repository-managed source: refusing to accept new upstream content automatically"
                 fi
@@ -368,6 +441,24 @@ PY
                 detail="no CACHE_DIR configured; nothing to clear"
             fi
             ;;
+        dispatch_refresh_workflow)
+            local repo="${GITHUB_REPOSITORY:-}"
+            if [[ -z "$repo" ]]; then
+                printf 'GITHUB_REPOSITORY is unset; cannot dispatch %s\n' "$refresh_workflow" >&2
+                return 1
+            fi
+            if ! command -v gh >/dev/null 2>&1; then
+                printf 'gh is required to dispatch %s\n' "$refresh_workflow" >&2
+                return 1
+            fi
+            printf 'gh workflow run %s --repo %s\n' "$refresh_workflow" "$repo" \
+                >>"$record_dir/commands.txt"
+            if ! gh workflow run "$refresh_workflow" --repo "$repo"; then
+                printf 'dispatching %s failed\n' "$refresh_workflow" >&2
+                return 1
+            fi
+            detail="dispatched $refresh_workflow: it re-pins the stale checksums after validating the upstream content, commits them and rebuilds $package_name"
+            ;;
         reduce_parallelism)
             printf 'MAKE_JOBS is owned by CI; this repair only recommends lowering it\n' >&2
             return 1
@@ -418,6 +509,17 @@ json.dump(
     indent=2,
 )
 PY
+
+if [[ "$strategy" == "dispatch_refresh_workflow" ]]; then
+    # Nothing in this workspace changed, so there is nothing to validate or to
+    # commit here: the dispatched workflow re-pins the checksums and triggers
+    # the rebuild itself. Reporting "applied" would make the caller commit an
+    # empty repair and push a misleading "automatic repair" commit, so this
+    # attempt is reported as "dispatched" instead.
+    txn_commit
+    emit_record "dispatched" "$detail" "not-needed" "not-needed"
+    exit 0
+fi
 
 if run_validation; then
     validation_status="pass"

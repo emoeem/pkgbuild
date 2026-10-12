@@ -101,12 +101,21 @@ ABI 是否不匹配、建议动作、允许的自动修复等级与置信度。
 | Level | 允许的内容 |
 | --- | --- |
 | 0 | 只报告，不碰文件 |
-| 1 | `.SRCINFO` 重新生成、缓存 / 临时目录清理 |
+| 1 | `.SRCINFO` 重新生成、缓存 / 临时目录清理；把陈旧的 repository-managed 校验和交棒给 `config/package-updates.txt` 指定的更新工作流（不写任何文件） |
 | 2 | 校验和刷新（仅 `.aur-url` 跟踪的包）、pkgrel bump |
 | 3 | 需要重建 + 验证才能信任的修复（SONAME 漂移重建） |
 | 4 | 禁止自动提交，只输出建议补丁 |
 
-`AUTO_FIX_LEVEL` 是上限（默认 2，CI 通过 repository variable 调整）。验证失败会
+仓库自己钉住校验和的源（没有 `.aur-url`）不会被本脚本重钉：这类 checksum 失效会被
+交棒给该包在 `config/package-updates.txt` 里登记的更新工作流（例如 `sing-box-rule-sets`
+→ `refresh-rule-sets.yml`）。那支工作流先校验上游内容，再提交可审计的新哈希并触发重建，
+所以 repair 只决定「何时」重钉，不代替它接受上游内容。交棒不写任何文件，因此列在
+level 1，记录状态是 `dispatched` 而非 `applied`，`build.yml` 不会为它产生提交或推送；
+若该工作流已有 queued / in_progress 的 run，则不重复派发。
+
+`AUTO_FIX_LEVEL` 是上限：脚本自身默认 2，但 CI 只在设置了 repository variable
+`AUTO_FIX_LEVEL` 时才抬高，否则传 `'1'`（`gh variable list` 目前为空），因此 level 2
+的修复在 CI 里目前是惰性的。验证失败会
 **逐字节回滚**工作区：`tests/test_auto_repair.sh` 用 sha256 断言「失败的修复不会留下
 半改的 PKGBUILD」。`scripts/repair-budget.sh` 用 `state/repair-history.jsonl` 限制
 「build → fix → build」循环（默认 24 小时窗口内最多 2 次），到顶即交给人工。

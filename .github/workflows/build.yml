@@ -514,6 +514,10 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write
+      # Only the repair step needs this: it dispatches the update workflow that
+      # owns a stale repository-managed source, and checks whether one of that
+      # workflow's runs is still in flight. Nothing else here uses the API.
+      actions: write
     concurrency:
       group: auto-repair
       cancel-in-progress: false
@@ -534,9 +538,12 @@ jobs:
 
       - name: Apply safe automatic repairs
         # The build already failed, so this step never turns a green run red.
-        # A repair that is applied is committed (without [skip ci]) and the
-        # resulting push triggers a fresh build; scripts/repair-budget.sh stops
-        # the build -> fix -> build spiral after MAX_REPAIR_ATTEMPTS.
+        # Two outcomes exist. A repair that is applied is committed (without
+        # [skip ci]) and the resulting push triggers a fresh build;
+        # scripts/repair-budget.sh stops the build -> fix -> build spiral after
+        # MAX_REPAIR_ATTEMPTS. A repair that is *dispatched* changes nothing
+        # here: it hands a stale repository-managed checksum pin to the update
+        # workflow that owns that source, so there is nothing to commit.
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -548,6 +555,7 @@ jobs:
           mkdir -p state
           touch state/repair-history.jsonl
           applied=()
+          handed_off=()
           for report in reports/*/; do
             failure="$report/failure.json"
             [[ -f "$failure" ]] || continue
@@ -577,12 +585,27 @@ jobs:
             status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report/repair-applied.json")"
             if [[ "$status" == "applied" ]]; then
               applied+=("$package")
+            elif [[ "$status" == "dispatched" ]]; then
+              # The repair changed nothing locally: it handed the stale pin to
+              # the update workflow that owns this source, which re-pins the
+              # checksums and triggers the rebuild on its own.
+              handed_off+=("$package")
             fi
             cat "$report/repair-applied.json"
             echo "::endgroup::"
           done
+          if (( ${#handed_off[@]} > 0 )); then
+            {
+              echo "## Repairs handed off"
+              printf -- '- %s\n' "${handed_off[@]}"
+              echo
+              echo "The owning update workflow re-pins the stale checksums and triggers the rebuild; nothing was changed or committed here."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           if (( ${#applied[@]} == 0 )); then
-            echo "No automatic repair was applied." >> "$GITHUB_STEP_SUMMARY"
+            if (( ${#handed_off[@]} == 0 )); then
+              echo "No automatic repair was applied." >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
           {

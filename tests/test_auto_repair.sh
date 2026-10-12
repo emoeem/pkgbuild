@@ -66,7 +66,7 @@ write_failure() {
 EOF
 }
 
-printf '%s\n' '1/6: dry run reports the strategy without modifying the workspace'
+printf '%s\n' '1/8: dry run reports the strategy without modifying the workspace'
 fixture="$work/repo"
 make_fixture "$fixture"
 write_failure "$work/failure.json" PKGBuildError srcinfo-stale level1
@@ -77,7 +77,7 @@ after="$(sha256sum "$fixture/packages/demo/.SRCINFO" | awk '{print $1}')"
 [[ "$before" == "$after" ]] || fail 'dry run modified .SRCINFO'
 grep -q '"status": "dry-run"' "$work/record.json" || fail 'dry run did not report status dry-run'
 
-printf '%s\n' '2/6: a repair above AUTO_FIX_LEVEL is blocked instead of applied'
+printf '%s\n' '2/8: a repair above AUTO_FIX_LEVEL is blocked instead of applied'
 bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/failure.json" \
     --root "$fixture" --level 0 --apply --json --out "$work/record.json" >/dev/null ||
     fail 'level-gated repair exited non-zero'
@@ -85,7 +85,7 @@ grep -q '"status": "blocked-by-level"' "$work/record.json" || fail 'level gate d
 after="$(sha256sum "$fixture/packages/demo/.SRCINFO" | awk '{print $1}')"
 [[ "$before" == "$after" ]] || fail 'blocked repair modified .SRCINFO'
 
-printf '%s\n' '3/6: regeneration repair fixes a stale .SRCINFO in place'
+printf '%s\n' '3/8: regeneration repair fixes a stale .SRCINFO in place'
 bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/failure.json" \
     --root "$fixture" --level 2 --apply --json --out "$work/record.json" >/dev/null ||
     fail 'regeneration repair exited non-zero'
@@ -94,7 +94,7 @@ grep -qE '^	pkgrel = 1$' "$fixture/packages/demo/.SRCINFO" || fail 'pkgrel was n
 grep -q '"validation": "pass"' "$work/record.json" || fail 'applied repair did not pass validation'
 grep -q '"diff":' "$work/record.json" || fail 'applied repair recorded no diff'
 
-printf '%s\n' '4/6: a fix whose validation fails is rolled back byte for byte'
+printf '%s\n' '4/8: a fix whose validation fails is rolled back byte for byte'
 make_fixture "$fixture"
 before="$(sha256sum "$fixture/packages/demo/.SRCINFO" | awk '{print $1}')"
 if bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/failure.json" \
@@ -107,14 +107,14 @@ after="$(sha256sum "$fixture/packages/demo/.SRCINFO" | awk '{print $1}')"
 grep -q '"status": "rolled-back"' "$work/record.json" || fail 'rollback was not recorded'
 grep -q '"rollback": "restored"' "$work/record.json" || fail 'rollback did not verify restoration'
 
-printf '%s\n' '5/6: the repair budget stops further attempts'
+printf '%s\n' '5/8: the repair budget stops further attempts'
 make_fixture "$fixture"
 bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/failure.json" \
     --root "$fixture" --level 2 --apply --max-attempts 1 --attempts-used 1 \
     --json --out "$work/record.json" >/dev/null || fail 'budget check exited non-zero'
 grep -q '"status": "budget-exhausted"' "$work/record.json" || fail 'budget was not enforced'
 
-printf '%s\n' '6/6: an unknown failure is reported, never silently edited'
+printf '%s\n' '6/8: an unknown failure is reported, never silently edited'
 printf '%s\n' '6a: unknown category maps to report-only'
 write_failure "$work/unknown.json" CompilerError unknown-rule none
 bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/unknown.json" \
@@ -128,5 +128,76 @@ bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname.json"
     fail 'soname repair at level 2 exited non-zero'
 grep -q '"status": "blocked-by-level"' "$work/record.json" ||
     fail 'level 3 SONAME repair was not blocked at AUTO_FIX_LEVEL=2'
+
+printf '%s\n' '7/8: a stale repository-managed pin is handed to its update workflow'
+make_fixture "$fixture"
+mkdir -p "$fixture/config"
+cat >"$fixture/config/package-updates.txt" <<'EOF'
+# <package> <kind> <target>
+demo workflow .github/workflows/refresh-demo.yml
+EOF
+write_failure "$work/checksum.json" SourceError checksum-mismatch level2
+mkdir -p "$work/bin"
+cat >"$work/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\n' "$*" >>"$MOCK_GH_LOG"
+if [[ "${1:-}" == "run" && "${2:-}" == "list" ]]; then
+    printf '%s\n' "${MOCK_GH_RUN_STATUS:-completed}"
+    exit 0
+fi
+if [[ "${1:-}" == "workflow" && "${2:-}" == "run" ]]; then
+    exit 0
+fi
+printf 'unexpected gh call: %s\n' "$*" >&2
+exit 1
+MOCK
+chmod +x "$work/bin/gh"
+export MOCK_GH_LOG="$work/gh.log" GITHUB_REPOSITORY="example/repo" GH_TOKEN="mock"
+: >"$MOCK_GH_LOG"
+before="$(sha256sum "$fixture/packages/demo/PKGBUILD" | awk '{print $1}')"
+PATH="$work/bin:$PATH" bash "$root/scripts/auto-repair.sh" --package demo \
+    --failure "$work/checksum.json" --root "$fixture" --level 1 --apply \
+    --json --out "$work/record.json" >/dev/null || fail 'hand-off repair exited non-zero'
+after="$(sha256sum "$fixture/packages/demo/PKGBUILD" | awk '{print $1}')"
+[[ "$before" == "$after" ]] || fail 'hand-off repair modified the PKGBUILD'
+grep -q '"status": "dispatched"' "$work/record.json" ||
+    fail 'hand-off was not reported as dispatched'
+grep -q '"strategy": "dispatch_refresh_workflow"' "$work/record.json" ||
+    fail 'hand-off did not record the dispatch strategy'
+grep -q '"validation": "not-needed"' "$work/record.json" ||
+    fail 'hand-off claimed a workspace validation it never ran'
+grep -q 'workflow run .github/workflows/refresh-demo.yml' "$MOCK_GH_LOG" ||
+    fail 'the owning update workflow was not dispatched'
+
+printf '%s\n' '8/8: an unowned or already-running source is never dispatched twice'
+printf '%s\n' '8a: a repository-managed source with no registry entry stays report-only'
+make_fixture "$fixture"
+: >"$MOCK_GH_LOG"
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/checksum.json" \
+    --root "$fixture" --level 1 --apply --json --out "$work/record.json" >/dev/null ||
+    fail 'refusal path exited non-zero'
+grep -q '"status": "report-only"' "$work/record.json" || fail 'unowned source was not report-only'
+grep -q 'refusing to accept new upstream content automatically' "$work/record.json" ||
+    fail 'the refusal reason changed'
+if grep -q 'workflow run' "$MOCK_GH_LOG"; then
+    fail 'a source without an owning workflow was dispatched'
+fi
+printf '%s\n' '8b: an in-flight refresh run suppresses a second dispatch'
+make_fixture "$fixture"
+mkdir -p "$fixture/config"
+cat >"$fixture/config/package-updates.txt" <<'EOF'
+demo workflow .github/workflows/refresh-demo.yml
+EOF
+: >"$MOCK_GH_LOG"
+MOCK_GH_RUN_STATUS=in_progress PATH="$work/bin:$PATH" bash "$root/scripts/auto-repair.sh" \
+    --package demo --failure "$work/checksum.json" --root "$fixture" --level 1 --apply \
+    --json --out "$work/record.json" >/dev/null || fail 'in-flight guard exited non-zero'
+grep -q '"status": "report-only"' "$work/record.json" ||
+    fail 'an in-flight refresh run did not stop the dispatch'
+grep -q 'already in flight' "$work/record.json" || fail 'the in-flight reason is missing'
+if grep -q 'workflow run' "$MOCK_GH_LOG"; then
+    fail 'a second refresh run was dispatched while one was in flight'
+fi
 
 printf '%s\n' 'All auto-repair tests passed.'
