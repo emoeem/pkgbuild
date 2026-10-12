@@ -30,8 +30,25 @@ for package_file in "$incoming"/*/*.pkg.tar.zst; do
     pkginfo="$(bsdtar -xOf "$package_file" .PKGINFO)"
     pkgbase="$(printf '%s\n' "$pkginfo" | awk -F ' = ' '$1 == "pkgbase" {print $2; exit}')"
     pkgname="$(printf '%s\n' "$pkginfo" | awk -F ' = ' '$1 == "pkgname" {print $2; exit}')"
-    built_ver="$(printf '%s\n' "$pkginfo" | awk -F ' = ' '$1 == "pkgver" {print $2; exit}')"
-    built_rel="$(printf '%s\n' "$pkginfo" | awk -F ' = ' '$1 == "pkgrel" {print $2; exit}')"
+    # .PKGINFO carries the whole `[epoch:]pkgver-pkgrel` in one pkgver field
+    # (`pkgver = 9.0.2-2.6`): makepkg writes no pkgrel line at all. Reading a
+    # pkgrel field that never exists left built_rel empty, and every package then
+    # looked like "source pkgver already differs", so a bumped pkgrel was never
+    # written back — ffmpeg-full, mpeghdec, vapoursynth-plugin-mlrt-ncnn-runtime
+    # and xclip-git stayed a pkgrel behind the published repository forever.
+    built_full="$(printf '%s\n' "$pkginfo" | awk -F ' = ' '$1 == "pkgver" {print $2; exit}')"
+    if [[ "$built_full" == *-* ]]; then
+        built_ver="${built_full%-*}"
+        built_rel="${built_full##*-}"
+    else
+        built_ver="$built_full"
+        built_rel=""
+    fi
+    if [[ -z "$built_rel" ]]; then
+        printf 'SKIP %s: built version %s carries no pkgrel\n' \
+            "${pkgbase:-$pkgname}" "$built_full" >&2
+        continue
+    fi
 
     directory="${dir_of[${pkgbase:-$pkgname}]:-}"
     if [[ -z "$directory" ]]; then
