@@ -1,0 +1,13 @@
+# These optional FFmpeg filters/backends use dlopen/runtime plugin loading; namcap's
+# direct ELF NEEDED scan cannot see them. Keep these installed so the advertised
+# full feature set works without missing runtime plugins.
+ffmpeg-full W: Dependency included, but may not be needed ('avisynthplus')
+ffmpeg-full W: Dependency included, but may not be needed ('frei0r-plugins')
+ffmpeg-full W: Dependency included, but may not be needed ('ladspa')
+ffmpeg-full W: Dependency included, but may not be needed ('vapoursynth')
+ffmpeg-full W: Dependency included, but may not be needed ('vulkan-icd-loader')
+# flite and zlib are reached via dynamic loading / dependency libraries rather than
+# direct NEEDED entries in the listed FFmpeg objects.
+ffmpeg-full W: Unused shared library '/usr/lib/libflite_cmulex.so.1' by file ('usr/lib/libavfilter.so.12.1.102')
+ffmpeg-full W: Unused shared library '/usr/lib/libflite_usenglish.so.1' by file ('usr/lib/libavfilter.so.12.1.102')
+ffmpeg-full W: Unused shared library '/usr/lib/libz.so.1' by file ('usr/lib/libavutil.so.61.1.102')

@@ -63,18 +63,17 @@ fi
 printf 'Refreshing package databases...\n'
 pacman -Syu --noconfirm >/dev/null
 
-mapfile -t package_files < <(find "$incoming_dir" -type f -name '*.pkg.tar.zst' | sort)
-if (( ${#package_files[@]} == 0 )); then
-    printf 'no incoming package files found under %s\n' "$incoming_dir" >&2
+mapfile -t selected_package_records < <(bash "$workspace_dir/scripts/select-incoming-packages.sh" "$incoming_dir")
+if (( ${#selected_package_records[@]} == 0 )); then
+    printf 'no valid incoming package files found under %s\n' "$incoming_dir" >&2
     exit 1
 fi
 
-# Newest version wins when the same package name appears twice.
 declare -A chosen_path=()
-for package_file in "${package_files[@]}"; do
-    info="$(bsdtar -xOf "$package_file" .PKGINFO 2>/dev/null || true)"
-    name="$(awk -F ' = ' '$1 == "pkgname" { print $2; exit }' <<<"$info")"
-    [[ -n "$name" ]] || continue
+for record in "${selected_package_records[@]}"; do
+    name="${record%%$'\t'*}"
+    package_file="${record#*$'\t'}"
+    [[ -n "$name" && -f "$package_file" ]] || continue
     chosen_path["$name"]="$package_file"
 done
 

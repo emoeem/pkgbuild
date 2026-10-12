@@ -6,9 +6,9 @@
 # happily build against the *previous* version of a library that is being
 # rebuilt in the same run (ffmpeg-full links mpeghdec / quirc / svt-jpeg-xs-git).
 #
-# Fail-open by design: if the API is unavailable the wait is skipped with a
-# warning, because blocking a build on a monitoring API would be worse than the
-# ordering hazard it prevents.
+# API outages are fail-closed for consumers listed in
+# config/critical-build-dependencies.txt; non-critical consumers retain the
+# warning-and-continue behavior.
 #
 # A prerequisite that has no job in this run is skipped as well: it is not being
 # rebuilt, so the published version is what the builder links against.
@@ -39,6 +39,18 @@ done
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd -- "${script_dir}/.." && pwd)"
+critical_file="${CRITICAL_BUILD_DEPENDENCIES_FILE:-${root}/config/critical-build-dependencies.txt}"
+is_critical=0
+if [[ -f "$critical_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%%#*}"
+        line="${line//[[:space:]]/}"
+        if [[ -n "$line" && "$line" == "$package_name" ]]; then
+            is_critical=1
+            break
+        fi
+    done < "$critical_file"
+fi
 
 prerequisites="$(python3 "$root/scripts/build-dag.py" --prerequisites-for "$package_name")"
 if [[ "$prerequisites" == "[]" || -z "$prerequisites" ]]; then
@@ -57,7 +69,11 @@ pending=()
 while (( SECONDS < deadline )); do
     if ! jobs_json="$(timeout 60 gh api \
         "repos/${repository}/actions/runs/${run_id}/jobs?per_page=100" 2>/dev/null)"; then
-        printf 'WARNING: could not read job status from the GitHub API; skipping the ordering wait.\n' >&2
+        if (( is_critical )); then
+            printf 'ERROR: GitHub API unavailable; refusing to build critical package %s without dependency ordering.\n' "$package_name" >&2
+            exit 1
+        fi
+        printf 'WARNING: could not read job status from the GitHub API; skipping the ordering wait for non-critical package %s.\n' "$package_name" >&2
         exit 0
     fi
 

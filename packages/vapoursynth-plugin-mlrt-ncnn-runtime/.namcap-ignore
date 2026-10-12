@@ -1,0 +1,22 @@
+# The Linux NCNN binary is an upstream-provided prebuilt artifact. FULL RELRO
+# cannot be retrofitted by this PKGBUILD; request a hardened upstream build.
+vapoursynth-plugin-mlrt-ncnn-runtime W: ELF file ('usr/lib/python3.14/site-packages/vapoursynth/plugins/libvsncnn.so') lacks FULL RELRO, check LDFLAGS.
+# These runtime/base dependencies and optional Python conversion imports are not
+# reliably inferred from ELF NEEDED entries. Conversion-only imports are not
+# required for normal NCNN inference; keep them documented until upstream splits extras.
+vapoursynth-plugin-mlrt-ncnn-runtime W: Dependency glibc detected and implicitly satisfied (libraries ['usr/lib/ld-linux-x86-64.so.2', 'usr/lib/libc.so.6', 'usr/lib/libm.so.6', 'usr/lib/libmvec.so.1'] needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/libvsncnn.so'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Dependency libgcc detected and implicitly satisfied (libraries ['usr/lib/libgcc_s.so.1'] needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/libvsncnn.so'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Dependency libgomp detected and implicitly satisfied (libraries ['usr/lib/libgomp.so.1'] needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/libvsncnn.so'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Dependency libstdc++ detected and implicitly satisfied (libraries ['usr/lib/libstdc++.so.6'] needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/libvsncnn.so'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Dependency python detected and implicitly satisfied (python modules ['copy', 'dataclasses.dataclass', 'dataclasses.field', 'enum', 'fractions.Fraction', 'functools.partial', 'logging', 'math', 'os', 'os.path', 'platform', 'subprocess', 'sys', 'tempfile', 'time', 'typing', 'warnings', 'zlib'] needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/vsmlrt.py'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Dependency included, but may not be needed ('ncnn')
+vapoursynth-plugin-mlrt-ncnn-runtime W: Dependency included, but may not be needed ('onnx')
+vapoursynth-plugin-mlrt-ncnn-runtime W: Dependency included, but may not be needed ('protobuf')
+vapoursynth-plugin-mlrt-ncnn-runtime W: Referenced python module 'modelopt.onnx.autocast.configure_logging' is an uninstalled dependency (needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/vsmlrt.py'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Referenced python module 'modelopt.onnx.autocast.convert_to_f16' is an uninstalled dependency (needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/vsmlrt.py'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Referenced python module 'numpy' is an uninstalled dependency (needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/vsmlrt.py'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Referenced python module 'onnx' is an uninstalled dependency (needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/vsmlrt.py'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Referenced python module 'onnx.numpy_helper' is an uninstalled dependency (needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/vsmlrt.py'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Referenced python module 'onnx.numpy_helper.from_array' is an uninstalled dependency (needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/vsmlrt.py'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Referenced python module 'onnx.numpy_helper.to_array' is an uninstalled dependency (needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/vsmlrt.py'])
+vapoursynth-plugin-mlrt-ncnn-runtime W: Referenced python module 'onnxconverter_common.float16.convert_float_to_float16' is an uninstalled dependency (needed in files ['usr/lib/python3.14/site-packages/vapoursynth/plugins/vsmlrt.py'])

@@ -53,6 +53,7 @@ cd "$root"
 checks=(
     "package-manifest-policy"
     "package-manifest-tests"
+    "package-count"
     "select-packages"
     "elf-soname"
     "rebuild-triggers"
@@ -81,6 +82,9 @@ run_check() {
             ;;
         package-manifest-tests)
             python3 tests/test_package_manifests.py
+            ;;
+        package-count)
+            bash scripts/count-packages.sh
             ;;
         select-packages)
             python3 tests/test_select_packages.py
