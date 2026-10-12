@@ -138,6 +138,28 @@ else
     record WARN ccache 'ccache not installed; C/C++ rebuilds will not hit a compiler cache'
 fi
 
+# --- legacy host state ------------------------------------------------------
+# 11d8cde switched the repository to a rolling GitHub Release and deleted the
+# local-snapshot client's installer, but hosts that ran the old installer keep
+# /usr/local/bin/emoeem-update and a six-hourly timer. Those units fail with
+# `Git repository not found: /var/lib/emoeem-repo` and hold a permanent entry in
+# `systemctl --failed`, which hides real boot problems. Not a build blocker, so
+# WARN rather than FAIL.
+legacy_artifacts=()
+for path in /usr/local/bin/emoeem-update \
+            /etc/emoeem-repo.conf \
+            /etc/systemd/system/emoeem-repo-update.service \
+            /etc/systemd/system/emoeem-repo-update.timer; do
+    if [[ -e "$path" ]]; then
+        legacy_artifacts+=("$path")
+    fi
+done
+if (( ${#legacy_artifacts[@]} == 0 )); then
+    record PASS 'Legacy repo update' 'no leftover emoeem-repo-update artifact'
+else
+    record WARN 'Legacy repo update' "${#legacy_artifacts[@]} leftover path(s) from the removed local-snapshot client; run scripts/remove-legacy-repo-update.sh --apply as root"
+fi
+
 # --- repository state -------------------------------------------------------
 if [[ -n "$repository_dir" ]]; then
     if [[ -d "$repository_dir" ]]; then
