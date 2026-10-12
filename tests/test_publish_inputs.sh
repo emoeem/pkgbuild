@@ -57,6 +57,25 @@ fi
 grep -q 'Publication mismatch for linuxqq-wayland-fix-git' <<<"$output"
 echo 'ok: bare rN.<hash> with mismatched pkgrel is rejected'
 
+# A VCS package whose pkgrel was bumped on purpose (ABI rebuild) still ships
+# pkgrel 1: makepkg resets pkgrel the moment pkgver() resolves a new version
+# (`==> Updated version: linuxqq-wayland-fix-git r119.c86286f-1` from a source
+# pkgrel of 2, run 38196580120). That reset must not block publication.
+rm -f "$tmp/incoming"/*
+make_case linuxqq-wayland-fix-git r111.01bdc03 2 r119.c86286f-1 yes
+output="$(run_case)"
+grep -q 'Accepted resolved git pkgver for linuxqq-wayland-fix-git' <<<"$output"
+echo 'ok: makepkg pkgrel reset to 1 is accepted for a bumped VCS package'
+
+rm -f "$tmp/incoming"/*
+make_case linuxqq-wayland-fix-git r111.01bdc03 2 r119.c86286f-3 yes
+if output="$(run_case 2>&1)"; then
+    echo 'expected an unexpected VCS pkgrel to fail' >&2
+    exit 1
+fi
+grep -q 'Publication mismatch for linuxqq-wayland-fix-git' <<<"$output"
+echo 'ok: a VCS pkgrel that is neither the source pkgrel nor 1 is rejected'
+
 # A regular package still requires an exact source version (unless pkgrel is intentionally bumped).
 rm -f "$tmp/incoming"/*
 make_case stable-demo 1.0 1 1.0-1 no

@@ -42,9 +42,19 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
         template_base="${template_ver%%.r[0-9]*.g*}"
         actual_ver="${actual%-*}"
         actual_rel="${actual##*-}"
+        # makepkg resets pkgrel to 1 the moment pkgver() resolves a new version
+        # (`==> Updated version: linuxqq-wayland-fix-git r119.c86286f-1` from a
+        # source pkgrel of 2), so a deliberately bumped pkgrel on a VCS package
+        # cannot survive a refreshed pkgver. The resolved pkgver is the forward
+        # move here; the artifact pkgrel only has to be the source pkgrel or
+        # makepkg's reset to 1.
+        pkgrel_matches=no
+        if [[ "$actual_rel" == "$pkgrel" || "$actual_rel" == 1 ]]; then
+            pkgrel_matches=yes
+        fi
         resolved_suffix=""
         if grep -qE '^pkgver\(\)[[:space:]]*\{' "${root}/packages/${name}/PKGBUILD" \
-            && [[ "$actual_rel" == "$pkgrel" ]]; then
+            && [[ "$pkgrel_matches" == yes ]]; then
             if [[ "$template_base" != "$template_ver" && "$actual_ver" == "$template_base".r* ]]; then
                 suffix="${actual_ver#"$template_base".r}"
                 if [[ "$suffix" =~ ^[0-9]+\.g[0-9a-f]+$ ]]; then
