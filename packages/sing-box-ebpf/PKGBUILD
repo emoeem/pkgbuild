@@ -2,16 +2,25 @@
 #
 # sing-box + 实验性 eBPF 入站（reF1nd 分支）
 # ==========================================
-# 为什么需要自建包：`"type": "ebpf"` 入站**只存在于 reF1nd/sing-box 分支**，
-# 上游 SagerNet/sing-box 没有这个功能，而且必须带 `with_ebpf` 编译标签才会编进去。
-# 该分支在 GitHub 上**没有任何 release 产物**（只有 tag），所以二进制只能自己编 ——
-# 这个包就是把「自编」固化成 pacman 可管理、可回滚的一步。
+# 为什么需要这个包：`"type": "ebpf"` 入站只存在于 reF1nd/sing-box 分支，上游
+# SagerNet/sing-box 没有这个功能，官方仓库的 `sing-box` 包自然也不含它。
+#
+# 上游发布物在哪：源码 tag 在 reF1nd/sing-box，**release 产物在另一个仓库**
+#   https://github.com/reF1nd/sing-box-releases/releases/tag/v1.14.3-reF1nd
+# 而且其 Linux 静态构建**已经带 with_ebpf** —— 该仓库的 build-stable.yml 在源码含
+# include/ebpf.go 时会为 linux/android 自动追加这个标签，例如
+#   sing-box-<ver>-linux-amd64v3-musl.tar.gz（静态、CGO+musl、另含 with_naive_outbound）
+# 本包仍选择自己编，图的是 CGO_ENABLED=0 纯 Go 静态（零运行时依赖）+ _commit 钉死源码。
+# 若改成直接封装上游二进制，需要重写 source=/sha256sums= 与 prepare()/build()；届时
+# `sing-box version` 的 Tags 行就是最直接的 with_ebpf 证据。
 #
 # 包与官方 `sing-box` 互斥（conflicts + provides），因为两者都提供 /usr/bin/sing-box
 # 和同名 systemd 单元；两个透明代理也绝不能同时运行。
 #
-# 升级：.github/workflows/sing-box-ebpf-update.yml 每 6 小时检查 reF1nd 发布仓库的稳定版元数据，
-# 验证 tag/commit 与 eBPF 入站源码后自动创建更新 PR；必须通过正常构建和 clean-chroot 验收后再合并。
+# 升级：.github/workflows/sing-box-ebpf-update.yml 每 6 小时检查 reF1nd 的
+# stable-build-info.json，校验 tag/commit 与 eBPF 入站源码、用 makepkg 校验 .SRCINFO、
+# 在 builder 里构建并运行时校验候选包，全部通过后自动提交 main 并请求 build.yml
+# 重建发布（无需人工合并）。
 # 手动维护时仍需同步修改 _tag、_commit、pkgver/pkgrel，并重新生成 .SRCINFO。
 
 _tag=v1.14.3-reF1nd
@@ -48,7 +57,8 @@ source=("git+https://github.com/reF1nd/sing-box.git#tag=${_tag}")
 sha256sums=('SKIP')
 
 # 构建标签 = 该 tag 的 release/DEFAULT_BUILD_TAGS，去掉 with_naive_outbound（Linux + CGO_ENABLED=0
-# 下编不过：cronet-go/lib/linux_amd64 无可用文件），再加上本包存在的理由 with_ebpf。
+# 下编不过：cronet-go/lib/linux_amd64 无可用文件），再加上 eBPF 入站所需的 with_ebpf
+# （上游 release 产物也会自动追加这个标签；这里显式列出，不依赖它）。
 _tags=(
     with_gvisor
     with_quic

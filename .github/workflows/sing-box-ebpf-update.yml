@@ -1,28 +1,49 @@
 name: Track reF1nd sing-box stable releases
 
+# reF1nd 的 release 产物发在 reF1nd/sing-box-releases（不在源码仓库），其 Linux 静态
+# 构建其实已经带 with_ebpf；本仓库的 sing-box-ebpf 目前仍选择自己编（CGO_ENABLED=0
+# 纯 Go 静态 + _commit 钉死源码），所以一次更新 = 换 tag/commit 后重新构建。
+# 这里每 6 小时比对 reF1nd 的 stable-build-info.json，三道闸门全部通过才更新 main：
+#   1. 校验 tag/commit 与 eBPF 入站源码（scripts/update-sing-box-ebpf.py）
+#   2. 在 builder 里用 makepkg 校验 PKGBUILD 与 .SRCINFO 一致（scripts/check-package.sh）
+#   3. 先构建候选包，build-in-arch.sh 的 smoke 阶段会对它跑运行时校验
+# 通过后把版本提交到 main，并显式请求 build.yml 重建发布 —— 没有人来点合并，也没有
+# PR。提交之后 build.yml 自己的发布闸门（verify-publish-inputs / runtime-verify /
+# repository-install-test）照常生效，所以这里的闸门是"别把编不出的版本写进 git"，
+# 不是发布许可。
 on:
   schedule:
+    # 6 小时一次；stable-build-info.json 只在 reF1nd 发稳定版时才变，绝大多数运行
+    # 停在第一步的 changed=false。
     - cron: '37 */6 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
   packages: read
-  pull-requests: write
+  # `gh workflow run build.yml` 需要 actions: write。这个 workflow 不再开 PR，
+  # 所以 PR 的写权限已经删掉（最小权限）。
+  actions: write
 
 concurrency:
-  group: sing-box-ebpf-upstream-update
+  # Shared with sync.yml and refresh-rule-sets.yml: all three commit to main, so
+  # they must not race each other into non-fast-forward push failures.
+  group: main-branch-updates
   cancel-in-progress: false
 
 jobs:
   update:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 候选包的 Go/eBPF 构建是长尾；第一轮真实更新会一次跑完"校验 + 构建 + 提交 +
+    # 请求发布"，超时被砍在提交与 dispatch 之间会留下已提交但没人重建的版本，
+    # 所以给足时间（与 refresh-rule-sets.yml 一致）。
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: true
+          # 推送用显式 extraheader（见提交步骤），凭据不留在 .git/config 里。
+          persist-credentials: false
 
       - name: Validate stable release and prepare package update
         id: update
@@ -39,12 +60,13 @@ jobs:
           echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"
           echo 'changed=true' >> "$GITHUB_OUTPUT"
           {
-            echo '### Proposed sing-box-ebpf update'
+            echo '### Automatic sing-box-ebpf update'
             echo
             echo "- New package version: $pkgver"
             echo '- The upstream tag and source SHA were matched against stable-build-info.json.'
             echo '- The release source was checked for the eBPF inbound registration and option types.'
-            echo '- This workflow opens a PR only; it never publishes or installs a package.'
+            echo '- The PKGBUILD/.SRCINFO pair is validated with makepkg and the package is built and runtime-verified in the builder before anything is committed.'
+            echo '- On success the bump is committed to main and build.yml is dispatched to rebuild and publish it.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Read builder generation
@@ -64,7 +86,24 @@ jobs:
           generation: ${{ steps.generation.outputs.value }}
           restore-caches: 'false'
 
-      - name: Build candidate package before opening PR
+      - name: Validate package metadata
+        if: steps.update.outputs.changed == 'true'
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # builder 容器里有 makepkg：真正校验 PKGBUILD 与 .SRCINFO 的一致性
+          # （updater 在 runner 上只能文本修补 .SRCINFO，写歪了没人发现）。
+          # --user builder：makepkg 拒绝以 root 运行（镜像里的 builder 用户
+          # 与 build-in-arch.sh 用的同一个）。
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --user builder \
+            "$BUILDER_IMAGE" \
+            bash /workspace/scripts/check-package.sh sing-box-ebpf
+
+      - name: Build the candidate package
         if: steps.update.outputs.changed == 'true'
         env:
           BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
@@ -96,31 +135,47 @@ jobs:
           test -s dist/SHA256SUMS
           (cd dist && sha256sum --check SHA256SUMS)
           find dist -maxdepth 1 -type f -name 'sing-box-ebpf-*.pkg.tar.zst' -print -quit | grep -q .
+          # build-in-arch.sh 的 smoke 阶段会写 <pkg>.runtime.json；没有它说明运行时
+          # 校验没跑，不允许据此提交。
+          test -s dist/sing-box-ebpf.runtime.json
 
-      - name: Open update pull request
+      - name: Commit and push
         if: steps.update.outputs.changed == 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           PKGVER: ${{ steps.update.outputs.pkgver }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/sing-box-ebpf/PKGBUILD packages/sing-box-ebpf/.SRCINFO
+          git diff --cached --quiet && { echo 'Nothing staged.'; exit 0; }
+          git commit -m "chore(sing-box-ebpf): update to $PKGVER"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push
+
+      - name: Trigger rebuild
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          branch="automation/sing-box-ebpf-${PKGVER}"
-          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq 'length')"
-          if [[ "$existing" != '0' ]]; then
-            echo "An update PR already exists for $PKGVER; leaving it untouched."
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch -c "$branch"
-          git add packages/sing-box-ebpf/PKGBUILD packages/sing-box-ebpf/.SRCINFO
-          git commit -m "sing-box-ebpf: update to $PKGVER"
-          git push origin "$branch"
-          base="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq '.defaultBranchRef.name')"
-          gh pr create \
-            --repo "$GITHUB_REPOSITORY" \
-            --base "$base" \
-            --head "$branch" \
-            --title "sing-box-ebpf: update to $PKGVER" \
-            --body $'Automated update detected from [reF1nd/sing-box-releases](https://github.com/reF1nd/sing-box-releases).\n\nThe updater verified that the stable metadata source SHA matches the corresponding sing-box tag and that the release retains the `with_ebpf` inbound registration and option types.\n\nPlease require the normal package build, static checks, and clean-chroot upgrade-path validation before merging. This PR does not publish a package.'
+          # GITHUB_TOKEN 发起的 push 不会触发其它 workflow（与 sync.yml、
+          # refresh-rule-sets.yml 同因同法），发布必须显式请求。
+          # 重试是必要的：这一版提交之后更新器就认为"已是最新"，下一轮会
+          # changed=false 直接退出，dispatch 一旦丢失，这个版本就永远躺在 git 里。
+          for attempt in 1 2 3; do
+            if gh workflow run build.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              -f packages=sing-box-ebpf \
+              -f make_jobs=4; then
+              printf 'Dispatched a rebuild for sing-box-ebpf (attempt %s)\n' "$attempt"
+              exit 0
+            fi
+            printf 'Dispatch attempt %s failed; retrying in 15s\n' "$attempt" >&2
+            sleep 15
+          done
+          printf 'Could not dispatch a rebuild for sing-box-ebpf\n' >&2
+          exit 1
