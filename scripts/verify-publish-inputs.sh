@@ -3,10 +3,43 @@ set -Eeuo pipefail
 
 incoming="${1:-/incoming}"
 root="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# 已发布仓库目录（x86_64 包所在目录）。给了它就会额外检查「这次发布是不是
+# 真的能让已安装的机器升上去」；没给就不检查，保持脚本可单独使用。
+published="${3:-}"
 
 pkg_version_from_file() {
     bsdtar -xOf "$1" .PKGINFO |
         awk -F ' = ' '$1 == "pkgver" {print $2; exit}'
+}
+
+published_version() { # <pkgname>; 已发布版本（该包还没发布过时为空）
+    local name="$1" candidate
+    [[ -n "$published" ]] || return 0
+    for candidate in "$published/$name"-*.pkg.tar.zst; do
+        [[ -f "$candidate" ]] || continue
+        pkg_version_from_file "$candidate"
+        return 0
+    done
+}
+
+# pkgrel 可以是小数形式（2.6、2.10），不能当浮点比较：逐段按整数比。出现
+# 非数字段时返回 1（不判），把方向交给 pacman 的 vercmp 语义，宁可漏拦也不能
+# 误拦一次正常的发布。
+pkgrel_at_most() { # <incoming> <published>; 0 = incoming <= published
+    local a="$1" b="$2" i max x y
+    local -a av bv
+    IFS='.' read -r -a av <<< "$a"
+    IFS='.' read -r -a bv <<< "$b"
+    max=${#av[@]}
+    (( ${#bv[@]} > max )) && max=${#bv[@]}
+    for ((i = 0; i < max; i++)); do
+        x="${av[i]:-0}"
+        y="${bv[i]:-0}"
+        [[ "$x" =~ ^[0-9]+$ && "$y" =~ ^[0-9]+$ ]] || return 1
+        (( 10#$x < 10#$y )) && return 0
+        (( 10#$x > 10#$y )) && return 1
+    done
+    return 0
 }
 
 # BUMP_PKGREL 构建把 pkgrel 的 +1 做在构建副本里（prepare-build-source.sh），
@@ -28,11 +61,52 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
     actual="$(pkg_version_from_file "$pkg")"
     src="${root}/packages/${name}/.SRCINFO"
     [[ -f "$src" ]] || { printf 'Published package has no source metadata: %s\n' "$name" >&2; exit 1; }
+    # 已发布版本与本次产物相同（同 pkgver、同 epoch、pkgrel 没前进）时，pacman
+    # 看不到任何升级：内容变了也送不到已经装过这个版本的机器上，只会把仓库里的
+    # 同名版本静默覆盖掉。两种情况要分开处理：
+    #
+    #   * 走「有意 pkgrel+1 豁免」的发布撞上已发布版本 —— ffmpeg-full 就是这么
+    #     出事的：write-back 失效让源码树停在 2.6，每次 ABI 重建都算出并发布
+    #     9.0.2-2.7，2026-10-11 那版（对 openapv 1.1.3.0 链接 liboapv.so.11）
+    #     覆盖了 10-03 的旧 2.7，装了旧 2.7 的机器永远升不到修好 liboapv 的
+    #     那一版。撞车说明 bump 没有真的前进，必须失败，先修源码树的版本。
+    #   * 普通路径下的同版本重发 —— VCS 包在上游没动时重建出来的版本号本来就
+    #     不会前进，那是正常空转；发布是全有全无，绝不能因此让整批发布失败。
+    #     只对静态包响亮地 WARNING（多半是改了 PKGBUILD 忘了 bump pkgrel）。
+    #
+    # 方向判不准的情况（pkgver 不同、pkgrel 含非数字段）留给 pacman 的 vercmp。
+    published_value="$(published_version "$name")"
+    already_published=no
+    behind_published=no
+    if [[ -n "$published_value" ]]; then
+        actual_epoch=0
+        actual_rest="$actual"
+        if [[ "$actual_rest" == *:* ]]; then
+            actual_epoch="${actual_rest%%:*}"
+            actual_rest="${actual_rest#*:}"
+        fi
+        published_epoch=0
+        published_rest="$published_value"
+        if [[ "$published_rest" == *:* ]]; then
+            published_epoch="${published_rest%%:*}"
+            published_rest="${published_rest#*:}"
+        fi
+        if [[ "$actual_epoch" == "$published_epoch" \
+            && "${actual_rest%-*}" == "${published_rest%-*}" ]]; then
+            if [[ "$actual_rest" == "$published_rest" ]]; then
+                already_published=yes
+            elif pkgrel_at_most "${actual_rest##*-}" "${published_rest##*-}"; then
+                behind_published=yes
+            fi
+        fi
+    fi
     expected="$(awk -F ' = ' '$1 == "\tpkgver" {v=$2} $1 == "\tpkgrel" {r=$2} END {print v "-" r}' "$src")"
     if [[ "$actual" != "$expected" ]]; then
         # Git-based PKGBUILDs may derive pkgver() from fetched upstream sources.
-        template_ver="$(awk -F= '/^pkgver=/{print $2; exit}' "${root}/packages/${name}/PKGBUILD")"
-        pkgrel="$(awk -F= '/^pkgrel=/{print $2; exit}' "${root}/packages/${name}/PKGBUILD")"
+        template_ver="$(awk -F= '/^pkgver=/{v=$2; sub(/#.*/, "", v); gsub(/[[:space:]]/, "", v); print v; exit}' "${root}/packages/${name}/PKGBUILD")"
+        # pkgrel 行可能带行尾注释（quirc: `pkgrel=5  # emoeem overlay: ...`），
+        # 去掉空白和注释后才是版本号，否则 bumped-pkgrel 例外永远匹配不上。
+        pkgrel="$(awk -F= '/^pkgrel=/{v=$2; sub(/#.*/, "", v); gsub(/[[:space:]]/, "", v); print v; exit}' "${root}/packages/${name}/PKGBUILD")"
         # .SRCINFO for a VCS package records the pkgver at the last metadata
         # refresh, while pkgver() resolves a newer commit during makepkg. Two
         # shapes exist: "<base>.rN.gHASH" (svt) and the bare "rN.<hash>" when
@@ -70,10 +144,25 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
         fi
         bumped_rel="$(next_pkgrel "$pkgrel")"
         if [[ -n "$bumped_rel" && "$actual" == "${expected%-*}-${bumped_rel}" ]]; then
+            # bump 之后的版本如果撞上（或落后于）已发布版本，这次 bump 根本
+            # 没有前进：发布出去客户端也升不上去，只能先让源码树追上仓库。
+            if [[ "$already_published" == yes || "$behind_published" == yes ]]; then
+                printf 'Publication would not upgrade %s: artifact=%s already published=%s; the pkgrel bump lands on a version installed clients already have — reconcile the source pkgrel (write-back) instead of republishing it\n' \
+                    "$name" "$actual" "$published_value" >&2
+                exit 1
+            fi
             printf 'Accepted bumped pkgrel for %s: %s (source=%s)\n' "$name" "$actual" "$expected"
             continue
         fi
         printf 'Publication mismatch for %s: artifact=%s source=%s\n' "$name" "$actual" "$expected" >&2
         exit 1
+    fi
+    # 普通路径下的同版本重发：静态包这样发出去没人能升级（多半是忘了 bump
+    # pkgrel），但发布是全有全无，所以只响不拦；VCS 包重建后版本号不变是正常
+    # 空转，连响都不必响。
+    if [[ "$already_published" == yes || "$behind_published" == yes ]] \
+        && ! grep -qE '^pkgver\(\)[[:space:]]*\{' "${root}/packages/${name}/PKGBUILD"; then
+        printf 'WARNING: %s %s is already published; this publish cannot upgrade anyone (bump pkgrel if the content changed)\n' \
+            "$name" "$actual" >&2
     fi
 done

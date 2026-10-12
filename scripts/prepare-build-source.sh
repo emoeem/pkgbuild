@@ -8,7 +8,9 @@ if [[ "${BUMP_PKGREL:-false}" != "true" ]]; then
   exit 0
 fi
 
-current="$(awk -F= '/^pkgrel=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$package_dir/PKGBUILD")"
+# pkgrel 行可能带行尾注释（quirc: `pkgrel=5  # emoeem overlay: quirc pkgrel bump`），
+# 去掉空白和注释后再判断，否则 ABI 重建会在第一步就报 unsupported pkgrel。
+current="$(awk -F= '/^pkgrel=/{v=$2; sub(/#.*/, "", v); gsub(/[[:space:]]/, "", v); print v; exit}' "$package_dir/PKGBUILD")"
 if [[ "$current" =~ ^([0-9]+)$ ]]; then
   next="$((current + 1))"
 elif [[ "$current" =~ ^([0-9]+)\.([0-9]+)$ ]]; then

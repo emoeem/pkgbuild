@@ -55,7 +55,7 @@
 
 ## 6. Current Repository Release Flow
 
-1. `publish` 下载所有 `built-*` Artifact（tar 保留 epoch 冒号）→ 解包 → `verify-publish-inputs.sh` 校验产物与源码版本一致（含 ABI 重建的 pkgrel+1 豁免）。
+1. `publish` 下载所有 `built-*` Artifact（tar 保留 epoch 冒号）→ 解包 → `verify-publish-inputs.sh` 校验产物与源码版本一致（含 ABI 重建的 pkgrel+1 豁免），并以 `published/x86_64` 为第三个参数拒绝「同 pkgver、pkgrel 没前进」的发布（pacman 只比版本号，这种发布送不到装过旧版本的机器上）。
 2. `fetch-repository-state.sh` 取回现有 release 资产 → `create-repository.sh` 在 archlinux 容器中重命名 GitHub 资产名、`repo-add`、可选 GPG 签名、生成 `.conf`/`SHA256SUMS`。
 3. `verify-repository.sh` + `verify-repository-elf.sh`（数据库引用、SHA256、SONAME 唯一性）→ `generate-abi-manifest.sh` → `publish-release.sh`（先包后库，按 sha256 跳过未变资产，删除过期资产）。
 4. `write-back-pkgrel.sh` 在 `bump_pkgrel=true` 时把 pkgrel 回写 `main`。
