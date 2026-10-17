@@ -1,0 +1,45 @@
+# Maintainer: emoeem
+#
+# Unofficial Dracula/Alucard desktop web UI for sing-box.
+# Source: https://github.com/emoeem/dracula-panel-for-sing-box (private fork of
+#         SagerNet/sing-box-dashboard; full source + prebuilt Vite dist in tarball)
+#
+# The tarball is the source of record: it contains the complete source and the
+# prebuilt dist. The package installs only the static UI; the panel backend
+# (sing-box-panel) is the runtime dependency and serves /api on 9096.
+# The UI also needs sing-box's native API (services.api on 127.0.0.1:9091 with
+# a CORS whitelist for 127.0.0.1/localhost:9096). See the installed DEPLOYMENT.md.
+#
+# Updating: rebuild dist in the source repo, refresh the tarball, bump
+# pkgver/pkgrel, update sha256sums, regenerate .SRCINFO.
+
+pkgname=dracula-panel-for-sing-box
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Unofficial Dracula/Alucard desktop web UI for sing-box (dashboard fork + panel management)'
+arch=('any')
+url='https://github.com/emoeem/pkgbuild'
+license=('GPL-3.0-or-later')
+depends=('sing-box-panel')
+makedepends=()
+options=('!strip')
+install=dracula-panel-for-sing-box.install
+source=("dracula-panel-for-sing-box-${pkgver}.tar.zst")
+sha256sums=('28793fd83e2b65ddcb28ab0768c2c1af2a6e9c56e549f671a1cc635eed741534')
+
+package() {
+    local srcroot="$srcdir/dracula-panel-for-sing-box-${pkgver}"
+
+    install -d "$pkgdir/usr/share/sing-box-panel-dracula/ui"
+    cp -a "$srcroot/dist/." "$pkgdir/usr/share/sing-box-panel-dracula/ui/"
+
+    install -Dm644 "$srcroot/DEPLOYMENT.md"         "$pkgdir/usr/share/doc/$pkgname/DEPLOYMENT.md"
+    install -Dm644 "$srcroot/NOTICE" "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
+    install -Dm644 "$srcroot/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+    install -Dm644 /dev/stdin         "$pkgdir/usr/share/sing-box-panel-dracula/panel.json.example" <<'PANEL'
+{
+  "ui_dir": "/usr/share/sing-box-panel-dracula/ui"
+}
+PANEL
+}

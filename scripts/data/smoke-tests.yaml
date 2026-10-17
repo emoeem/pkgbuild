@@ -38,6 +38,10 @@ packages:
       - sing-box
     commands:
       - "sing-box version"
+  dracula-panel-for-sing-box:
+    commands:
+      - "test -f /usr/share/sing-box-panel-dracula/ui/index.html"
+      - "test -f /usr/share/sing-box-panel-dracula/panel.json.example"
   sing-box-panel:
     # 包内安装名是 sing-box-panel（源文件叫 singbox-panel,装到 /usr/bin 时改了名）
     binaries:

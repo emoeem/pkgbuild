@@ -1,0 +1,19 @@
+post_install() {
+    cat <<'MSG'
+Dracula Panel for sing-box（非官方构建）已安装
+================================================
+静态 UI：/usr/share/sing-box-panel-dracula/ui
+
+让 sing-box-panel 使用它：
+  1) 在 /etc/sing-box-panel/panel.json 中设置（已有其他字段时只合并 ui_dir）：
+       {"ui_dir": "/usr/share/sing-box-panel-dracula/ui"}
+  2) 确认 sing-box-panel 服务的 --config 指向该文件
+  3) sudo systemctl restart sing-box-panel
+
+令牌：sudo cat /var/lib/sing-box-panel/token
+原生 API：services.api 监听 127.0.0.1:9091，CORS 仅允许
+          127.0.0.1:9096 / localhost:9096。
+
+完整说明：/usr/share/doc/dracula-panel-for-sing-box/DEPLOYMENT.md
+MSG
+}

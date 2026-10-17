@@ -3,7 +3,7 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前维护 11 个 package base。
+当前维护 12 个 package base。
 
 ## Features
 
@@ -37,6 +37,7 @@
 | `scx-scheds-git` | `x86_64` | sched_ext 调度器集合 |
 | `sing-box-ebpf` | `x86_64` | 带实验性 eBPF 入站的 sing-box（reF1nd 分支，`with_ebpf`，替换官方 `sing-box`） |
 | `sing-box-panel` | `any` | sing-box 本地面板：服务控制、订阅/节点、分应用 eBPF 策略、配置安全管线（内嵌 zashboard） |
+| `dracula-panel-for-sing-box` | `any` | Dracula 主题的 sing-box 桌面 Web UI（官方 dashboard fork + 本地管理模块）；安装到 `/usr/share/sing-box-panel-dracula/ui` |
 | `sing-box-rule-sets` | `any` | sing-box 补充规则集：anti-AD 广告表、最新 geoip/cn、mihomo 国内 IP 表、**lyc8503 增强 geosite（国内/境外分流补充）**、必须直连清单、国内广告补漏（每日自动比对上游） |
 | `svt-jpeg-xs-git` | `x86_64` | JPEG XS 编解码器 |
 | `vapoursynth-plugin-mlrt-ncnn-runtime` | `x86_64` | VapourSynth MLRT NCNN runtime |
@@ -381,7 +382,7 @@ Docker 的 Linux 自托管 runner。
 当前仓库已完成一轮五阶段维护优化：
 
 1. **AUR / Overlay**：AUR 同步改为事务式 staging，先验证上游、overlay、PKGBUILD 和 `.SRCINFO`，再替换工作区，避免失败同步破坏现有包。
-2. **PKGBUILD 审计**：`scripts/audit-packages.sh` 对 11 个有效 package base 做元数据、架构、AUR 元数据以及 provider / dependency 一致性审计。
+2. **PKGBUILD 审计**：`scripts/audit-packages.sh` 对全部有效 package base 做元数据、架构、AUR 元数据以及 provider / dependency 一致性审计。
 3. **构建缓存**：CI 复用 pacman、VCS source 和 Cargo 缓存；builder / build 脚本变化会使缓存 key 失效（按 flavor 前缀部分恢复旧缓存），下载的仓库资产存放在缓存目录之外，不进入缓存快照。
 4. **Repository 完整性**：发布前运行 `scripts/verify-repository.sh`，校验数据库引用、软件包资产、SHA256 和仓库配置。
 5. **管理与文档**：TUI 增加「审计全部软件包」，构建流水线文档同步记录实际维护流程。
