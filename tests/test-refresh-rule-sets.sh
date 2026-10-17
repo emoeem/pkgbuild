@@ -11,6 +11,13 @@ cp "$root/packages/sing-box-rule-sets/PKGBUILD" "$root/packages/sing-box-rule-se
    "$root/packages/sing-box-rule-sets/LICENSE-anti-AD" "$fixture/packages/sing-box-rule-sets/"
 sed -i 's/^pkgrel=.*/pkgrel=1/' "$fixture/packages/sing-box-rule-sets/PKGBUILD"
 sed -i $'s/^\tpkgrel = .*/\tpkgrel = 1/' "$fixture/packages/sing-box-rule-sets/.SRCINFO"
+# refresh 的版本规则是「上游变更落在同一天 → pkgrel+1；跨天 → pkgver 换当天、
+# pkgrel 重置 1」。fixture 必须把 pkgver 钉到运行当天，否则树里的 pkgver 被
+# 自动化推进到新的一天后（rule-sets 现在每 2 小时刷新一次），断言的 pkgrel
+# 1→2 就永远不会发生——10-12 之后每次跑这条测试都因此失败。
+fixture_date="$(date -u +%Y%m%d)"
+sed -i "s/^pkgver=.*/pkgver=${fixture_date}/" "$fixture/packages/sing-box-rule-sets/PKGBUILD"
+sed -i $'s/^\tpkgver = .*/\tpkgver = '"${fixture_date}"'/' "$fixture/packages/sing-box-rule-sets/.SRCINFO"
 : > "$fixture/packages/sing-box-rule-sets/.source-hashes"
 cat > "$work/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
