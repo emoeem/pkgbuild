@@ -42,6 +42,25 @@ pkgrel_at_most() { # <incoming> <published>; 0 = incoming <= published
     return 0
 }
 
+# base 是纯点分数字段时回答「candidate 是否严格大于 baseline」（vercmp 方向）：
+# 逐段按整数比，段数不足补 0；相等不算前进。scx-scheds-git 那类上游跨 base
+# 发布（源码树 1.1.3.r522，构建解析出 1.1.4.r5）用它判方向。
+base_is_newer() { # <candidate> <baseline>; 0 = candidate > baseline
+    local a="$1" b="$2" i max x y
+    local -a av bv
+    IFS='.' read -r -a av <<< "$a"
+    IFS='.' read -r -a bv <<< "$b"
+    max=${#av[@]}
+    (( ${#bv[@]} > max )) && max=${#bv[@]}
+    for ((i = 0; i < max; i++)); do
+        x="${av[i]:-0}"
+        y="${bv[i]:-0}"
+        (( 10#$x < 10#$y )) && return 1
+        (( 10#$x > 10#$y )) && return 0
+    done
+    return 1
+}
+
 # BUMP_PKGREL 构建把 pkgrel 的 +1 做在构建副本里（prepare-build-source.sh），
 # 产物比源码树正好高一档：整数 5→6、小数 2.6→2.7。发布校验必须放行这种
 # 「有意的版本前进」，否则 ABI 重建永远过不了闸门；源码树的回写由发布
@@ -108,11 +127,13 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
         # 去掉空白和注释后才是版本号，否则 bumped-pkgrel 例外永远匹配不上。
         pkgrel="$(awk -F= '/^pkgrel=/{v=$2; sub(/#.*/, "", v); gsub(/[[:space:]]/, "", v); print v; exit}' "${root}/packages/${name}/PKGBUILD")"
         # .SRCINFO for a VCS package records the pkgver at the last metadata
-        # refresh, while pkgver() resolves a newer commit during makepkg. Two
-        # shapes exist: "<base>.rN.gHASH" (svt) and the bare "rN.<hash>" when
+        # refresh, while pkgver() resolves a newer commit during makepkg. Three
+        # shapes exist: "<base>.rN.gHASH" (svt), a new base version after an
+        # upstream release between two syncs (scx-scheds-git: 1.1.3.r522 in the
+        # tree, 1.1.4.r5 in the artifact), and the bare "rN.<hash>" when
         # upstream has no conventional version number (linuxqq-wayland-fix-git).
-        # Strip the cached suffix for the first; the whole version is the
-        # resolved part for the second.
+        # Strip the cached suffix for the first two; the whole version is the
+        # resolved part for the third.
         template_base="${template_ver%%.r[0-9]*.g*}"
         actual_ver="${actual%-*}"
         actual_rel="${actual##*-}"
@@ -136,6 +157,29 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
                 fi
             elif [[ "$template_ver" =~ ^r[0-9]+\.[0-9a-f]+$ && "$actual_ver" =~ ^r[0-9]+\.[0-9a-f]+$ ]]; then
                 resolved_suffix="${actual_ver#r}"
+            else
+                # 上游在两次同步之间发布了新的基础版本：树里是旧 base 的
+                # .rN.gHASH，产物解析出新 base 的 .rN.gHASH。方向可判，要求
+                # 严格前进——旧 base 的产物装到客户端升不上去，repo-add 还会
+                # 把仓库副本静默倒回（ffmpeg-full 的教训）；base 相同或更旧
+                # 都不属于这里，前者已由上面同 base 分支接住。
+                actual_epoch=0
+                actual_base=""
+                if [[ "$actual_ver" =~ ^([0-9]+:)?([0-9]+(\.[0-9]+)*)\.r[0-9]+\.g[0-9a-f]+$ ]]; then
+                    actual_epoch="${BASH_REMATCH[1]%:}"
+                    actual_base="${BASH_REMATCH[2]}"
+                fi
+                template_num=""
+                template_epoch=0
+                if [[ "$template_base" =~ ^([0-9]+:)?([0-9]+(\.[0-9]+)*)$ ]]; then
+                    template_epoch="${BASH_REMATCH[1]%:}"
+                    template_num="${BASH_REMATCH[2]}"
+                fi
+                if [[ -n "$actual_base" && -n "$template_num" \
+                    && "${actual_epoch:-0}" == "${template_epoch:-0}" ]] \
+                    && base_is_newer "$actual_base" "$template_num"; then
+                    resolved_suffix="new-base"
+                fi
             fi
         fi
         if [[ -n "$resolved_suffix" ]]; then

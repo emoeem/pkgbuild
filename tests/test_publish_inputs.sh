@@ -95,6 +95,51 @@ fi
 grep -q 'Publication mismatch for linuxqq-wayland-fix-git' <<<"$output"
 echo 'ok: a VCS pkgrel that is neither the source pkgrel nor 1 is rejected'
 
+# 上游在两次同步之间发布了新的基础版本（2026-10-17 的发布事故）：scx 1.1.4
+# 发布后，源码树还停在 AUR 10-03 同步来的 1.1.3.r522，构建解析出 1.1.4.r5。
+# 基础版本严格前进，vercmp 下客户端升得上去，必须放行。
+rm -f "$tmp/incoming"/*
+make_case scx-scheds-git 1.1.3.r522.gb5762c5ee 1 1.1.4.r5.g36dfc9419-1 yes
+output="$(run_case)"
+grep -q 'Accepted resolved git pkgver for scx-scheds-git' <<<"$output"
+echo 'ok: a new upstream base version is accepted for a VCS package'
+
+# 反方向不行：上游 tag 被删/回退导致解析出更旧的 base 时，发布对已装新版本
+# 的客户端不是升级，repo-add 还会把仓库副本倒回去。
+rm -f "$tmp/incoming"/*
+make_case scx-scheds-git 1.1.4.r5.gb5762c5ee 1 1.1.3.r522.g36dfc9419-1 yes
+if output="$(run_case 2>&1)"; then
+    echo 'expected an older resolved base version to fail' >&2
+    exit 1
+fi
+grep -q 'Publication mismatch for scx-scheds-git' <<<"$output"
+echo 'ok: a resolved base version moving backwards is rejected'
+
+# 新 base 也要过 pkgrel 这一关：既不是源码 pkgrel 也不是 makepkg 的重置 1 时
+# 仍然拒绝。
+rm -f "$tmp/incoming"/*
+make_case scx-scheds-git 1.1.3.r522.gb5762c5ee 1 1.1.4.r5.g36dfc9419-2 yes
+if output="$(run_case 2>&1)"; then
+    echo 'expected a new base with an unexpected pkgrel to fail' >&2
+    exit 1
+fi
+grep -q 'Publication mismatch for scx-scheds-git' <<<"$output"
+echo 'ok: a new base version with an unexpected pkgrel is rejected'
+
+# 段比较按整数不是字典序：1.1.10 > 1.1.9（1.9 → 1.10 的升级要放行）。
+rm -f "$tmp/incoming"/*
+make_case scx-scheds-git 1.1.9.r50.gb5762c5ee 1 1.1.10.r1.g36dfc9419-1 yes
+output="$(run_case)"
+grep -q 'Accepted resolved git pkgver for scx-scheds-git' <<<"$output"
+echo 'ok: base segments compare numerically (1.1.9 -> 1.1.10 is forward)'
+
+# 持有 epoch 的 VCS 包跨 base 时，epoch 相同按 base 判方向。
+rm -f "$tmp/incoming"/*
+make_case epoch-git-demo 6:1.1.3.r522.gb5762c5ee 1 6:1.1.4.r5.g36dfc9419-1 yes
+output="$(run_case)"
+grep -q 'Accepted resolved git pkgver for epoch-git-demo' <<<"$output"
+echo 'ok: an equal epoch does not block a new base version'
+
 # A regular package still requires an exact source version (unless pkgrel is intentionally bumped).
 rm -f "$tmp/incoming"/*
 make_case stable-demo 1.0 1 1.0-1 no
