@@ -13,5 +13,10 @@
   "managed_urltest": "Auto",
   "restart_timeout": 20,
   "health_probe_url": "",
-  "backup_keep": 30
+  "backup_keep": 30,
+  "subscription_update_interval": 0,
+  "subscription_scheduler_tick": 30,
+  "geoip_database": "/usr/share/GeoIP/dbip-city-lite.mmdb",
+  "egress_ip": "",
+  "egress_ip_probe_url": ""
 }

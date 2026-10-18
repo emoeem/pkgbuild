@@ -3,6 +3,8 @@
 
 设计目标：把「改配置 → 校验 → 重启 → 失败回滚」这条安全管线做成可点按钮的东西，
 并补上 Clash 类面板做不到的三块：订阅/节点生成、eBPF 分应用策略、服务与配置管理。
+订阅额外支持按订阅设置自动更新间隔、展示 Subscription-Userinfo 流量/到期；
+配置备份可以通过 /api/config/backups/<name> 下载。
 
 只用 Python3 标准库（Clash YAML 解析若装了 python-yaml 则用它，否则退化为内置子集解析器）。
 所有写操作都走 apply_config()：备份 → sing-box check → 原子替换 → 重启 → 健康检查 → 失败自动回滚。
@@ -13,6 +15,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import ipaddress
 import json
 import os
 import re
@@ -34,7 +37,16 @@ try:  # 可选：解析 Clash YAML 订阅
 except ImportError:  # pragma: no cover
     yaml = None
 
+try:  # 可选：读取 MaxMind 格式（DB-IP / GeoLite2）City 数据库
+    import maxminddb  # type: ignore
+except ImportError:  # pragma: no cover
+    maxminddb = None
+
 VERSION = "0.1.0"
+GEOIP_DEFAULT_PATHS = (
+    "/usr/share/GeoIP/GeoLite2-City.mmdb",
+    "/usr/share/GeoIP/dbip-city-lite.mmdb",
+)
 
 DEFAULT_CONFIG = {
     "listen": "127.0.0.1",
@@ -52,6 +64,11 @@ DEFAULT_CONFIG = {
     "restart_timeout": 20,
     "health_probe_url": "",
     "backup_keep": 30,
+    "subscription_update_interval": 0,
+    "subscription_scheduler_tick": 30,
+    "geoip_database": "/usr/share/GeoIP/GeoLite2-City.mmdb",
+    "egress_ip": "",
+    "egress_ip_probe_url": "",
 }
 
 
@@ -80,6 +97,109 @@ def err(msg: str) -> dict:
     return {"ok": False, "message": msg}
 
 
+def strip_json5(text: str) -> str:
+    """移除字符串外的 //、/* */ 注释和对象/数组尾逗号。"""
+    without_comments = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            without_comments.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            without_comments.append(char)
+            index += 1
+            continue
+        if char == "/" and index + 1 < len(text) and text[index + 1] == "/":
+            index += 2
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+        if char == "/" and index + 1 < len(text) and text[index + 1] == "*":
+            index += 2
+            while index + 1 < len(text) and not (text[index] == "*" and text[index + 1] == "/"):
+                index += 1
+            index += 2
+            continue
+        without_comments.append(char)
+        index += 1
+
+    stripped = "".join(without_comments)
+    normalized = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(stripped):
+        char = stripped[index]
+        if in_string:
+            normalized.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            normalized.append(char)
+            index += 1
+            continue
+        if char == ",":
+            next_index = index + 1
+            while next_index < len(stripped) and stripped[next_index] in " \t\r\n":
+                next_index += 1
+            if next_index < len(stripped) and stripped[next_index] in "}]":
+                index += 1
+                continue
+        normalized.append(char)
+        index += 1
+    return "".join(normalized)
+
+
+def loads_config(text: str) -> dict:
+    config = json.loads(strip_json5(text))
+    if not isinstance(config, dict):
+        raise ValueError("配置顶层必须是 JSON 对象")
+    return config
+
+
+def parse_userinfo(header: str) -> dict:
+    """把 Subscription-Userinfo 的 upload/download/total/expire 解析为整数。"""
+    info = {}
+    for part in (header or "").split(";"):
+        key, separator, value = part.strip().partition("=")
+        key = key.lower()
+        if not separator or key not in ("upload", "download", "total", "expire"):
+            continue
+        try:
+            info[key] = int(value.strip())
+        except ValueError:
+            continue
+    return info
+
+
+def normalize_update_interval(value) -> int:
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return 0
+    if seconds <= 0:
+        return 0
+    return min(max(seconds, 300), 30 * 86400)
+
+
 # --------------------------------------------------------------------------- 面板设置
 
 
@@ -103,6 +223,8 @@ class Settings:
         os.makedirs(self.data["state_dir"], exist_ok=True)
         self.token_file = Path(self.data["state_dir"]) / "token"
         self._secret_cache: tuple[int, str] | None = None
+        self._egress_cache: tuple[float, str] | None = None
+        self._egress_lock = threading.Lock()
         self.token_created = False
 
     def __getitem__(self, key: str):
@@ -132,9 +254,8 @@ class Settings:
         return Path(self.data["sing_box_config"])
 
     def load_sing_box_config(self) -> dict:
-        raw = self.sing_box_config.read_text("utf-8")
-        raw = re.sub(r",(\s*[}\]])", r"\1", raw)  # sing-box 容忍尾随逗号，json 模块不容忍
-        return json.loads(raw)
+        # sing-box 接受注释和尾逗号，json 模块不接受；统一用面板的解析器。
+        return loads_config(self.sing_box_config.read_text("utf-8"))
 
     def dump_sing_box_config(self, obj: dict) -> str:
         return json.dumps(obj, ensure_ascii=False, indent=2) + "\n"
@@ -154,6 +275,44 @@ class Settings:
             value = ""
         self._secret_cache = (mtime, value)
         return value
+
+    def egress_ip(self) -> str:
+        """返回配置的出口 IP；可选地通过显式配置的探针 URL 获取并缓存。
+
+        默认不发任何网络请求。只有用户在 panel.json 里设置
+        egress_ip_probe_url 时才会访问该 URL；它只接收一次 GET，
+        不包含任何连接目的地信息。
+        """
+        configured = str(self.data.get("egress_ip") or "").strip()
+        if configured:
+            try:
+                ipaddress.ip_address(configured)
+                return configured
+            except ValueError:
+                pass
+        probe_url = str(self.data.get("egress_ip_probe_url") or "").strip()
+        if not probe_url:
+            return ""
+        now = time.time()
+        with self._egress_lock:
+            if self._egress_cache is not None:
+                stamp, value = self._egress_cache
+                ttl = 6 * 3600 if value else 300
+                if now - stamp < ttl:
+                    return value
+            value = ""
+            try:
+                request = urllib.request.Request(
+                    probe_url, headers={"User-Agent": "sing-box-panel/" + VERSION}
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    candidate = response.read(128).decode("utf-8", "replace").strip()
+                ipaddress.ip_address(candidate)
+                value = candidate
+            except Exception:  # noqa: BLE001
+                value = ""
+            self._egress_cache = (now, value)
+            return value
 
     # 面板状态 ---------------------------------------------------------------
     @property
@@ -181,6 +340,89 @@ class Settings:
 
     def managed(self) -> dict:
         return self.read_json(self.managed_file, {"outbound_tags": [], "group_members": {}})
+
+
+# --------------------------------------------------------------------------- GeoIP
+
+
+class GeoIP:
+    """Lazy, in-memory City lookup. No query is logged or sent anywhere."""
+
+    def __init__(self, settings: Settings):
+        self.s = settings
+        self.lock = threading.Lock()
+        self.reader = None
+        self.loaded = False
+        self.error = ""
+        self.path = ""
+
+    def _paths(self) -> list[str]:
+        candidates: list[str] = []
+        configured = str(self.s.get("geoip_database") or "").strip()
+        if configured:
+            candidates.append(configured)
+        for path in GEOIP_DEFAULT_PATHS:
+            if path not in candidates:
+                candidates.append(path)
+        return candidates
+
+    def _load(self) -> None:
+        if self.loaded:
+            return
+        with self.lock:
+            if self.loaded:
+                return
+            self.loaded = True
+            if maxminddb is None:
+                self.error = "python-maxminddb is not installed"
+                log(f"GeoIP 不可用：{self.error}")
+                return
+            for path in self._paths():
+                if not path or not Path(path).is_file():
+                    continue
+                try:
+                    self.reader = maxminddb.open_database(path)
+                    self.path = path
+                    self.error = ""
+                    log(f"GeoIP 数据库：{path}")
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    self.error = str(exc)
+            if not self.error:
+                self.error = "database not found"
+            log(f"GeoIP 不可用：{self.error}")
+
+    def lookup(self, ip: str) -> tuple[dict, int]:
+        try:
+            address = ipaddress.ip_address(ip.strip())
+        except ValueError:
+            return err("private or unresolvable ip"), 404
+        if not address.is_global:
+            return err("private or unresolvable ip"), 404
+        self._load()
+        if self.reader is None:
+            return err("geoip database unavailable"), 503
+        try:
+            data = self.reader.get(str(address))
+        except Exception:  # noqa: BLE001
+            return err("private or unresolvable ip"), 404
+        if not isinstance(data, dict):
+            return err("private or unresolvable ip"), 404
+        location = data.get("location") or {}
+        longitude = location.get("longitude")
+        latitude = location.get("latitude")
+        if not isinstance(longitude, (int, float)) or not isinstance(latitude, (int, float)):
+            return err("private or unresolvable ip"), 404
+        country = (data.get("country") or {}).get("iso_code") or ""
+        city = ((data.get("city") or {}).get("names") or {}).get("en") or ""
+        return {
+            "ok": True,
+            "ip": str(address),
+            "lon": float(longitude),
+            "lat": float(latitude),
+            "country": str(country),
+            "city": str(city),
+        }, 200
 
 
 # --------------------------------------------------------------------------- 服务控制
@@ -386,8 +628,8 @@ class ConfigManager:
         if not src.exists():
             return err(f"找不到备份 {name}")
         try:
-            cfg = json.loads(src.read_text("utf-8"))
-        except ValueError as exc:
+            cfg = loads_config(src.read_text("utf-8"))
+        except (OSError, ValueError) as exc:
             return err(f"备份内容不是合法 JSON：{exc}")
         return self.apply(cfg, f"restore-{name}", restart=True)
 
@@ -551,9 +793,14 @@ class Subscriptions:
     def __init__(self, settings: Settings, configs: ConfigManager):
         self.s = settings
         self.configs = configs
+        # The HTTP server is threaded and the scheduler runs in its own thread;
+        # serialize subscriptions.json read/modify/write cycles.
+        self.lock = threading.RLock()
 
     # 抓取 -------------------------------------------------------------------
-    def fetch(self, url: str) -> tuple[bool, str]:
+    def fetch(self, url: str) -> tuple[bool, str, dict]:
+        if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+            return False, "订阅 URL 只支持 http/https", {}
         proxy = self.s.get("subscription_proxy") or ""
         handlers = []
         if proxy:
@@ -562,54 +809,97 @@ class Subscriptions:
         req = urllib.request.Request(url, headers={"User-Agent": "sing-box-panel/" + VERSION})
         try:
             with opener.open(req, timeout=45) as resp:
-                return True, resp.read().decode("utf-8", "replace")
+                text = resp.read().decode("utf-8", "replace")
+                userinfo = parse_userinfo(resp.headers.get("Subscription-Userinfo", ""))
+                return True, text, userinfo
         except Exception as exc:  # noqa: BLE001
-            return False, str(exc)
+            return False, str(exc), {}
 
     # 列表操作 ---------------------------------------------------------------
     def list(self) -> list:
-        subs = self.s.subscriptions()
-        for sub in subs:
-            sub["node_count"] = len(sub.get("nodes", []))
-            sub.pop("nodes", None)
-        return subs
+        with self.lock:
+            subs = self.s.subscriptions()
+            for sub in subs:
+                sub["node_count"] = len(sub.get("nodes", []))
+                sub.pop("nodes", None)
+                sub["enabled"] = bool(sub.get("enabled", True))
+                interval = normalize_update_interval(sub.get("update_interval", 0))
+                sub["update_interval"] = interval
+                last_attempt = int(sub.get("last_attempt") or sub.get("last_update") or 0)
+                sub["last_attempt"] = last_attempt
+                sub["next_update"] = (
+                    last_attempt + interval if sub["enabled"] and interval > 0 else 0
+                )
+                info = sub.get("userinfo")
+                if isinstance(info, dict):
+                    sub["userinfo"] = {
+                        key: value
+                        for key, value in info.items()
+                        if key in ("upload", "download", "total", "expire")
+                        and isinstance(value, int)
+                    }
+                else:
+                    sub["userinfo"] = {}
+            return subs
 
-    def add(self, name: str, url: str, enabled: bool = True) -> dict:
-        subs = self.s.subscriptions()
+    def add(self, name: str, url: str, enabled: bool = True, update_interval=None) -> dict:
+        interval = normalize_update_interval(
+            self.s.get("subscription_update_interval", 0)
+            if update_interval is None
+            else update_interval
+        )
         host = urllib.parse.urlparse(url).netloc or "订阅"
         sub = {
             "id": secrets.token_hex(4),
             "name": name or host,
             "url": url,
             "enabled": enabled,
+            "update_interval": interval,
             "last_update": 0,
+            "last_attempt": 0,
             "last_error": "",
+            "userinfo": {},
             "nodes": [],
         }
-        subs.append(sub)
-        self.s.write_json(self.s.subs_file, subs)
+        with self.lock:
+            subs = self.s.subscriptions()
+            subs.append(sub)
+            self.s.write_json(self.s.subs_file, subs)
         return self.update(sub["id"])
 
     def remove(self, sub_id: str) -> dict:
-        subs = [x for x in self.s.subscriptions() if x.get("id") != sub_id]
-        self.s.write_json(self.s.subs_file, subs)
+        with self.lock:
+            subs = [x for x in self.s.subscriptions() if x.get("id") != sub_id]
+            self.s.write_json(self.s.subs_file, subs)
         return ok("已删除订阅")
 
     def update(self, sub_id: str) -> dict:
-        subs = self.s.subscriptions()
-        target = next((x for x in subs if x.get("id") == sub_id), None)
-        if not target:
-            return err("找不到该订阅")
-        okc, text = self.fetch(target["url"])
-        if not okc:
-            target["last_error"] = text
+        # Fetch outside the lock so a slow subscription does not block the UI.
+        with self.lock:
+            target = next((x for x in self.s.subscriptions() if x.get("id") == sub_id), None)
+            if not target:
+                return err("找不到该订阅")
+            url = target["url"]
+
+        okc, text, userinfo = self.fetch(url)
+
+        with self.lock:
+            subs = self.s.subscriptions()
+            target = next((x for x in subs if x.get("id") == sub_id), None)
+            if not target:
+                return err("找不到该订阅")
+            target["last_attempt"] = int(time.time())
+            if not okc:
+                target["last_error"] = text
+                self.s.write_json(self.s.subs_file, subs)
+                return err(f"下载失败：{text}")
+            nodes, skipped = parse_subscription(text)
+            target["nodes"] = nodes
+            target["last_update"] = int(time.time())
+            target["last_error"] = "" if nodes else "未解析出任何节点"
+            target["userinfo"] = userinfo
             self.s.write_json(self.s.subs_file, subs)
-            return err(f"下载失败：{text}")
-        nodes, skipped = parse_subscription(text)
-        target["nodes"] = nodes
-        target["last_update"] = int(time.time())
-        target["last_error"] = "" if nodes else "未解析出任何节点"
-        self.s.write_json(self.s.subs_file, subs)
+
         msg = f"更新成功：{len(nodes)} 个节点"
         if skipped:
             msg += f"，{len(skipped)} 个暂不支持（{'、'.join(sorted(set(skipped))[:6])}…）"
@@ -622,65 +912,119 @@ class Subscriptions:
                 results.append({"name": sub["name"], **self.update(sub["id"])})
         return {"ok": all(r.get("ok") for r in results) if results else False, "results": results}
 
+    def configure(self, sub_id: str, update_interval=None, enabled=None) -> dict:
+        with self.lock:
+            subs = self.s.subscriptions()
+            target = next((x for x in subs if x.get("id") == sub_id), None)
+            if not target:
+                return err("找不到该订阅")
+            if update_interval is not None:
+                target["update_interval"] = normalize_update_interval(update_interval)
+            if enabled is not None:
+                if isinstance(enabled, str):
+                    enabled = enabled.lower() in ("1", "true", "yes", "on")
+                target["enabled"] = bool(enabled)
+            self.s.write_json(self.s.subs_file, subs)
+            interval = normalize_update_interval(target.get("update_interval", 0))
+            active = interval > 0 and bool(target.get("enabled", True))
+        return ok("自动更新设置已保存" if active else "自动更新已关闭")
+
+    def run_due(self) -> None:
+        now = int(time.time())
+        for sub in self.list():
+            interval = int(sub.get("update_interval") or 0)
+            if not sub.get("enabled") or interval <= 0:
+                continue
+            next_update = int(sub.get("next_update") or 0)
+            if next_update <= now:
+                log(f"自动更新订阅：{sub.get('name') or sub['id']}")
+                self.update(sub["id"])
+
     # 写入配置 ---------------------------------------------------------------
     def apply(self) -> dict:
-        subs = [x for x in self.s.subscriptions() if x.get("enabled")]
-        cfg = self.s.load_sing_box_config()
-        managed = self.s.managed()
-        old_tags = set(managed.get("outbound_tags", []))
+        with self.lock:
+            subs = [x for x in self.s.subscriptions() if x.get("enabled")]
+            cfg = self.s.load_sing_box_config()
+            managed = self.s.managed()
+            old_tags = set(managed.get("outbound_tags", []))
 
-        outbounds = [o for o in cfg.get("outbounds", []) if o.get("tag") not in old_tags]
-        new_tags: list[str] = []
-        per_sub: dict[str, list[str]] = {}
+            outbounds = [o for o in cfg.get("outbounds", []) if o.get("tag") not in old_tags]
+            new_tags: list[str] = []
+            per_sub: dict[str, list[str]] = {}
 
-        existing = {o.get("tag") for o in outbounds}
-        for sub in subs:
-            tags = []
-            for node in sub.get("nodes", []):
-                tag = str(node.get("tag", "")).strip() or "node"
-                base = tag
-                i = 2
-                while tag in existing or tag in new_tags:
-                    tag = f"{base} #{i}"
-                    i += 1
-                node = dict(node)
-                node["tag"] = tag
-                outbounds.append(node)
-                new_tags.append(tag)
-                tags.append(tag)
-            per_sub[sub["id"]] = tags
+            existing = {o.get("tag") for o in outbounds}
+            for sub in subs:
+                tags = []
+                for node in sub.get("nodes", []):
+                    tag = str(node.get("tag", "")).strip() or "node"
+                    base = tag
+                    i = 2
+                    while tag in existing or tag in new_tags:
+                        tag = f"{base} #{i}"
+                        i += 1
+                    node = dict(node)
+                    node["tag"] = tag
+                    outbounds.append(node)
+                    new_tags.append(tag)
+                    tags.append(tag)
+                per_sub[sub["id"]] = tags
 
-        # 组：默认托管 Proxy（selector）与 Auto（urltest），另外每个订阅各建一组
-        members_map: dict[str, list[str]] = {}
-        group_tag = self.s.get("managed_group") or ""
-        if group_tag and new_tags:
-            members_map[group_tag] = new_tags
-        urltest_tag = self.s.get("managed_urltest") or ""
-        if urltest_tag and new_tags:
-            members_map[urltest_tag] = new_tags
+            # 组：默认托管 Proxy（selector）与 Auto（urltest），另外每个订阅各建一组
+            members_map: dict[str, list[str]] = {}
+            group_tag = self.s.get("managed_group") or ""
+            if group_tag and new_tags:
+                members_map[group_tag] = new_tags
+            urltest_tag = self.s.get("managed_urltest") or ""
+            if urltest_tag and new_tags:
+                members_map[urltest_tag] = new_tags
 
-        by_tag = {o.get("tag"): o for o in outbounds}
-        for tag, members in members_map.items():
-            node = by_tag.get(tag)
-            if node is None:
-                continue
-            previous = set(managed.get("group_members", {}).get(tag, []))
-            kept = [m for m in node.get("outbounds", []) if m not in previous]
-            node["outbounds"] = kept + members
+            by_tag = {o.get("tag"): o for o in outbounds}
+            for tag, members in members_map.items():
+                node = by_tag.get(tag)
+                if node is None:
+                    continue
+                previous = set(managed.get("group_members", {}).get(tag, []))
+                kept = [m for m in node.get("outbounds", []) if m not in previous]
+                node["outbounds"] = kept + members
 
-        cfg["outbounds"] = outbounds
-        result = self.configs.apply(cfg, "subscriptions-apply")
-        if result.get("ok"):
-            self.s.write_json(
-                self.s.managed_file,
-                {
-                    "outbound_tags": new_tags,
-                    "group_members": members_map,
-                    "updated": int(time.time()),
-                    "by_subscription": per_sub,
-                },
-            )
-        return result
+            cfg["outbounds"] = outbounds
+            result = self.configs.apply(cfg, "subscriptions-apply")
+            if result.get("ok"):
+                self.s.write_json(
+                    self.s.managed_file,
+                    {
+                        "outbound_tags": new_tags,
+                        "group_members": members_map,
+                        "updated": int(time.time()),
+                        "by_subscription": per_sub,
+                    },
+                )
+            return result
+
+
+class SubscriptionScheduler:
+    """Background checker for per-subscription update intervals."""
+
+    def __init__(self, settings: Settings, subs: Subscriptions):
+        self.s = settings
+        self.subs = subs
+
+    def start(self) -> None:
+        if self.s.dry_run:
+            return
+        threading.Thread(target=self._loop, name="subscription-scheduler", daemon=True).start()
+
+    def _loop(self) -> None:
+        try:
+            tick = max(5.0, float(self.s.get("subscription_scheduler_tick", 30)))
+        except (TypeError, ValueError):
+            tick = 30.0
+        while True:
+            try:
+                self.subs.run_due()
+            except Exception as exc:  # noqa: BLE001
+                log(f"订阅自动更新出错：{exc!r}")
+            time.sleep(tick)
 
 
 # --------------------------------------------------------------------------- 订阅解析
@@ -1145,6 +1489,29 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code: int = 200) -> None:
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
+    def _download_backup(self, name: str) -> None:
+        """Send a backup as an attachment after checking it is in the backup list."""
+        if name not in {item["name"] for item in self.configs.list_backups()}:
+            return self._json(err("找不到备份"), 404)
+        base = self.configs.backup_dir().resolve()
+        path = (base / name).resolve()
+        try:
+            path.relative_to(base)
+        except ValueError:
+            return self._json(err("非法备份路径"), 400)
+        try:
+            body = path.read_bytes()
+        except OSError as exc:
+            return self._json(err(f"读取备份失败：{exc}"), 500)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
         if not length:
@@ -1191,6 +1558,18 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             return self._json({"ok": False, "message": "未授权：请在面板里填入访问令牌", "auth": False}, 401)
 
+        if path.startswith("/api/config/backups/") and method == "GET":
+            return self._download_backup(path[len("/api/config/backups/"):])
+
+        if path == "/api/geoip" and method == "GET":
+            try:
+                body, status = self.geoip.lookup(str(query.get("ip", "")))
+            except Exception:  # noqa: BLE001
+                # Never include the queried address in logs.
+                log("GeoIP 查询出错（地址不记录）")
+                body, status = err("geoip database unavailable"), 503
+            return self._json(body, status)
+
         try:
             result = self._api(method, path, query)
         except Exception as exc:  # noqa: BLE001
@@ -1218,6 +1597,31 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 rc, out, _ = run([s["sing_box_bin"], "version"], timeout=10)
                 version = out.splitlines()[0].replace("sing-box version ", "").strip() if rc == 0 and out else ""
+
+            api_service = next(
+                (
+                    service
+                    for service in (cfg or {}).get("services", [])
+                    if isinstance(service, dict) and service.get("type") == "api"
+                ),
+                None,
+            )
+            dashboard = (api_service or {}).get("dashboard")
+            if isinstance(dashboard, bool):
+                official_dashboard_available = dashboard
+            elif isinstance(dashboard, dict):
+                official_dashboard_available = bool(dashboard.get("enabled", True))
+            elif isinstance(dashboard, str):
+                official_dashboard_available = dashboard != ""
+            else:
+                official_dashboard_available = api_service is not None
+            official_url = (
+                s.get("official_dashboard_url", "http://127.0.0.1:9091/dashboard/")
+                if official_dashboard_available
+                else ""
+            )
+            zashboard_available = (Path(s["zashboard_dir"]) / "index.html").is_file()
+
             return {
                 "ok": True,
                 "version": version,
@@ -1233,11 +1637,13 @@ class Handler(BaseHTTPRequestHandler):
                 "clash_api": s["clash_api"],
                 "clash_secret": s.clash_secret(),
                 "zash_setup_url": _zash_setup_url(s),
-                "official_dashboard_url": s.get("official_dashboard_url",
-                                                "http://127.0.0.1:9091/dashboard/"),
+                "zashboard_available": zashboard_available,
+                "official_dashboard_url": official_url,
+                "official_dashboard_available": official_dashboard_available,
                 "metacubexd_url": _metacubexd_url(s, cfg),
                 "managed_group": s.get("managed_group"),
                 "managed_urltest": s.get("managed_urltest"),
+                "egress_ip": s.egress_ip(),
                 "token_file": str(s.token_file),
             }
 
@@ -1258,13 +1664,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config" and method == "POST":
             body = self._body()
             try:
-                cfg = json.loads(body.get("text", ""))
+                cfg = loads_config(body.get("text", ""))
             except ValueError as exc:
                 return err(f"JSON 语法错误：{exc}")
             return self.configs.apply(cfg, "manual-edit")
         if path == "/api/config/validate" and method == "POST":
             try:
-                cfg = json.loads(self._body().get("text", ""))
+                cfg = loads_config(self._body().get("text", ""))
             except ValueError as exc:
                 return err(f"JSON 语法错误：{exc}")
             okc, msg = self.configs.check(cfg)
@@ -1305,15 +1711,37 @@ class Handler(BaseHTTPRequestHandler):
             return self.clash.select(m.group(1), str(self._body().get("name", "")))
 
         # 订阅
+        if path == "/api/subscriptions/managed" and method == "GET":
+            managed = s.managed()
+            return {
+                "ok": True,
+                "outbound_tags": list(managed.get("outbound_tags", []) or []),
+                "group_members": managed.get("group_members", {}) or {},
+                "updated": managed.get("updated", 0),
+                "by_subscription": managed.get("by_subscription", {}) or {},
+                "managed_group": s.get("managed_group"),
+                "managed_urltest": s.get("managed_urltest"),
+            }
         if path == "/api/subscriptions" and method == "GET":
             return {"ok": True, "subscriptions": self.subs.list()}
         if path == "/api/subscriptions" and method == "POST":
             body = self._body()
-            return self.subs.add(str(body.get("name", "")), str(body.get("url", "")), bool(body.get("enabled", True)))
+            return self.subs.add(
+                str(body.get("name", "")),
+                str(body.get("url", "")),
+                bool(body.get("enabled", True)),
+                body.get("update_interval"),
+            )
         if path == "/api/subscriptions/update_all" and method == "POST":
             return self.subs.update_all()
         if path == "/api/subscriptions/apply" and method == "POST":
             return self.subs.apply()
+        m = re.fullmatch(r"/api/subscriptions/([0-9a-f]+)/schedule", path)
+        if m and method == "POST":
+            body = self._body()
+            return self.subs.configure(
+                m.group(1), body.get("update_interval"), body.get("enabled")
+            )
         m = re.fullmatch(r"/api/subscriptions/([0-9a-f]+)/update", path)
         if m and method == "POST":
             return self.subs.update(m.group(1))
@@ -1402,6 +1830,7 @@ def _metacubexd_url(settings: Settings, cfg: dict | None) -> str:
 def build_server(settings: Settings) -> ThreadingHTTPServer:
     service = Service(settings)
     configs = ConfigManager(settings, service)
+    subs = Subscriptions(settings, configs)
     handler = type(
         "BoundHandler",
         (Handler,),
@@ -1411,10 +1840,13 @@ def build_server(settings: Settings) -> ThreadingHTTPServer:
             "configs": configs,
             "ebpf": Ebpf(settings, configs),
             "clash": Clash(settings),
-            "subs": Subscriptions(settings, configs),
+            "subs": subs,
+            "geoip": GeoIP(settings),
         },
     )
-    return ThreadingHTTPServer((settings["listen"], int(settings["port"])), handler)
+    server = ThreadingHTTPServer((settings["listen"], int(settings["port"])), handler)
+    SubscriptionScheduler(settings, subs).start()
+    return server
 
 
 def main() -> int:
