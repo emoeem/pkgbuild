@@ -1,19 +1,28 @@
 post_install() {
     cat <<'MSG'
-Dracula Panel for sing-box（非官方构建）已安装
+DracPanel（非官方构建）已安装
 ================================================
-静态 UI：/usr/share/sing-box-panel-dracula/ui
+静态 UI：/usr/share/dracpanel/ui
 
 让 sing-box-panel 使用它：
   1) 在 /etc/sing-box-panel/panel.json 中设置（已有其他字段时只合并 ui_dir）：
-       {"ui_dir": "/usr/share/sing-box-panel-dracula/ui"}
+       {"ui_dir": "/usr/share/dracpanel/ui"}
   2) 确认 sing-box-panel 服务的 --config 指向该文件
   3) sudo systemctl restart sing-box-panel
+
+从旧包 dracula-panel-for-sing-box 升级时：
+  - 本包会替换旧包；如果 panel.json 的 ui_dir 仍指向
+    /usr/share/sing-box-panel-dracula/ui，请改成 /usr/share/dracpanel/ui。
+  - 旧包的文件和旧 UI 目录可能需要手动清理。
 
 令牌：sudo cat /var/lib/sing-box-panel/token
 原生 API：services.api 监听 127.0.0.1:9091，CORS 仅允许
           127.0.0.1:9096 / localhost:9096。
 
-完整说明：/usr/share/doc/dracula-panel-for-sing-box/DEPLOYMENT.md
+完整说明：/usr/share/doc/dracpanel/DEPLOYMENT.md
 MSG
+}
+
+post_upgrade() {
+    post_install
 }

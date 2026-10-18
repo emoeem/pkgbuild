@@ -37,7 +37,7 @@
 | `scx-scheds-git` | `x86_64` | sched_ext 调度器集合 |
 | `sing-box-ebpf` | `x86_64` | 带实验性 eBPF 入站的 sing-box（reF1nd 分支，`with_ebpf`，替换官方 `sing-box`） |
 | `sing-box-panel` | `any` | sing-box 本地面板：服务控制、订阅/节点、分应用 eBPF 策略、配置安全管线（内嵌 zashboard） |
-| `dracula-panel-for-sing-box` | `any` | Dracula 主题的 sing-box 桌面 Web UI（官方 dashboard fork + 本地管理模块）；安装到 `/usr/share/sing-box-panel-dracula/ui` |
+| `dracpanel` | `any` | Dracula 主题的 sing-box 桌面 Web UI（官方 dashboard fork + 本地管理模块）；安装到 `/usr/share/dracpanel/ui` |
 | `sing-box-rule-sets` | `any` | sing-box 补充规则集：anti-AD 广告表、最新 geoip/cn、mihomo 国内 IP 表、**lyc8503 增强 geosite（国内/境外分流补充）**、必须直连清单、国内广告补漏（每日自动比对上游） |
 | `svt-jpeg-xs-git` | `x86_64` | JPEG XS 编解码器 |
 | `vapoursynth-plugin-mlrt-ncnn-runtime` | `x86_64` | VapourSynth MLRT NCNN runtime |

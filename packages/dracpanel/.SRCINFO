@@ -1,0 +1,17 @@
+pkgbase = dracpanel
+	pkgdesc = DracPanel: unofficial Dracula/Alucard desktop web UI for sing-box
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/emoeem/pkgbuild
+	install = dracpanel.install
+	arch = any
+	license = GPL-3.0-or-later
+	depends = sing-box-panel
+	provides = dracula-panel-for-sing-box
+	conflicts = dracula-panel-for-sing-box
+	replaces = dracula-panel-for-sing-box
+	options = !strip
+	source = dracpanel-0.1.0.tar.zst
+	sha256sums = f7a620989333f2f59c841c00e1b3e1ee6a95dc78bb7cd390b5316e238c7b5be9
+
+pkgname = dracpanel

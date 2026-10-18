@@ -1,7 +1,7 @@
 # Maintainer: emoeem
 #
-# Unofficial Dracula/Alucard desktop web UI for sing-box.
-# Source: https://github.com/emoeem/dracula-panel-for-sing-box (private fork of
+# DracPanel is an unofficial Dracula/Alucard desktop web UI for sing-box.
+# Source: https://github.com/emoeem/dracpanel (fork of
 #         SagerNet/sing-box-dashboard; full source + prebuilt Vite dist in tarball)
 #
 # The tarball is the source of record: it contains the complete source and the
@@ -13,33 +13,36 @@
 # Updating: rebuild dist in the source repo, refresh the tarball, bump
 # pkgver/pkgrel, update sha256sums, regenerate .SRCINFO.
 
-pkgname=dracula-panel-for-sing-box
+pkgname=dracpanel
 pkgver=0.1.0
-pkgrel=2
-pkgdesc='Unofficial Dracula/Alucard desktop web UI for sing-box (dashboard fork + panel management)'
+pkgrel=1
+pkgdesc='DracPanel: unofficial Dracula/Alucard desktop web UI for sing-box'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
 license=('GPL-3.0-or-later')
 depends=('sing-box-panel')
 makedepends=()
 options=('!strip')
-install=dracula-panel-for-sing-box.install
-source=("dracula-panel-for-sing-box-${pkgver}.tar.zst")
-sha256sums=('dff55bf710acc94a319f7424cfd87a050f6edcbf767898550ad6e9f96fe894c3')
+provides=('dracula-panel-for-sing-box')
+conflicts=('dracula-panel-for-sing-box')
+replaces=('dracula-panel-for-sing-box')
+install=dracpanel.install
+source=("dracpanel-${pkgver}.tar.zst")
+sha256sums=('f7a620989333f2f59c841c00e1b3e1ee6a95dc78bb7cd390b5316e238c7b5be9')
 
 package() {
-    local srcroot="$srcdir/dracula-panel-for-sing-box-${pkgver}"
+    local srcroot="$srcdir/dracpanel-${pkgver}"
 
-    install -d "$pkgdir/usr/share/sing-box-panel-dracula/ui"
-    cp -a "$srcroot/dist/." "$pkgdir/usr/share/sing-box-panel-dracula/ui/"
+    install -d "$pkgdir/usr/share/dracpanel/ui"
+    cp -a "$srcroot/dist/." "$pkgdir/usr/share/dracpanel/ui/"
 
     install -Dm644 "$srcroot/DEPLOYMENT.md"         "$pkgdir/usr/share/doc/$pkgname/DEPLOYMENT.md"
     install -Dm644 "$srcroot/NOTICE" "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
     install -Dm644 "$srcroot/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
-    install -Dm644 /dev/stdin         "$pkgdir/usr/share/sing-box-panel-dracula/panel.json.example" <<'PANEL'
+    install -Dm644 /dev/stdin         "$pkgdir/usr/share/dracpanel/panel.json.example" <<'PANEL'
 {
-  "ui_dir": "/usr/share/sing-box-panel-dracula/ui"
+  "ui_dir": "/usr/share/dracpanel/ui"
 }
 PANEL
 }

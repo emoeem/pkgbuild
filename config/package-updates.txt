@@ -21,4 +21,4 @@
 sing-box-rule-sets workflow .github/workflows/refresh-rule-sets.yml
 sing-box-ebpf workflow .github/workflows/sing-box-ebpf-update.yml
 sing-box-panel manual source lives in this repo plus a pinned zashboard archive; bumped by hand
-dracula-panel-for-sing-box manual static UI built from the fork source tarball; bump the tarball, sha256sums and .SRCINFO by hand
+dracpanel manual static UI built from the fork source tarball; bump the tarball, sha256sums and .SRCINFO by hand
