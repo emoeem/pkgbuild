@@ -15,7 +15,7 @@
 
 pkgname=dracula-panel-for-sing-box
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Unofficial Dracula/Alucard desktop web UI for sing-box (dashboard fork + panel management)'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
@@ -25,7 +25,7 @@ makedepends=()
 options=('!strip')
 install=dracula-panel-for-sing-box.install
 source=("dracula-panel-for-sing-box-${pkgver}.tar.zst")
-sha256sums=('28793fd83e2b65ddcb28ab0768c2c1af2a6e9c56e549f671a1cc635eed741534')
+sha256sums=('dff55bf710acc94a319f7424cfd87a050f6edcbf767898550ad6e9f96fe894c3')
 
 package() {
     local srcroot="$srcdir/dracula-panel-for-sing-box-${pkgver}"
