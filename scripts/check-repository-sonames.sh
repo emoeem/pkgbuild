@@ -184,7 +184,13 @@ for package_file in "$published"/*.pkg.tar.zst; do
         grep '\.so=' | sort -u | tr '\n' ' ' || true)"
 
     directory="${source_dir[$pkgname]:-}"
-    declared_for_package="${declared_sonames[$directory]:-}"
+    # 孤儿包（发布过、源码树里已没有，比如改名后遗留的旧名字资产）没有
+    # 目录可查：空的关联数组下标在 bash 里是硬错误（`bad array subscript`），
+    # 会让整次漂移扫描崩掉，而不是走下面 ORPHAN 的降级路径。
+    declared_for_package=""
+    if [[ -n "$directory" ]]; then
+        declared_for_package="${declared_sonames[$directory]:-}"
+    fi
 
     tmpdir="$(mktemp -d)"
     bsdtar -xf "$package_file" -C "$tmpdir"

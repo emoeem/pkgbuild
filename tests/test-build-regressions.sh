@@ -111,4 +111,19 @@ grep -Fq -- 'container_security_args+=(--privileged)' "$root/.github/workflows/b
 if grep -Eq -- '--cgroup-parent|--cgroupns|runner_cgroup_(parent|dir)|/sys/fs/cgroup.*:rw' "$root/.github/workflows/build.yml"; then
     fail 'clean-chroot workflow still contains experimental host cgroup configuration'
 fi
+printf '%s\n' '7/7: verify an orphan published package cannot crash the soname scan'
+# 发布过但源码树已没有的包（改名后遗留的旧 pkgname）没有 source 目录：
+# 空的关联数组下标在 bash 里是硬错误（bad array subscript），会让整次漂移
+# 扫描崩掉，走不到下面专门处理孤儿的 ORPHAN 分支（run 39172370345）。
+# 查 .rebuild-on 之前必须先确认目录非空。
+soname_script="$root/scripts/check-repository-sonames.sh"
+lookup_guard="$(awk '
+    /^[[:space:]]*if \[\[ -n "\$directory" \]\]; then$/ { guard = NR }
+    /declared_for_package="\$\{declared_sonames\[\$directory\]:-\}"/ {
+        if (guard == 0 || NR - guard > 2) { print "unguarded"; exit }
+        print "guarded"
+    }
+' "$soname_script")"
+[[ "$lookup_guard" == guarded ]] \
+    || fail 'soname scan indexes declared_sonames by a possibly empty source directory'
 printf '%s\n' 'All build regression tests passed.'
