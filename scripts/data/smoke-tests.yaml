@@ -64,3 +64,12 @@ packages:
     note: "transitional meta package: no payload of its own"
   sing-box-rule-sets:
     note: "rule-set data package: no executable payload"
+  filee-bin:
+    # Prebuilt .NET app; the CLI is the only entry point that starts without a
+    # display. filee-gui is a symlink to the Avalonia binary and must exist too.
+    binaries:
+      - filee
+      - filee-gui
+    commands:
+      - "filee --version"
+    timeout_seconds: 60

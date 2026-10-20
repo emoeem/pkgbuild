@@ -108,7 +108,7 @@ ABI 是否不匹配、建议动作、允许的自动修复等级与置信度。
 
 仓库自己钉住校验和的源（没有 `.aur-url`）不会被本脚本重钉：这类 checksum 失效会被
 交棒给该包在 `config/package-updates.txt` 里登记的更新工作流（例如 `sing-box-rule-sets`
-→ `refresh-rule-sets.yml`）。那支工作流先校验上游内容，再提交可审计的新哈希并触发重建，
+→ `refresh-rule-sets.yml`、`filee-bin` → `filee-update.yml`）。那支工作流先校验上游内容，再提交可审计的新哈希并触发重建，
 所以 repair 只决定「何时」重钉，不代替它接受上游内容。交棒不写任何文件，因此列在
 level 1，记录状态是 `dispatched` 而非 `applied`，`build.yml` 不会为它产生提交或推送；
 若该工作流已有 queued / in_progress 的 run，则不重复派发。

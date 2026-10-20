@@ -1,0 +1,91 @@
+# filee-bin repackages upstream's self-contained .NET/Avalonia release.
+#
+# The bundled native runtime (coreclr, Skia, PDFium, uiohook, the 7-Zip and
+# rhwp engines) is built by upstream with its own hardening flags. This package
+# deliberately does not patch or strip it (`options=(!strip)`), so the RELRO /
+# PIE / "unstripped" warnings describe upstream artifacts, not a packaging
+# mistake. Rebuilding them from source is not what this package is for.
+#
+# "Unused shared library" entries are the historic NEEDED stubs
+# (libdl/libpthread/libm/librt/ld-linux) that glibc >= 2.34 folded into libc.
+# They are harmless and removing them would mean patching upstream ELF files.
+#
+# The "included, but may not be needed" dependencies are loaded with dlopen,
+# which namcap cannot see as an ELF edge:
+#   * Avalonia's X11 backend: fontconfig, freetype2, libglvnd, libice, libsm,
+#     libxcursor, libxext, libxfixes, libxi
+#   * .NET runtime: icu, krb5, openssl, zlib
+#   * engine downloads and update checks: ca-certificates
+filee-bin W: Dependency included, but may not be needed ('ca-certificates')
+filee-bin W: Dependency included, but may not be needed ('fontconfig')
+filee-bin W: Dependency included, but may not be needed ('freetype2')
+filee-bin W: Dependency included, but may not be needed ('icu')
+filee-bin W: Dependency included, but may not be needed ('krb5')
+filee-bin W: Dependency included, but may not be needed ('libglvnd')
+filee-bin W: Dependency included, but may not be needed ('libice')
+filee-bin W: Dependency included, but may not be needed ('libsm')
+filee-bin W: Dependency included, but may not be needed ('libxcursor')
+filee-bin W: Dependency included, but may not be needed ('libxext')
+filee-bin W: Dependency included, but may not be needed ('libxfixes')
+filee-bin W: Dependency included, but may not be needed ('libxi')
+filee-bin W: Dependency included, but may not be needed ('openssl')
+filee-bin W: Dependency included, but may not be needed ('zlib')
+filee-bin W: ELF file ('usr/lib/filee/engines/7zip/7zzs') lacks FULL RELRO, check LDFLAGS.
+filee-bin W: ELF file ('usr/lib/filee/engines/7zip/7zzs') lacks PIE.
+filee-bin W: ELF file ('usr/lib/filee/engines/rhwp/rhwp') is unstripped.
+filee-bin W: ELF file ('usr/lib/filee/libHarfBuzzSharp.so') is unstripped.
+filee-bin W: ELF file ('usr/lib/filee/libHarfBuzzSharp.so') lacks FULL RELRO, check LDFLAGS.
+filee-bin W: ELF file ('usr/lib/filee/libpdfium.so') is unstripped.
+filee-bin W: ELF file ('usr/lib/filee/libSkiaSharp.so') is unstripped.
+filee-bin W: ELF file ('usr/lib/filee/libSkiaSharp.so') lacks FULL RELRO, check LDFLAGS.
+filee-bin W: ELF file ('usr/lib/filee/libuiohook.so') is unstripped.
+filee-bin W: ELF file ('usr/lib/filee/libuiohook.so') lacks FULL RELRO, check LDFLAGS.
+filee-bin W: ELF file ('usr/lib/filee/libuiohook-wayland.so') is unstripped.
+filee-bin W: ELF file ('usr/lib/filee/libuiohook-wayland.so') lacks FULL RELRO, check LDFLAGS.
+filee-bin W: ELF file ('usr/lib/filee/libuiohook-x11.so') is unstripped.
+filee-bin W: ELF file ('usr/lib/filee/libuiohook-x11.so') lacks FULL RELRO, check LDFLAGS.
+filee-bin W: ELF file ('usr/lib/filee/libuiohook-xrecord.so') is unstripped.
+filee-bin W: ELF file ('usr/lib/filee/libuiohook-xrecord.so') lacks FULL RELRO, check LDFLAGS.
+filee-bin W: ELF file ('usr/lib/filee/libunhwp.so') is unstripped.
+filee-bin W: ELF file ('usr/lib/filee/Magick.Native-Q8-x64.dll.so') lacks FULL RELRO, check LDFLAGS.
+filee-bin W: Unused shared library '/usr/lib64/ld-linux-x86-64.so.2' by file ('usr/lib/filee/Filee')
+filee-bin W: Unused shared library '/usr/lib64/ld-linux-x86-64.so.2' by file ('usr/lib/filee/filee-cli')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/createdump')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/Filee')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/filee-cli')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/libclrjit.so')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/libcoreclr.so')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/libhostfxr.so')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/libhostpolicy.so')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/libmscordaccore.so')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/libSkiaSharp.so')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/libSystem.Globalization.Native.so')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/libSystem.Net.Security.Native.so')
+filee-bin W: Unused shared library '/usr/lib/libdl.so.2' by file ('usr/lib/filee/libSystem.Security.Cryptography.Native.OpenSsl.so')
+filee-bin W: Unused shared library '/usr/lib/libgcc_s.so.1' by file ('usr/lib/filee/libcoreclrtraceptprovider.so')
+filee-bin W: Unused shared library '/usr/lib/libm.so.6' by file ('usr/lib/filee/createdump')
+filee-bin W: Unused shared library '/usr/lib/libm.so.6' by file ('usr/lib/filee/Filee')
+filee-bin W: Unused shared library '/usr/lib/libm.so.6' by file ('usr/lib/filee/filee-cli')
+filee-bin W: Unused shared library '/usr/lib/libm.so.6' by file ('usr/lib/filee/libclrgc.so')
+filee-bin W: Unused shared library '/usr/lib/libm.so.6' by file ('usr/lib/filee/libcoreclrtraceptprovider.so')
+filee-bin W: Unused shared library '/usr/lib/libm.so.6' by file ('usr/lib/filee/libmscordaccore.so')
+filee-bin W: Unused shared library '/usr/lib/libm.so.6' by file ('usr/lib/filee/libmscordbi.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/engines/7zip/7zz')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/Filee')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/filee-cli')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/libclrjit.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/libcoreclr.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/libHarfBuzzSharp.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/libhostfxr.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/libhostpolicy.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/libmscordaccore.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/libpdfium.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/libSkiaSharp.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/libSystem.Security.Cryptography.Native.OpenSsl.so')
+filee-bin W: Unused shared library '/usr/lib/libpthread.so.0' by file ('usr/lib/filee/Magick.Native-Q8-x64.dll.so')
+filee-bin W: Unused shared library '/usr/lib/libresolv.so.2' by file ('usr/lib/filee/Magick.Native-Q8-x64.dll.so')
+filee-bin W: Unused shared library '/usr/lib/librt.so.1' by file ('usr/lib/filee/libclrjit.so')
+filee-bin W: Unused shared library '/usr/lib/librt.so.1' by file ('usr/lib/filee/libcoreclr.so')
+filee-bin W: Unused shared library '/usr/lib/librt.so.1' by file ('usr/lib/filee/libmscordaccore.so')
+filee-bin W: Unused shared library '/usr/lib/librt.so.1' by file ('usr/lib/filee/libSystem.Native.so')
+filee-bin W: Unused shared library '/usr/lib/libstdc++.so.6' by file ('usr/lib/filee/libcoreclrtraceptprovider.so')

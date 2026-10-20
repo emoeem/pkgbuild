@@ -3,7 +3,7 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前维护 12 个 package base。
+当前维护 13 个 package base。
 
 ## Features
 
@@ -38,6 +38,7 @@
 | `sing-box-ebpf` | `x86_64` | 带实验性 eBPF 入站的 sing-box（reF1nd 分支，`with_ebpf`，替换官方 `sing-box`） |
 | `sing-box-panel` | `any` | sing-box 本地面板：服务控制、订阅/节点、分应用 eBPF 策略、配置安全管线（内嵌 zashboard） |
 | `dracpanel` | `any` | Dracula 主题的 sing-box 桌面 Web UI（官方 dashboard fork + 本地管理模块）；安装到 `/usr/share/dracpanel/ui` |
+| `filee-bin` | `x86_64` | Filee 离线文件转换器（GUI + `filee` CLI，直接重新打包上游预编译的 Linux x64 发布件；每 2 小时自动跟踪上游 release） |
 | `sing-box-rule-sets` | `any` | sing-box 补充规则集：anti-AD 广告表、最新 geoip/cn、mihomo 国内 IP 表、**lyc8503 增强 geosite（国内/境外分流补充）**、必须直连清单、国内广告补漏（每日自动比对上游） |
 | `svt-jpeg-xs-git` | `x86_64` | JPEG XS 编解码器 |
 | `vapoursynth-plugin-mlrt-ncnn-runtime` | `x86_64` | VapourSynth MLRT NCNN runtime |
@@ -100,6 +101,14 @@ MetaCubeX `geoip/cn` / mihomo_yamls `cncidr` / 217heidai `adblockfilters` /
 lyc8503 `geosite-cn`、`geosite-geolocation-!cn`）的 sha256，**有变化才**更新 PKGBUILD
 的校验和与 `pkgver`（日期）并推送，进而触发该包重建；没有变化就不产生提交。
 本地可随时 `./scripts/refresh-rule-sets.sh --check` 预览。
+
+**Track Filee releases** 工作流每两小时（`13 */2 * * *`）检查
+[KnifeLemon/Filee](https://github.com/KnifeLemon/Filee) 的最新稳定 release。
+`scripts/update-filee.py` 校验 tag、tarball 与上游发布的 SHA-256（并与 GitHub
+返回的 asset digest 交叉核对），有新版时同时更新 `filee-bin` 的 `PKGBUILD`
+和 `.SRCINFO`；随后在 builder 中用 makepkg 校验元数据、构建并运行时验证候选包，
+全部通过才提交到 `main` 并 dispatch `build.yml` 重建发布。上游 tarball 的结构
+或版本号不合规时更新器失败退出，不会写入半更新的包元数据。
 
 ## sing-box 运维脚本
 

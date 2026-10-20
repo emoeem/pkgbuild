@@ -1,0 +1,176 @@
+name: Track Filee releases
+
+# Filee publishes a self-contained linux-x64 tarball; nothing is compiled in
+# this repository, so an update is a version and checksum bump. This workflow
+# checks the latest stable GitHub release every 2 hours and, when it moved:
+#   1. validates the tag and assets and cross-checks the published SHA-256
+#      against GitHub's digest for the tarball (scripts/update-filee.py),
+#   2. verifies the PKGBUILD/.SRCINFO pair with makepkg in the builder,
+#   3. builds and runtime-verifies a candidate package in the builder.
+# Only then is the bump committed to main and build.yml dispatched to rebuild
+# and publish it. No pull request, and build.yml's publish gates still apply.
+on:
+  schedule:
+    # Every 2 hours; upstream releases are infrequent, so almost every run
+    # stops at changed=false after a single API request.
+    - cron: "13 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+  # `gh workflow run build.yml` needs actions: write.
+  actions: write
+
+concurrency:
+  # Shared with sync.yml, refresh-rule-sets.yml and sing-box-ebpf-update.yml:
+  # all of them commit to main and must not race into non-fast-forward pushes.
+  group: main-branch-updates
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    # The candidate download is ~114 MiB and the package is ~100 MiB; the build
+    # itself is only repackaging, so this is generous.
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The push uses an explicit extraheader (see the commit step), so the
+          # token is never persisted into .git/config.
+          persist-credentials: false
+
+      - name: Validate release and prepare package update
+        id: update
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/update-filee.py --apply
+          if git diff --quiet -- packages/filee-bin/PKGBUILD packages/filee-bin/.SRCINFO; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'No newer stable Filee release; package files remain unchanged.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          pkgver="$(sed -n 's/^pkgver=//p' packages/filee-bin/PKGBUILD)"
+          echo "pkgver=$pkgver" >> "$GITHUB_OUTPUT"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+          {
+            echo '### Automatic Filee update'
+            echo
+            echo "- New package version: $pkgver"
+            echo '- The release tag, tarball and published SHA-256 were validated against GitHub release metadata.'
+            echo '- The PKGBUILD/.SRCINFO pair is validated with makepkg and the package is built and runtime-verified in the builder before anything is committed.'
+            echo '- On success the bump is committed to main and build.yml is dispatched to rebuild and publish it.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Read builder generation
+        if: steps.update.outputs.changed == 'true'
+        id: generation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "value=$(tr -d '[:space:]' < .github/builder/generation)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up CachyOS builder
+        if: steps.update.outputs.changed == 'true'
+        id: builder
+        uses: $/.github/actions/setup-builder
+        with:
+          package_name: filee-bin
+          generation: ${{ steps.generation.outputs.value }}
+          restore-caches: 'false'
+
+      - name: Validate package metadata
+        if: steps.update.outputs.changed == 'true'
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # builder 容器里有 makepkg：真正校验 PKGBUILD 与 .SRCINFO 的一致性。
+          # --user builder：makepkg 拒绝以 root 运行。
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --user builder \
+            "$BUILDER_IMAGE" \
+            bash /workspace/scripts/check-package.sh filee-bin
+
+      - name: Build the candidate package
+        if: steps.update.outputs.changed == 'true'
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+          # 经 env 间接传递而不是内插进 run 块：模板展开发生在 bash 解析之前。
+          BUILDER_GENERATION: ${{ steps.generation.outputs.value }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p dist localrepo/x86_64 .cache/pkgbuild
+          docker run --rm \
+            --shm-size 2g \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$GITHUB_WORKSPACE/dist:/out" \
+            --volume "$GITHUB_WORKSPACE/.cache/pkgbuild:/cache" \
+            --volume "$GITHUB_WORKSPACE/localrepo/x86_64:/localrepo:ro" \
+            --volume "$GITHUB_WORKSPACE/localrepo/x86_64:/run/pkgbuild-localrepo:ro" \
+            --env LOCAL_REPO_DIR=/localrepo \
+            --env LOCAL_REPO_MOUNT=/run/pkgbuild-localrepo \
+            --env LOCAL_REPO_NAME=emoeem \
+            --env CLEAN_CHROOT_BUILD=0 \
+            --env BUILDER_GENERATION="$BUILDER_GENERATION" \
+            --env MAKE_JOBS=2 \
+            --env BUMP_PKGREL=false \
+            --env PACKAGE_NAME=filee-bin \
+            --env CACHE_DIR=/cache \
+            "$BUILDER_IMAGE" \
+            bash /workspace/scripts/build-in-arch.sh
+          test -s dist/SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
+          find dist -maxdepth 1 -type f -name 'filee-bin-*.pkg.tar.zst' -print -quit | grep -q .
+          # build-in-arch.sh's smoke phase writes this; without it the candidate
+          # was never runtime-verified and must not be committed.
+          test -s dist/filee-bin.runtime.json
+
+      - name: Commit and push
+        if: steps.update.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKGVER: ${{ steps.update.outputs.pkgver }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/filee-bin/PKGBUILD packages/filee-bin/.SRCINFO
+          git diff --cached --quiet && { echo 'Nothing staged.'; exit 0; }
+          git commit -m "chore(filee-bin): update to $PKGVER"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push
+
+      - name: Trigger rebuild
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # A push made with GITHUB_TOKEN does not trigger other workflows, so
+          # the rebuild has to be requested explicitly. Retry: after the commit
+          # the updater considers itself current, so a lost dispatch would
+          # leave the bump sitting in git until the next release.
+          for attempt in 1 2 3; do
+            if gh workflow run build.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              -f packages=filee-bin \
+              -f make_jobs=4; then
+              printf 'Dispatched a rebuild for filee-bin (attempt %s)\n' "$attempt"
+              exit 0
+            fi
+            printf 'Dispatch attempt %s failed; retrying in 15s\n' "$attempt" >&2
+            sleep 15
+          done
+          printf 'Could not dispatch a rebuild for filee-bin\n' >&2
+          exit 1

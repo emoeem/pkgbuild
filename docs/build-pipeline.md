@@ -206,6 +206,8 @@ For local rootless Podman validation, the unprivileged default runtime blocks ne
 
 The five package-local `.nvchecker.toml` files cover quirc, mpeghdec, ffmpeg-full, svt-jpeg-xs-git and vapoursynth-plugin-mlrt-ncnn-runtime. `.github/workflows/upstream-check.yml` runs daily and on demand inside the CachyOS builder image. It seeds `oldver` from each literal PKGBUILD `pkgver`, normalizing a git package's `.g<short-sha>` suffix to the comparable short commit. A detected upstream change opens or comments on a deduplicated `[upstream]` issue; the workflow never edits a PKGBUILD or bumps checksums automatically.
 
+Packages with a fully automatic updater are deliberately outside that nvchecker set: `sing-box-ebpf` (`sing-box-ebpf-update.yml`), `sing-box-rule-sets` (`refresh-rule-sets.yml`) and `filee-bin` (`filee-update.yml`) validate and bump their own sources, so a second issue-based watch would only duplicate the work. `config/package-updates.txt` is the registry for both kinds and the manifest gate rejects a package that names a workflow not tracked by git.
+
 ### P3 — build failure issues
 
 A failed package build uses `scripts/analyze-build-failure.py`'s category and root-cause fields to open/update an issue titled `[build-failure] <package>: <category>: <root cause>`. Identical package/root-cause failures share one issue. A successful package build closes its open build-failure issues. The workflow requires `issues: write`; failure artifacts and the original analyzer output remain available.

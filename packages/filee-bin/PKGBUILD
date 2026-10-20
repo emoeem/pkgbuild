@@ -1,0 +1,141 @@
+# Maintainer: emoeem
+#
+# Filee is an offline file converter (Avalonia / .NET) that upstream publishes
+# as a self-contained linux-x64 tarball. There is no source build in this
+# repository: this package repackages the official release asset, rewrites the
+# portable layout for a system-wide install and adds desktop integration.
+#
+# Upstream: https://github.com/KnifeLemon/Filee
+#
+# Updating: scripts/update-filee.py and .github/workflows/filee-update.yml
+# track the latest stable GitHub release, check the published SHA-256 against
+# the release asset digest, bump pkgver, build a candidate in the CachyOS
+# builder, and only then commit and dispatch build.yml. Do not edit
+# pkgver/sha256sums by hand; run the updater.
+#
+# Downloaded engines go to the user's XDG data directory, not into the
+# package, so /usr/lib/filee can stay root-owned and read-only.
+
+pkgname=filee-bin
+pkgver=1.12.0
+pkgrel=1
+pkgdesc='Offline file converter GUI and CLI (prebuilt upstream Linux x64 release)'
+arch=('x86_64')
+url='https://github.com/KnifeLemon/Filee'
+license=('MIT')
+depends=(
+    'ca-certificates'
+    'fontconfig'
+    'freetype2'
+    'libgcc'
+    'glibc'
+    'hicolor-icon-theme'
+    'icu'
+    'krb5'
+    'libglvnd'
+    'libice'
+    'libinput'
+    'libsm'
+    'libstdc++'
+    'libx11'
+    'libxcursor'
+    'libxext'
+    'libxfixes'
+    'libxi'
+    'libxkbcommon'
+    'libxrandr'
+    'libxt'
+    'libxtst'
+    'lttng-ust2.12'
+    'openssl'
+    'systemd-libs'
+    'wayland'
+    'zlib'
+)
+optdepends=(
+    'ffmpeg: audio and video conversions'
+    'ghostscript: PostScript and EPS conversions'
+    'libreoffice-fresh: office document conversions'
+    'pandoc-cli: Markdown and document conversions'
+    'calibre: ebook conversions'
+    'noto-fonts-cjk: CJK document rendering'
+)
+provides=('filee')
+conflicts=('filee')
+options=('!strip' '!debug')
+source=("https://github.com/KnifeLemon/Filee/releases/download/v${pkgver}/Filee-${pkgver}-linux-x64.tar.gz")
+sha256sums=('965bc0832834b9487e0cc528e4ea97f55019d91ae9f2170735cfcfab8118942a')
+
+check() {
+    # The CLI is the only part that starts without a display; this proves the
+    # bundled .NET runtime and the published version actually match pkgver.
+    "$srcdir/Filee-${pkgver}-linux-x64/filee-cli" --version |
+        grep -qx "filee ${pkgver}"
+}
+
+package() {
+    local srcroot="$srcdir/Filee-${pkgver}-linux-x64"
+    local appdir="$pkgdir/usr/lib/filee"
+
+    install -d "$appdir"
+    cp -a "$srcroot/." "$appdir/"
+
+    # upstream install.sh/uninstall.sh manage a portable copy under ~/.local
+    # and write into the application directory; they would fight a system-wide
+    # install. The desktop entry below is this package's integration.
+    rm -f "$appdir/install.sh" "$appdir/uninstall.sh" "$appdir/INSTALL.txt"
+
+    # The release marks almost every file 0755. Normalize the payload: only
+    # real executables keep the executable bit.
+    find "$appdir" -type d -exec chmod 0755 {} +
+    find "$appdir" -type f -exec chmod 0644 {} +
+    chmod 0755 \
+        "$appdir/Filee" \
+        "$appdir/filee-cli" \
+        "$appdir/createdump" \
+        "$appdir/engines/7zip/7zz" \
+        "$appdir/engines/7zip/7zzs" \
+        "$appdir/engines/rhwp/rhwp"
+
+    # Some bundled .NET natives carry a versioned SONAME (libSkiaSharp.so.119.0.0)
+    # or a lib-prefixed one (Magick.Native-Q8-x64.dll.so declares
+    # libMagick.Native-Q8-x64.dll.so) that differs from the file name .NET loads.
+    # Ship the conventional SONAME link too, so linkers and the repository's
+    # SONAME gate can resolve them; .NET itself keeps loading by file name.
+    # Generated dynamically because the versioned SONAME moves with upstream.
+    local lib soname
+    while IFS= read -r -d '' lib; do
+        soname="$(readelf -d "$lib" 2>/dev/null |
+            awk '/SONAME/ {gsub(/[][]/, "", $NF); print $NF}')"
+        [[ -n "$soname" ]] || continue
+        [[ "$soname" == "$(basename "$lib")" ]] && continue
+        [[ -e "$(dirname "$lib")/$soname" ]] && continue
+        ln -s "$(basename "$lib")" "$(dirname "$lib")/$soname"
+    done < <(find "$appdir" -type f \( -name '*.so' -o -name '*.so.*' \) -print0)
+
+    # `filee` is the command line interface documented upstream;
+    # `filee-gui` starts the Avalonia app.
+    install -d "$pkgdir/usr/bin"
+    ln -s ../lib/filee/filee-cli "$pkgdir/usr/bin/filee"
+    ln -s ../lib/filee/Filee "$pkgdir/usr/bin/filee-gui"
+
+    install -Dm644 "$srcroot/LICENSE" \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 "$srcroot/THIRD-PARTY-NOTICES.md" \
+        "$pkgdir/usr/share/doc/$pkgname/THIRD-PARTY-NOTICES.md"
+
+    install -Dm644 "$srcroot/filee.png" \
+        "$pkgdir/usr/share/icons/hicolor/512x512/apps/filee.png"
+    install -Dm644 /dev/stdin \
+        "$pkgdir/usr/share/applications/com.filee.app.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Filee
+Comment=Convert files with Filee
+Exec=filee-gui --convert %F
+Icon=filee
+Terminal=false
+Categories=Utility;
+StartupWMClass=Filee
+DESKTOP
+}
