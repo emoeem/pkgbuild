@@ -10,12 +10,15 @@
 # The UI also needs sing-box's native API (services.api on 127.0.0.1:9091 with
 # a CORS whitelist for 127.0.0.1/localhost:9096). See the installed DEPLOYMENT.md.
 #
-# Updating: rebuild dist in the source repo, refresh the tarball, bump
-# pkgver/pkgrel, update sha256sums, regenerate .SRCINFO.
+# Updating: rebuild dist in the source repo, refresh the tarball (which stamps
+# SOURCE_COMMIT next to dist/), bump pkgver/pkgrel, update sha256sums,
+# regenerate .SRCINFO. `check()` enforces that dist/ and the sources describe
+# the same revision, so a stale hand-built dist fails the build instead of
+# silently shipping.
 
 pkgname=dracpanel
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc='DracPanel: unofficial Dracula/Alucard desktop web UI for sing-box'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
@@ -28,7 +31,43 @@ conflicts=('dracula-panel-for-sing-box')
 replaces=('dracula-panel-for-sing-box')
 install=dracpanel.install
 source=("dracpanel-${pkgver}.tar.zst")
-sha256sums=('34d4d19a0bb1d3034b063c5e450f9d9240efbbb14ae72355250ec6168864b97e')
+sha256sums=('c262fb10763b5049c4d17a530a9113454eb017b20a594cc74cc7c9f4cb9aeb26')
+
+_json_field() {
+    # Pull a top-level string field out of a small JSON file without jq.
+    sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$2" | head -1
+}
+
+check() {
+    local srcroot="$srcdir/dracpanel-${pkgver}"
+    local meta="$srcroot/dist/build-info.json"
+
+    if [[ ! -f "$meta" ]]; then
+        error "dist/build-info.json is missing: the prebuilt UI cannot be traced to a source revision"
+        return 1
+    fi
+
+    local built src_commit version
+    built=$(_json_field commit "$meta")
+    version=$(_json_field version "$meta")
+    src_commit=$(head -1 "$srcroot/SOURCE_COMMIT" 2>/dev/null | tr -d '[:space:]')
+
+    if [[ -n "$version" && "$version" != "$pkgver" ]]; then
+        error "dist reports version $version but PKGBUILD declares pkgver=$pkgver"
+        return 1
+    fi
+
+    # SOURCE_COMMIT may hold a full hash; dist only records the short one.
+    if [[ -n "$built" && -n "$src_commit" && "$src_commit" != "$built"* ]]; then
+        error "dist was built from $built but the sources are $src_commit"
+        return 1
+    fi
+
+    if [[ ! -f "$srcroot/dist/licenses/THIRD-PARTY.md" ]]; then
+        error "dist/licenses/THIRD-PARTY.md is missing: rebuild with 'pnpm build'"
+        return 1
+    fi
+}
 
 package() {
     local srcroot="$srcdir/dracpanel-${pkgver}"
