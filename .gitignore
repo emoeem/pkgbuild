@@ -12,5 +12,10 @@ src/
 pkg/
 *.log
 
+# makepkg 会把易变上游源下载到包目录里。这些文件绝不能提交：一旦仓库里躺着
+# 一份旧副本，makepkg 会直接复用它（"找到 anti-ad.txt"）而不再拉最新规则。
+/packages/sing-box-rule-sets/anti-ad.txt
+/packages/sing-box-rule-sets/*.srs
+
 # Isolated rootful Podman storage used only for local CI-container validation
 .cache/ci-container-root/

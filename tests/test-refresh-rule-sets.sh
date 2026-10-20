@@ -35,13 +35,26 @@ esac
 MOCK
 chmod +x "$work/bin/curl"
 PATH="$work/bin:/usr/bin:/bin" bash "$fixture/scripts/refresh-rule-sets.sh" >/dev/null
-if grep -q "'SKIP'" "$fixture/packages/sing-box-rule-sets/PKGBUILD"; then
-    printf 'PKGBUILD still contains SKIP checksums.\n' >&2; exit 1
-fi
+# 校验策略：六个易变远程源必须是 SKIP（钉死会随上游更新过期、拖垮整轮发布），
+# 仓库内自制的三个文件必须仍然是真实哈希。
+mapfile -t pkg_sums < <(sed -n '/^sha256sums=(/,/^)/p' \
+    "$fixture/packages/sing-box-rule-sets/PKGBUILD" | grep -o "'[^']*'" | tr -d "'")
+(( ${#pkg_sums[@]} == 9 )) || { printf 'expected 9 checksums, got %s\n' "${#pkg_sums[@]}" >&2; exit 1; }
+for i in 0 1 2 3 4 5; do
+    [[ "${pkg_sums[$i]}" == SKIP ]] || {
+        printf 'remote source %s must be SKIP, got %s\n' "$i" "${pkg_sums[$i]}" >&2; exit 1; }
+done
+for pair in "6:must-direct.json" "7:ads-extra.json" "8:LICENSE-anti-AD"; do
+    idx="${pair%%:*}"; file="${pair#*:}"
+    want="$(sha256sum "$fixture/packages/sing-box-rule-sets/$file" | cut -d' ' -f1)"
+    [[ "${pkg_sums[$idx]}" == "$want" ]] || {
+        printf 'local source %s must be pinned to %s, got %s\n' "$file" "$want" "${pkg_sums[$idx]}" >&2; exit 1; }
+done
 [[ "$(wc -l < "$fixture/packages/sing-box-rule-sets/.source-hashes" | tr -d ' ')" == 6 ]]
 grep -qx 'pkgrel=2' "$fixture/packages/sing-box-rule-sets/PKGBUILD"
 grep -qx $'\tpkgrel = 2' "$fixture/packages/sing-box-rule-sets/.SRCINFO"
 [[ "$(grep -c '^[[:space:]]*sha256sums = ' "$fixture/packages/sing-box-rule-sets/.SRCINFO")" == 9 ]]
+[[ "$(grep -c $'^\tsha256sums = SKIP' "$fixture/packages/sing-box-rule-sets/.SRCINFO")" == 6 ]]
 first_hashes="$(sha256sum "$fixture/packages/sing-box-rule-sets/.source-hashes" "$fixture/packages/sing-box-rule-sets/PKGBUILD" "$fixture/packages/sing-box-rule-sets/.SRCINFO")"
 PATH="$work/bin:/usr/bin:/bin" bash "$fixture/scripts/refresh-rule-sets.sh" >/dev/null
 second_hashes="$(sha256sum "$fixture/packages/sing-box-rule-sets/.source-hashes" "$fixture/packages/sing-box-rule-sets/PKGBUILD" "$fixture/packages/sing-box-rule-sets/.SRCINFO")"

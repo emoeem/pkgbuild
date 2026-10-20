@@ -25,13 +25,23 @@
 # 升级方式：`pkgver` 用日期；`scripts/refresh-rule-sets.sh` 每天比对上游内容
 # （哈希记录在同目录 .source-hashes）并在有变化时提交 + 触发重建发布。
 #
-# 每日 refresh 将远程源的 SHA-256 写入 sha256sums，并把远程哈希记录到
-# .source-hashes。makepkg 会再次验证实际下载内容；若源在 refresh 与构建之间
-# 发生变化，构建会失败并等待下一次 refresh，不会静默打包未经记录的内容。
+# 校验策略（2026-10-20 起）：六份远程源按"易变"处理，sha256sums 写作 SKIP。
+# 原因：这些源 8 小时到每日更新一次，钉死的哈希必然在 refresh 与构建之间过期，
+# 于是构建 fail-closed 失败；发布又是 all-or-nothing，一个包失败会连带 skip 掉
+# 整轮发布（2026-10-12 当天 7 轮红就是这么来的）。现在改成：
+#   1. 不做下载前哈希比对（SKIP），上游变了照样能构建；
+#   2. 下载后在 build() 里做内容断言：非空 / SRS magic / 文本源行数下限，
+#      错误页、404、截断响应依旧会被拦下；
+#   3. 实际下载到的哈希写进包内 /usr/share/sing-box-rule-sets/SOURCE-HASHES.txt，
+#      事后可审计"这一版到底装了什么"。
+# 仍然钉死的是仓库内自制的三份文件（must-direct.json / ads-extra.json /
+# LICENSE-anti-AD）——它们由本仓库控制，不该变。
+# scripts/refresh-rule-sets.sh 依旧每 2 小时比对上游并记录到 .source-hashes，
+# 但只用来决定"要不要 bump 版本触发重建"，不再写入 sha256sums。
 
 pkgname=sing-box-rule-sets
 pkgver=20261020
-pkgrel=3
+pkgrel=4
 pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, Loyalsoldier enhanced geosite (cn/non-cn), always-direct list, CN ad-SDK extras'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
@@ -57,16 +67,17 @@ source=(
     'ads-extra.json'
     'LICENSE-anti-AD'
 )
+# 顺序与 source 一致：前六项是易变远程源（SKIP），后三项是仓库内自制文件（钉死）。
 sha256sums=(
-    '7667a2e3eda0a1d4051a4b6d35c63abcf6ee73a1b1aded454a882ee8ea4f3915'
-    '5aec4efe8eeab66d8038ec5739c1f8fffbe19145f67dda6f2e016a7c6ee1ca13'
-    'df1a915a218ae6af093f031259d9edb76c5dacf720276dc4297ffbe41ddb804f'
-    'f4e1ad80f79f3b50a73c8da438c1f7de98369c34533ec7e8a192e6cce6c1c890'
-    '52b8e542541f854bd61636f816dcedb7f9aecf6eff54ccb956124a2d0f2eec9d'
-    '2dd70a7fe871358d13d0a7ec100b9ab697002a65a8c69740d6a90c33bd5b5b54'
-    'ba3a2f0b5371bdd6e5e79479215bf04da1343cb347a065dd6e722ab51aae14a8'
-    '40e95f074c514a98fb3d78903e87a407a2f4780900fcbba9cda671c4f035f18a'
-    '01e7be5ef36f71e2f068985983b0f9306e3a71bb0a24b06b00ae9d6a539aa46d'
+    'SKIP' # anti-ad.txt        上游日更
+    'SKIP' # geoip-cn.srs       MetaCubeX 日更
+    'SKIP' # cncidr.srs         mihomo_yamls 日更
+    'SKIP' # adblockfilters.srs 217heidai 每 8 小时更新
+    'SKIP' # lyc-geosite-cn.srs lyc8503 日更
+    'SKIP' # lyc-geosite-geolocation-!cn.srs 同上
+    'ba3a2f0b5371bdd6e5e79479215bf04da1343cb347a065dd6e722ab51aae14a8' # must-direct.json
+    '40e95f074c514a98fb3d78903e87a407a2f4780900fcbba9cda671c4f035f18a' # ads-extra.json
+    '01e7be5ef36f71e2f068985983b0f9306e3a71bb0a24b06b00ae9d6a539aa46d' # LICENSE-anti-AD
 )
 
 _rule_sets=(
@@ -80,8 +91,35 @@ _rule_sets=(
     ads-extra
 )
 
+# 上游直接下载的成品 .srs（与上面重叠，用于更严格的体量检查）
+_upstream_rule_sets=(
+    geoip-cn-fresh
+    cncidr-mihomo
+    adblockfilters
+    lyc-geosite-cn
+    lyc-geosite-geolocation-!cn
+)
+
 build() {
     cd "$srcdir"
+
+    # 远程源不再做哈希比对，下载后的内容断言就成了唯一把关，这里是第一道：
+    # anti-ad.txt 是文本源，404 页面 / 错误页 / 截断响应的行数远低于万行级，
+    # 必须在转换之前拦下，否则会产出一个"看起来合法"的空规则集。
+    local anti_ad_lines
+    anti_ad_lines="$(wc -l < anti-ad.txt)"
+    (( anti_ad_lines >= 10000 )) || {
+        printf 'sing-box-rule-sets: anti-ad.txt 只有 %s 行，疑似错误页或截断\n' "$anti_ad_lines" >&2
+        return 1
+    }
+
+    # 把这一版真正用到的上游哈希写进包里（易变源不钉死，但可事后审计）。
+    {
+        printf '# SHA-256 of the upstream files actually downloaded for this build.\n'
+        printf '# Volatile upstreams are not pinned; this file records what shipped.\n'
+        sha256sum anti-ad.txt geoip-cn.srs cncidr.srs adblockfilters.srs \
+            lyc-geosite-cn.srs 'lyc-geosite-geolocation-!cn.srs'
+    } > SOURCE-HASHES.txt
 
     # AdGuard 语法 → sing-box 二进制规则集（用的是包依赖里的 sing-box 自带转换器）
     sing-box rule-set convert anti-ad.txt -t adguard -o anti-ad.srs
@@ -104,8 +142,24 @@ build() {
             return 1
         }
     done
+
+    # 第二道：上游直接给成品 .srs 的几份，体量不能退化。空壳 .srs（只有 magic
+    # 没有条目）也有几十字节，1 KiB 是极低的下限，只用来挡掉"上游返回了一个几乎
+    # 空的响应"。自制的两份小表（must-direct / ads-extra）本身只有几百字节，由
+    # sing-box rule-set compile 的成功与否把关，不在体积检查范围内。
+    # 注意：srcdir 里的源文件是符号链接，必须 wc -c 读内容（stat -c %s 会拿到
+    # 链接自身长度 72）。
+    local f size
+    for f in "${_upstream_rule_sets[@]}"; do
+        size="$(wc -c < "$f.srs")"
+        (( size >= 1024 )) || {
+            printf 'sing-box-rule-sets: %s.srs 只有 %s 字节，疑似空响应\n' "$f" "$size" >&2
+            return 1
+        }
+    done
     printf '%s\n' "Built ${#_rule_sets[@]} rule-sets:"
-    ls -la ./*.srs | awk '{print "  ",$5,$9}'
+    # -L：srcdir 里的源文件是符号链接，不带 -L 看到的是链接自身长度（几十字节）
+    ls -lL ./*.srs | awk '{print "  ",$5,$9}'
 }
 
 package() {
@@ -114,6 +168,10 @@ package() {
     for f in "${_rule_sets[@]}"; do
         install -m 644 "$srcdir/$f.srs" "$pkgdir/usr/share/sing-box-rule-sets/$f.srs"
     done
+
+    # 审计留痕：易变上游不钉哈希，但这一版装进去的文件哈希都记在这里
+    install -m 644 "$srcdir/SOURCE-HASHES.txt" \
+        "$pkgdir/usr/share/sing-box-rule-sets/SOURCE-HASHES.txt"
 
     # 许可证说明：namcap 要求 LicenseRef-* 必须在 /usr/share/licenses/<pkg>/ 下有对应文件
     install -Dm644 "$srcdir/LICENSE-anti-AD" \
@@ -134,6 +192,9 @@ package() {
 | `lyc-geosite-geolocation-!cn.srs` | 同上仓库的 `geosite/geolocation-!cn`（~26k 后缀，日更） | 境外域名判定补充（与官方 `geolocation-!cn` 并集） |
 | `must-direct.srs` | ① STUN / 游戏主机 / LAN cache / NCSI ② **Steam 国服 CDN** | ① 走代理会坏功能（NAT 类型、Steam 局域网缓存）；② 直连明显更快 —— 只取国内 CDN 端点（`st.dl.eccdnx.com`、`dl.steam.clngaa.com`、`csgo.com.cn`…，来自 lingqiqi5211/sing-box-rules 的 `steam-cn`），**刻意不含** `steamcontent.com` / `steamusercontent.com` / `cm.steampowered.com` 等全球域名（强制直连有风险） |
 | `ads-extra.srs` | `ad.duowan.com` / `sdkmob.com` / `ads.wps.cn` | 补 anti-AD 漏掉的国内广告端点（只用精确域名，不拦 apex） |
+
+`SOURCE-HASHES.txt` 记录本版实际打包的上游文件 SHA-256。上游每天（adblockfilters 每 8 小时）
+更新一次，包里不钉死哈希以免构建因"校验和过期"失败；要核实某一版装了什么，看这个文件。
 
 ## 在 sing-box 配置里引用
 

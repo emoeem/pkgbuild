@@ -3,9 +3,10 @@
 # 哈希记录在 .source-hashes 里比对，有变化就更新 pkgver（日期）并生成 .SRCINFO，
 # 供 CI 提交后自动重建包。没有变化则什么都不做（退出码 0）。
 #
-# 刷新阶段校验每份远程源并记录 SHA-256；同一组哈希同时写入 PKGBUILD 的
-# sha256sums，让 makepkg 在构建下载阶段再次验证。若上游在刷新与构建之间变化，
-# 构建会失败关闭，而不是把未经记录的新内容打进软件包。
+# 刷新阶段下载每份远程源、校验内容合法性（.srs 看 magic，文本看行数）并记录
+# SHA-256 到 .source-hashes，仅用于判断"上游有没有变"。这些更新的哈希**不再**
+# 写进 PKGBUILD 的 sha256sums：远程源一律写作 SKIP，由 build() 里的内容断言把关。
+# 否则哈希会在刷新与构建之间过期，构建 fail-closed 失败，进而 skip 掉整轮发布。
 #
 # 用法：scripts/refresh-rule-sets.sh [--check]
 #   --check  只报告是否有变化，不写文件（供本地预览）
@@ -90,17 +91,24 @@ for ((i = 0; i < ${#urls[@]}; i++)); do
     fi
 done
 
+# 易变远程源在 PKGBUILD 里写作 SKIP：上游 8h~日更，钉死的哈希必然在 refresh
+# 与构建之间过期，构建会 fail-closed 失败并连带 skip 整轮发布。哈希仍然记录到
+# .source-hashes，但只用于判断"上游有没有变、要不要 bump 版本触发重建"。
+# 数组顺序依旧与 source 一致：前六项 SKIP，后三项是仓库内自制文件，必须钉死。
+skip_sums=()
+for _ in "${urls[@]}"; do skip_sums+=('SKIP'); done
+
 # The final three source entries are repository-maintained files; makepkg must
 # verify them too. The checksum order mirrors PKGBUILD's source array exactly.
 expected_sums=(
-    "${new_sums[@]}"
+    "${skip_sums[@]}"
     "$(sha256sum "$pkg_dir/must-direct.json" | cut -d' ' -f1)"
     "$(sha256sum "$pkg_dir/ads-extra.json" | cut -d' ' -f1)"
     "$(sha256sum "$pkg_dir/LICENSE-anti-AD" | cut -d' ' -f1)"
 )
 
-# Determine whether this is initial SKIP migration, an upstream change, or a
-# change to one of the local source files.
+# Determine whether this is an upstream change or a change to one of the local
+# source files.
 checksum_state="$(python3 - "$pkgbuild" "${expected_sums[@]}" <<'PY'
 import re, sys, pathlib
 s = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
@@ -109,8 +117,6 @@ current = re.findall(r"['\"]([^'\"]+)['\"]", m.group(1)) if m else []
 expected = sys.argv[2:]
 if current == expected:
     print("match")
-elif any(value == "SKIP" for value in current):
-    print("skip")
 elif len(current) == len(expected) and current[-3:] != expected[-3:]:
     print("local-changed")
 else:
