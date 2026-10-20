@@ -71,6 +71,10 @@ class UnattendedPublishTests(unittest.TestCase):
         block = step_block("Trigger rebuild")
         self.assertIn("gh workflow run build.yml", block)
         self.assertIn("-f packages=filee-bin", block)
+        # The planner also selects repository-drift packages; an unrelated
+        # failure must not strand a Filee bump that already built and passed
+        # runtime verification.
+        self.assertIn("-f allow_partial_publish=true", block)
         self.assertIn("actions: write", workflow_text())
 
     def test_every_publish_side_step_stays_guarded(self):

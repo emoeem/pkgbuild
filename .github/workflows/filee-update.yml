@@ -161,11 +161,18 @@ jobs:
           # the rebuild has to be requested explicitly. Retry: after the commit
           # the updater considers itself current, so a lost dispatch would
           # leave the bump sitting in git until the next release.
+          #
+          # allow_partial_publish is deliberate: the build planner also selects
+          # repository-drift packages, and an unrelated failure (a VCS package
+          # whose upstream moved, a rule-set checksum) must not strand an
+          # already-built Filee bump. Every successful package still goes
+          # through the full publish gates.
           for attempt in 1 2 3; do
             if gh workflow run build.yml \
               --repo "$GITHUB_REPOSITORY" \
               -f packages=filee-bin \
-              -f make_jobs=4; then
+              -f make_jobs=4 \
+              -f allow_partial_publish=true; then
               printf 'Dispatched a rebuild for filee-bin (attempt %s)\n' "$attempt"
               exit 0
             fi
