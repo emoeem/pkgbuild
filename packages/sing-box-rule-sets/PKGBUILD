@@ -41,7 +41,7 @@
 
 pkgname=sing-box-rule-sets
 pkgver=20261020
-pkgrel=4
+pkgrel=5
 pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, Loyalsoldier enhanced geosite (cn/non-cn), always-direct list, CN ad-SDK extras'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
@@ -69,15 +69,15 @@ source=(
 )
 # 顺序与 source 一致：前六项是易变远程源（SKIP），后三项是仓库内自制文件（钉死）。
 sha256sums=(
-    'SKIP' # anti-ad.txt        上游日更
-    'SKIP' # geoip-cn.srs       MetaCubeX 日更
-    'SKIP' # cncidr.srs         mihomo_yamls 日更
-    'SKIP' # adblockfilters.srs 217heidai 每 8 小时更新
-    'SKIP' # lyc-geosite-cn.srs lyc8503 日更
-    'SKIP' # lyc-geosite-geolocation-!cn.srs 同上
-    'ba3a2f0b5371bdd6e5e79479215bf04da1343cb347a065dd6e722ab51aae14a8' # must-direct.json
-    '40e95f074c514a98fb3d78903e87a407a2f4780900fcbba9cda671c4f035f18a' # ads-extra.json
-    '01e7be5ef36f71e2f068985983b0f9306e3a71bb0a24b06b00ae9d6a539aa46d' # LICENSE-anti-AD
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'ba3a2f0b5371bdd6e5e79479215bf04da1343cb347a065dd6e722ab51aae14a8'
+    '40e95f074c514a98fb3d78903e87a407a2f4780900fcbba9cda671c4f035f18a'
+    '01e7be5ef36f71e2f068985983b0f9306e3a71bb0a24b06b00ae9d6a539aa46d'
 )
 
 _rule_sets=(
