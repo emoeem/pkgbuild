@@ -74,7 +74,7 @@ ABI watch（`dependency-drift.yml`）和 maintenance（`maintenance.yml`）里�
 
 ### 本地入口：pre-commit 与 CI 共用同一份静态清单
 
-`scripts/run-static-checks.sh` 是 check.yml integration job 在容器步骤之前那一半的**唯一**清单：manifest 门禁、依赖图测试、ELF SONAME 故障注入、逐包重建触发声明、workflow 镜像不变量、AUR 依赖兜底、构建回归（`tests/test-build-regressions.sh`，此前只写在 README 里、CI 从不运行）、shell 语法、shellcheck（`--severity=warning`，与 per-package job 一致）、`py_compile`。check.yml 直接调用它，`.githooks/pre-commit` 也直接调用它，所以「本地提交绿了」和「CI 那一道静态关卡绿了」是同一件事，而不是两份会漂移的清单；新增检查只能加进这个脚本。
+`scripts/run-static-checks.sh` 是 check.yml integration job 在容器步骤之前那一半的**唯一**清单：manifest 门禁、依赖图测试、ELF SONAME 故障注入、逐包重建触发声明、workflow 镜像不变量、AUR 依赖兜底、构建回归（`tests/test-build-regressions.sh`，此前只写在 README 里、CI 从不运行）、构建策略（`tests/test-build-policy.sh`，`validate-build-policy.sh` 的仓库顺序契约：私有仓库**配置了**才要求它在首位，空挂载目录放行，有包却未配置则拒绝）、shell 语法、shellcheck（`--severity=warning`，与 per-package job 一致）、`py_compile`。check.yml 直接调用它，`.githooks/pre-commit` 也直接调用它，所以「本地提交绿了」和「CI 那一道静态关卡绿了」是同一件事，而不是两份会漂移的清单；新增检查只能加进这个脚本。
 
 两点设计上的取舍：
 
@@ -112,6 +112,7 @@ python3 scripts/check-package-manifests.py
 python3 tests/test_package_manifests.py
 python3 tests/test_select_packages.py
 ./tests/test-build-regressions.sh
+./tests/test-build-policy.sh
 bash tests/test_repository.sh
 bash tests/test-cachyos-environment.sh base
 bash -n scripts/*.sh client/install.sh manage.sh tests/*.sh

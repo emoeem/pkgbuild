@@ -93,8 +93,9 @@ build() {
 package() {
   cd $_gitname
 
-  # Install all built executables (skip .so and .d files)
+  # emoeem overlay: scxtui belongs to scx-tools
+  # Install all built executables (skip .so files; scxtui belongs to scx-tools)
   find target/release \
-    -maxdepth 1 -type f -executable ! -name '*.so' \
+    -maxdepth 1 -type f -executable ! -name '*.so' ! -name 'scxtui' \
     -exec install -Dm755 -t "$pkgdir/usr/bin/" {} +
 }

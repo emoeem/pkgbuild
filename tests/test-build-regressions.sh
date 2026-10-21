@@ -126,4 +126,46 @@ lookup_guard="$(awk '
 ' "$soname_script")"
 [[ "$lookup_guard" == guarded ]] \
     || fail 'soname scan indexes declared_sonames by a possibly empty source directory'
+printf '%s\n' '8/8: verify scx-scheds-git keeps shipping nothing that scx-tools owns'
+# Upstream's package() installs every executable from target/release, and
+# upstream started building scxtui -- which the scx-tools dependency already
+# ships as /usr/bin/scxtui. pacman aborts the transaction with
+# "scx-scheds-git: /usr/bin/scxtui exists in filesystem (owned by scx-tools)"
+# after a 14 minute compile (run 39571220772).
+#
+# The fix is an overlay, not a PKGBUILD edit: sync-aur-packages.sh replaces the
+# whole package directory on every AUR sync, which is how the previous direct
+# edit was silently reverted by commit e38a21e. Both halves are asserted, so
+# either losing the overlay or losing its application is caught.
+scx_overlay="$root/scripts/overlays/scx-scheds-git.sh"
+[[ -x "$scx_overlay" ]] || fail 'scx-scheds-git overlay is missing or not executable'
+grep -Fq -- "! -name 'scxtui'" "$root/packages/scx-scheds-git/PKGBUILD" \
+    || fail 'scx-scheds-git installs scxtui, which collides with scx-tools'
+grep -Fq -- '# emoeem overlay: scxtui belongs to scx-tools' "$root/packages/scx-scheds-git/PKGBUILD" \
+    || fail 'scx-scheds-git PKGBUILD carries no overlay marker'
+grep -Fq -- 'scripts/overlays' "$root/scripts/sync-aur-packages.sh" \
+    || fail 'AUR sync no longer re-applies overlaid package directories'
+
+# The overlay must survive a sync: apply it to a pristine copy of upstream's
+# rule, then apply it again and require an identical file.
+scx_fixture="$work/scx-fixture"
+mkdir -p "$scx_fixture"
+cat > "$scx_fixture/PKGBUILD" <<'PKGBUILD'
+package() {
+  cd $_gitname
+
+  # Install all built executables (skip .so and .d files)
+  find target/release \
+    -maxdepth 1 -type f -executable ! -name '*.so' \
+    -exec install -Dm755 -t "$pkgdir/usr/bin/" {} +
+}
+PKGBUILD
+bash "$scx_overlay" "$scx_fixture" || fail 'scx-scheds-git overlay failed on upstream package()'
+grep -Fq -- "! -name 'scxtui'" "$scx_fixture/PKGBUILD" \
+    || fail 'scx-scheds-git overlay did not exclude scxtui from install'
+first_sum="$(sha256sum "$scx_fixture/PKGBUILD" | cut -d' ' -f1)"
+bash "$scx_overlay" "$scx_fixture" || fail 'scx-scheds-git overlay is not idempotent'
+[[ "$(sha256sum "$scx_fixture/PKGBUILD" | cut -d' ' -f1)" == "$first_sum" ]] \
+    || fail 're-running the scx-scheds-git overlay rewrote the PKGBUILD'
+
 printf '%s\n' 'All build regression tests passed.'

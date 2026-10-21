@@ -425,6 +425,71 @@ def check_registry_entries(root, packages, registry, tracked, errors):
             errors.append(f"{where}: {name} names missing file '{detail}'")
 
 
+OVERLAY_MARKER = "# emoeem overlay:"
+
+
+def check_overlay_provenance(root, package_dirs, errors, notes):
+    """Contract 4: an overlay marker in a PKGBUILD must have a real overlay.
+
+    An overlay is the only place a local customization survives
+    `sync-aur-packages.sh`, which replaces the whole package directory with the
+    upstream tree.  A direct PKGBUILD edit is therefore invisible *and*
+    temporary: scx-scheds-git's scxtui exclusion was written straight into
+    packages/*/PKGBUILD, the next AUR sync (commit e38a21e) restored upstream's
+    package(), and the build failed again on a /usr/bin/scxtui collision with
+    scx-tools (run 39571220772).
+
+    Markers make that class of edit visible: an overlay stamps
+    `# emoeem overlay: <reason>` next to each change it makes, so a marker in a
+    PKGBUILD that no overlay emits is either an unmanaged hand edit or an
+    overlay that lost its rewrite.  Either way the next sync deletes it, so it
+    is refused here rather than in a 14 minute build.
+
+    The check is deliberately one-directional.  An overlay is allowed to change
+    a file without stamping it (ffmpeg-full does), because no marker means no
+    claim; what must never happen is a marker with nothing to reproduce it.
+    """
+    overlays_root = root / "scripts" / "overlays"
+    if not overlays_root.is_dir():
+        if any(
+            (path / "PKGBUILD").is_file()
+            and OVERLAY_MARKER in (path / "PKGBUILD").read_text(errors="replace")
+            for path in package_dirs
+        ):
+            errors.append(
+                "scripts/overlays: directory missing but PKGBUILDs carry overlay markers"
+            )
+        return
+
+    emitters = {}
+    for script in sorted(overlays_root.glob("*.sh")):
+        emitters[script.stem] = script.read_text(errors="replace")
+
+    for package_dir in package_dirs:
+        pkgbuild = package_dir / "PKGBUILD"
+        if not pkgbuild.is_file():
+            continue
+        text = pkgbuild.read_text(errors="replace")
+        if OVERLAY_MARKER not in text:
+            continue
+        name = package_dir.name
+        script = overlays_root / f"{name}.sh"
+        if not script.is_file():
+            errors.append(
+                f"{pkgbuild}: carries an overlay marker but scripts/overlays/{name}.sh "
+                "does not exist, so the next AUR sync will discard the change"
+            )
+            continue
+        if OVERLAY_MARKER not in emitters[name]:
+            errors.append(
+                f"{pkgbuild}: carries an overlay marker but "
+                f"scripts/overlays/{name}.sh never emits one, so the marker cannot "
+                "be reproduced after a sync"
+            )
+    if not any(OVERLAY_MARKER in s for s in emitters.values()):
+        notes.append("no overlay emits a marker: overlay provenance is unchecked")
+
+
 def run(root):
     """Check the tree under root.  Returns (errors, notes, package count)."""
     errors = []
@@ -460,6 +525,8 @@ def run(root):
     check_registry_entries(
         root, {path.name for path in manifests}, registry, tracked, errors
     )
+
+    check_overlay_provenance(root, manifests, errors, notes)
 
     gitlinks = tracked_gitlinks(root)
     if gitlinks is None:

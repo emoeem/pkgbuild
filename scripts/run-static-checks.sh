@@ -60,6 +60,7 @@ checks=(
     "workflow-images"
     "aur-dependency-fallback"
     "build-regressions"
+    "build-policy"
     "shell-syntax"
     "shellcheck"
     "python-syntax"
@@ -109,6 +110,14 @@ run_check() {
             # be listed in the README and run by nobody; it is cheap, needs no
             # container, and belongs in the gate that actually runs.
             bash tests/test-build-regressions.sh
+            ;;
+        build-policy)
+            # validate-build-policy.sh decides whether a build may start at all,
+            # and it once refused every package mounted on an empty private
+            # repository (filee-update run 39593696778). Both sides of that
+            # contract - the gate and configure-build-repo.sh - are covered by
+            # fake pacman-conf/gcc, so this needs no CachyOS and no root.
+            bash tests/test-build-policy.sh
             ;;
         shell-syntax)
             bash -n manage.sh scripts/*.sh client/*.sh tests/*.sh
