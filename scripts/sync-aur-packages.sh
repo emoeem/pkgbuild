@@ -105,6 +105,14 @@ for package_name in "${package_names[@]}"; do
         printf '%s: upstream tree has no PKGBUILD.\n' "$package_name" >&2
         exit 1
     fi
+    # 同步不得把 pkgrel 拉回上游基线：本地用 .N 子版本号记录自己的重建次数，
+    # 而仓库里的版本号只允许前进（pacman 只看版本号，repo-add 还会照单覆盖，
+    # 于是发布版本一旦倒退，装了高版本的机器就再也收不到更新）。overlay 之外
+    # 的包也要覆盖，所以这一步放在 overlay 之后、.SRCINFO 生成之前。
+    if [[ -f "$package_dir/PKGBUILD" ]]; then
+        bash "$repo_root/scripts/pkgrel-floor.sh" \
+            "$staged_dir" --against-pkgbuild "$package_dir/PKGBUILD"
+    fi
     if ! (cd "$staged_dir" && BUILDDIR="$temporary_dir/build" SRCDEST="$temporary_dir/src" \
         PKGDEST="$temporary_dir/pkg" LOGDEST="$temporary_dir/log" makepkg --printsrcinfo > .SRCINFO); then
         printf '%s: failed to generate .SRCINFO after overlay.\n' "$package_name" >&2

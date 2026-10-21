@@ -49,7 +49,21 @@ fi
 
 # 3. Distinguish local builds from the AUR package so pacman treats them as
 #    separate revisions even at the same upstream pkgrel.
-sed -i -E 's/^pkgrel=([0-9]+)(\.[0-9]+)?$/pkgrel=\1.6/' "$pkgbuild"
+#    Raise-only: the .6 floor marks "this is our build of the upstream base",
+#    but a pkgrel that is already higher (bump_pkgrel rebuilds, pkgrel-floor.sh
+#    alignment, the pkgrel write-back) must survive the overlay. Forcing the
+#    literal .6 here reset 2.11 back to 2.6 on every AUR sync, and repo-add
+#    happily republished the older number — clients on 2.11 could never update
+#    again. Keep the higher revision instead; a new upstream base (2 -> 3)
+#    still lands on 3.6, which is above any 2.x.
+current_pkgrel="$(sed -nE 's/^pkgrel=([0-9]+(\.[0-9]+)?)$/\1/p' "$pkgbuild")"
+[[ -n "$current_pkgrel" ]] || fail 'unable to parse a numeric pkgrel'
+base_pkgrel="${current_pkgrel%%.*}"
+final_pkgrel="${base_pkgrel}.6"
+if [[ "$current_pkgrel" == *.* ]] && (( 10#${current_pkgrel#*.} >= 6 )); then
+    final_pkgrel="$current_pkgrel"
+fi
+sed -i -E "s/^pkgrel=.*/pkgrel=${final_pkgrel}/" "$pkgbuild"
 
 # 3b. Do not inherit the builder host's -march=native.
 # The flag block is replaced from its first line up to the configure call. That
@@ -149,13 +163,14 @@ fi
 # 4. Mirror the changes into .SRCINFO: regenerate with makepkg when available
 #    (local sync runs); patch the two changed entries textually otherwise
 #    (CI sync runners have no pacman).
-base_pkgrel="$(sed -nE 's/^pkgrel=([0-9]+)\.[0-9]+$/\1/p' "$pkgbuild")"
-[[ -n "$base_pkgrel" ]] || fail 'unable to parse overlaid pkgrel'
+# final_pkgrel 来自第 3 步（只升不降）：这里只复核 PKGBUILD 没被中途改过。
+[[ "$(sed -nE 's/^pkgrel=([0-9]+(\.[0-9]+)?)$/\1/p' "$pkgbuild")" == "$final_pkgrel" ]] ||
+    fail 'pkgrel changed between overlay steps'
 
 if command -v makepkg > /dev/null 2>&1; then
     ( cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO )
 else
-    sed -i -E 's/^(\tpkgrel = )[0-9]+(\.[0-9]+)?$/\1'"${base_pkgrel}"'.6/' "$srcinfo"
+    sed -i -E "s/^(\tpkgrel = ).*/\1${final_pkgrel}/" "$srcinfo"
     if (( oapv_injected )) && ! grep -qF "	source = ${oapv_patch}::" "$srcinfo"; then
         python3 - "$srcinfo" "$oapv_patch" "$oapv_patch_url" "$oapv_patch_sum" <<'PY4'
 from pathlib import Path
@@ -215,14 +230,14 @@ if (( oapv_injected )); then
     [[ "$(grep -cF "	source = ${oapv_patch}::${oapv_patch_url}" "$srcinfo")" == 1 ]] ||
         fail 'injected liboapv patch source entry duplicated or missing in .SRCINFO'
 fi
-grep -q "^pkgrel=${base_pkgrel}\.6$" "$pkgbuild" ||
+grep -q "^pkgrel=${final_pkgrel}$" "$pkgbuild" ||
     fail 'pkgrel bump missing'
-grep -qE "$(printf '\t')pkgrel = ${base_pkgrel}\.6$" "$srcinfo" ||
+grep -qE "$(printf '\t')pkgrel = ${final_pkgrel}$" "$srcinfo" ||
     fail 'pkgrel missing in .SRCINFO'
 [[ "$(grep -cF 'optdepends = cuda: for NVIDIA NPP filters' "$srcinfo")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in .SRCINFO'
 
 oapv_source='from AUR'
 (( oapv_injected )) && oapv_source='backported'
-printf 'ffmpeg-full overlay applied: libnpp enabled, openapv 1.1 fix %s, pkgrel %s.6.\n' \
-    "$oapv_source" "$base_pkgrel"
+printf 'ffmpeg-full overlay applied: libnpp enabled, openapv 1.1 fix %s, pkgrel %s.\n' \
+    "$oapv_source" "$final_pkgrel"

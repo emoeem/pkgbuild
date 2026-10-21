@@ -113,6 +113,8 @@ python3 tests/test_package_manifests.py
 python3 tests/test_select_packages.py
 ./tests/test-build-regressions.sh
 ./tests/test-build-policy.sh
+./tests/test-pkgrel-floor.sh        # 版本只许前进：对齐规则与发布闸门
+./tests/test_publish_inputs.sh
 bash tests/test_repository.sh
 bash tests/test-cachyos-environment.sh base
 bash -n scripts/*.sh client/install.sh manage.sh tests/*.sh
@@ -120,6 +122,36 @@ python3 -m py_compile scripts/*.py tests/*.py
 ./scripts/check-package.sh
 ```
 
+
+## 版本号单调性（仓库版本只许前进）
+
+pacman 只按版本号判断「要不要升级」，而 `repo-add` **不做版本比较**：它按
+pkgname 覆盖，会把仓库里更高的同名版本静默换成一个更低的。所以「发布一个
+不比已装版本新的包」不是「发了但没用」，而是「把别人的升级路径彻底切断」。
+
+2026-10-21 真实事故：仓库发过 `ffmpeg-full 9.0.2-2.11` 与 `mpeghdec 4.0.1-2`，
+一次 AUR 同步把源码树 pkgrel 打回基线 `2.6` / `1`，随后的重建把这两个低版本
+发了出去，两台装了 2.11 / 4.0.1-2 的机器从此再也收不到更新（`pacman -Qu`
+一直是空的，看起来一切正常）。
+
+三个入口一起保证这条不等式，缺一条都会重演：
+
+| 位置 | 脚本 | 作用 |
+| --- | --- | --- |
+| AUR 同步 | `pkgrel-floor.sh --against-pkgbuild` | 上游 PKGBUILD 的 pkgrel 不得把本地的 `.N` 子版本号拉回去（同 pkgver 时） |
+| overlay | `scripts/overlays/ffmpeg-full.sh` | `.6` 是下限不是定值，已经更高的 pkgrel 原样保留 |
+| 构建前 | `pkgrel-floor.sh --against-repository` | 已发布版本是下限，产物必须严格新于它；仓库里的 pkgver 更新时直接拒绝构建 |
+| 发布闸门 | `verify-publish-inputs.sh` | 产物落后于已发布版本 = 硬失败（以前只有 WARNING） |
+| 发布后 | `write-back-pkgrel.sh` | 把产物版本写回 PKGBUILD/.SRCINFO，源码树追上仓库 |
+
+规则本身只有一处实现（`scripts/pkgrel-floor.sh`），两个调用点共用；VCS 包
+（`pkgver()` 在 makepkg 里解析）与带 epoch 的包不参与对齐，方向交给 vercmp
+和发布闸门。
+
+一次性对账：当仓库已经被降到客户端已装版本之下的既成事实时，`pkgrel-floor.sh`
+只能从「已发布版本」+1，追不上客户端。这种情况要人工把源码 pkgrel 抬到
+**已装版本之上**（`ffmpeg-full 2.6 -> 2.12`、`mpeghdec 1 -> 3` 就是这么修的），
+之后由上面的链条自动维持单调。
 
 ## 5. P1：CachyOS-native 构建增强
 

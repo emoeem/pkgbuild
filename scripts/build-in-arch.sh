@@ -150,6 +150,8 @@ as_builder() {
         "HOME=${builder_home}"
         "MAKEFLAGS=-j${make_jobs}"
         "BUMP_PKGREL=${BUMP_PKGREL:-false}"
+        # 已发布仓库（只读挂载）：pkgrel-floor.sh 用它算版本下限。
+        "LOCAL_REPO_DIR=${LOCAL_REPO_DIR:-}"
         "CFLAGS=${EMO_CFLAGS}"
         "CXXFLAGS=${EMO_CXXFLAGS}"
         "LDFLAGS=${EMO_LDFLAGS}"
@@ -182,6 +184,17 @@ as_builder() {
 source "$native_profile"
 
 as_builder bash "$workspace_dir/scripts/prepare-build-source.sh" "$package_dir"
+
+# 构建产物必须严格新于仓库里已发布的同名包：pacman 只按版本号判断升级，
+# 而 repo-add 不做版本比较（按 pkgname 覆盖）。少这一步，AUR 同步把 pkgrel
+# 拉回基线之后重建出来的包会静默顶掉仓库里的高版本，装了高版本的机器从此
+# 收不到更新（ffmpeg-full 9.0.2-2.11 → 2.6 就是这么发生的）。
+if [[ -n "${LOCAL_REPO_DIR:-}" ]]; then
+    as_builder bash "$workspace_dir/scripts/pkgrel-floor.sh" \
+        "$package_dir" --against-repository "$LOCAL_REPO_DIR"
+else
+    printf 'Skipping pkgrel floor: LOCAL_REPO_DIR is not set (no published repository).\n'
+fi
 
 printf 'Creating an isolated package source snapshot...\n'
 as_builder git init --bare --initial-branch=main "$package_remote"

@@ -788,8 +788,11 @@ jobs:
           set -Eeuo pipefail
           bash source/scripts/publish-release.sh
 
+      # 回写不再只在 bump_pkgrel 输入下发生：构建前的 pkgrel 对齐
+      # (pkgrel-floor.sh) 同样会抬高产物版本，源码树不追上就会一直漂移。
+      # 脚本本身是幂等的（没有差异时输出 "No pkgrel write-back needed."），
+      # 而且只有发布成功后才会执行到这里。
       - name: Write back bumped pkgrel to main
-        if: ${{ inputs.bump_pkgrel == true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

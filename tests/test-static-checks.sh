@@ -39,6 +39,7 @@ workflow-images
 aur-dependency-fallback
 build-regressions
 build-policy
+version-monotonicity
 shell-syntax
 shellcheck
 python-syntax

@@ -61,6 +61,7 @@ checks=(
     "aur-dependency-fallback"
     "build-regressions"
     "build-policy"
+    "version-monotonicity"
     "shell-syntax"
     "shellcheck"
     "python-syntax"
@@ -118,6 +119,14 @@ run_check() {
             # contract - the gate and configure-build-repo.sh - are covered by
             # fake pacman-conf/gcc, so this needs no CachyOS and no root.
             bash tests/test-build-policy.sh
+            ;;
+        version-monotonicity)
+            # 仓库版本只许前进。pkgrel-floor.sh 是这条规则唯一的实现（AUR 同步
+            # 与构建前各一个调用点），verify-publish-inputs.sh 是发布闸门：
+            # 2026-10-21 那次 ffmpeg-full 2.11 -> 2.6 / mpeghdec 2 -> 1 的逆转
+            # 就是「只有 WARNING、没有拒绝」的代价。
+            bash tests/test-pkgrel-floor.sh
+            bash tests/test_publish_inputs.sh
             ;;
         shell-syntax)
             bash -n manage.sh scripts/*.sh client/*.sh tests/*.sh

@@ -198,13 +198,37 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
             printf 'Accepted bumped pkgrel for %s: %s (source=%s)\n' "$name" "$actual" "$expected"
             continue
         fi
+        # 构建前的 pkgrel 对齐（pkgrel-floor.sh --against-repository）会把 pkgrel
+        # 抬到已发布版本之上，产物因此比源码树的 .SRCINFO 更新 —— 这是有意的
+        # 前进，不是版本错配。只放行同 pkgver、pkgrel 严格更大，且没有撞上/落后
+        # 于已发布版本的情况（后两种上面和下面都会拒绝）。
+        expected_ver="${expected%-*}"
+        expected_rel="${expected##*-}"
+        if [[ "$actual_ver" == "$expected_ver" \
+            && "$already_published" == no && "$behind_published" == no ]] \
+            && pkgrel_at_most "$expected_rel" "$actual_rel"; then
+            printf 'Accepted repository-aligned pkgrel for %s: %s (source=%s)\n' \
+                "$name" "$actual" "$expected"
+            continue
+        fi
         printf 'Publication mismatch for %s: artifact=%s source=%s\n' "$name" "$actual" "$expected" >&2
         exit 1
     fi
-    # 普通路径下的同版本重发：静态包这样发出去没人能升级（多半是忘了 bump
-    # pkgrel），但发布是全有全无，所以只响不拦；VCS 包重建后版本号不变是正常
+    # 普通路径下版本没有前进。对静态包来说「落后于已发布版本」是纯粹的倒退：
+    # repo-add 不做版本比较，会把仓库里更高的同名版本覆盖掉，装了高版本的机器
+    # 从此收不到任何更新（ffmpeg-full 9.0.2-2.11 → 2.6、mpeghdec 4.0.1-2 →
+    # 4.0.1-1 都是这样发生的）。构建前的 pkgrel 对齐本该让这一步不可能出现，
+    # 所以它一旦出现就是流水线坏了 —— 宁可让发布失败，也不再降一次仓库版本。
+    if [[ "$behind_published" == yes ]] \
+        && ! grep -qE '^pkgver\(\)[[:space:]]*\{' "${root}/packages/${name}/PKGBUILD"; then
+        printf 'Publication would downgrade %s: artifact=%s is older than the published %s, and repo-add does not compare versions; rebuild with the pkgrel floor (pkgrel-floor.sh --against-repository) instead of publishing it\n' \
+            "$name" "$actual" "$published_value" >&2
+        exit 1
+    fi
+    # 同版本重发只响不拦：发布是全有全无，不能因为一个静态包没 bump pkgrel 就
+    # 让整批（比如同批的另一个修复）发不出去。VCS 包重建后版本号不变是正常
     # 空转，连响都不必响。
-    if [[ "$already_published" == yes || "$behind_published" == yes ]] \
+    if [[ "$already_published" == yes ]] \
         && ! grep -qE '^pkgver\(\)[[:space:]]*\{' "${root}/packages/${name}/PKGBUILD"; then
         printf 'WARNING: %s %s is already published; this publish cannot upgrade anyone (bump pkgrel if the content changed)\n' \
             "$name" "$actual" >&2

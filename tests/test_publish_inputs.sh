@@ -212,12 +212,39 @@ output="$(run_case with-published 2>&1)"
 grep -q 'WARNING: stable-demo 1.0-1 is already published' <<<"$output"
 echo 'ok: a static same-version republish warns without blocking the batch'
 
+# 反方向就不能放行了：产物比已发布版本旧 = 纯粹的倒退。repo-add 不比较版本，
+# 会把仓库里更高的同名版本覆盖掉（mpeghdec 4.0.1-2 -> 4.0.1-1 就是这么发生的），
+# 装了高版本的机器从此收不到更新。2026-10-21 之前这里只 WARNING。
 rm -f "$tmp/incoming"/*
 make_case stable-demo 1.0 1 1.0-1 no
 make_published stable-demo 1.0-2
-output="$(run_case with-published 2>&1)"
-grep -q 'WARNING: stable-demo 1.0-1 is already published' <<<"$output"
-echo 'ok: a static publish behind the published version warns without blocking'
+if output="$(run_case with-published 2>&1)"; then
+    echo 'expected a static publish behind the published version to fail' >&2
+    exit 1
+fi
+grep -q 'Publication would downgrade stable-demo' <<<"$output"
+echo 'ok: a static publish behind the published version is rejected'
+
+# 构建前的 pkgrel 对齐把源码树的 2.6 抬到 2.12，产物因此比源码 .SRCINFO 更新：
+# 这是有意的前进，必须放行，否则 write-back 之前永远发不出去。
+rm -f "$tmp/incoming"/*
+make_case ffmpeg-full 9.0.2 2.6 9.0.2-2.12 no
+make_published ffmpeg-full 9.0.2-2.11
+output="$(run_case with-published)"
+grep -q 'Accepted repository-aligned pkgrel for ffmpeg-full' <<<"$output"
+echo 'ok: a pkgrel aligned above the published version is accepted'
+
+# 对齐只抬一档却仍然落后于已发布版本（源码 2.6 -> 2.7，仓库 2.11）时不能放行：
+# 2.7 对装着 2.11 的机器依旧不是升级。
+rm -f "$tmp/incoming"/*
+make_case ffmpeg-full 9.0.2 2.6 9.0.2-2.7 no
+make_published ffmpeg-full 9.0.2-2.11
+if output="$(run_case with-published 2>&1)"; then
+    echo 'expected an alignment that is still behind the published version to fail' >&2
+    exit 1
+fi
+grep -q 'Publication would not upgrade ffmpeg-full' <<<"$output"
+echo 'ok: an alignment that still lands behind the published version is rejected'
 
 # VCS 包在上游没动时重建出来的版本号和已发布的一模一样，这是正常空转：既不能
 # 失败，也不该刷 WARNING。

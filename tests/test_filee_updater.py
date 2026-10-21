@@ -82,22 +82,35 @@ class UpdateFileTests(unittest.TestCase):
         shutil.copy2(ROOT / "packages/filee-bin/.SRCINFO", package / ".SRCINFO")
         return package
 
+    def next_version(self, package: Path) -> str:
+        """A version strictly newer than whatever is pinned right now.
+
+        The updater refuses downgrades, so a hardcoded version in this fixture
+        turns the test red the moment the automated filee update pins something
+        higher (it did: the pinned 2.0.0 made the old 1.13.0 fixture fail with
+        "Filee 1.13.0 is older than the pinned 2.0.0; no change").
+        """
+        pinned, _, _ = updater.current_values((package / "PKGBUILD").read_text())
+        head, _, tail = pinned.rpartition(".")
+        return f"{head}.{int(tail) + 1}"
+
     def test_bumps_pkgver_pkgrel_and_checksum_in_both_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             package = self.copy_package(root)
             checksum = "a" * 64
-            self.assertTrue(updater.update_files(root, "1.13.0", checksum))
+            candidate = self.next_version(package)
+            self.assertTrue(updater.update_files(root, candidate, checksum))
             pkgbuild = (package / "PKGBUILD").read_text(encoding="utf-8")
             srcinfo = (package / ".SRCINFO").read_text(encoding="utf-8")
-            self.assertIn("pkgver=1.13.0", pkgbuild)
+            self.assertIn(f"pkgver={candidate}", pkgbuild)
             self.assertIn("pkgrel=1", pkgbuild)
             self.assertIn(f"sha256sums=('{checksum}')", pkgbuild)
-            self.assertIn("pkgver = 1.13.0", srcinfo)
+            self.assertIn(f"pkgver = {candidate}", srcinfo)
             self.assertIn("pkgrel = 1", srcinfo)
             self.assertIn(
                 "source = https://github.com/KnifeLemon/Filee/releases/download/"
-                "v1.13.0/Filee-1.13.0-linux-x64.tar.gz",
+                f"v{candidate}/Filee-{candidate}-linux-x64.tar.gz",
                 srcinfo,
             )
             self.assertIn(f"sha256sums = {checksum}", srcinfo)
