@@ -18,7 +18,7 @@
 
 pkgname=dracpanel
 pkgver=0.1.0
-pkgrel=4
+pkgrel=6
 pkgdesc='DracPanel: unofficial Dracula/Alucard desktop web UI for sing-box'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
