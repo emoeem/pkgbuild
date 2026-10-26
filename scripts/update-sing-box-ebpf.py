@@ -133,8 +133,16 @@ def main() -> int:
     metadata = fetch_json(args.metadata_url)
     version = metadata.get("version")
     source_sha = metadata.get("source_sha")
-    if not isinstance(version, str) or not isinstance(source_sha, str) or not version or not source_sha:
-        raise ValueError("stable-build-info.json has an empty version/source_sha; refusing to treat it as an update")
+    if not isinstance(version, str) or not isinstance(source_sha, str):
+        raise ValueError("stable-build-info.json is missing version/source_sha; refusing to treat it as an update")
+    if not version and not source_sha:
+        # An all-empty template is the upstream pipeline's "no stable build recorded"
+        # state (reF1nd resets these fields when it restructures the release
+        # workflows, e.g. the 2026-10-25 promote force-push), not corruption.
+        print("stable-build-info.json is empty: upstream has no stable build recorded; leaving sing-box-ebpf unchanged")
+        return 0
+    if not version or not source_sha:
+        raise ValueError("stable-build-info.json has only one of version/source_sha; refusing to treat it as an update")
     tag = validate_release(version, source_sha)
     if args.apply:
         update_files(args.root, tag, source_sha, version)
