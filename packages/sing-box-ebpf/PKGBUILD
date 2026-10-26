@@ -30,12 +30,12 @@
 # 重建发布（无需人工合并）。
 # 手动维护时仍需同步修改 _tag、_commit、pkgver/pkgrel，并重新生成 .SRCINFO。
 
-_tag=v1.14.3-reF1nd
-_commit=adf2d003a4e9240ba8a65fcf90531886bd479613   # verified against v1.14.3-reF1nd
+_tag=v1.14.4-reF1nd
+_commit=732618a5989cd2566f072c374fe2f619200f33f9   # verified against v1.14.4-reF1nd
 
 pkgname=sing-box-ebpf
-pkgver=1.14.3.ref1nd
-pkgrel=2
+pkgver=1.14.4.ref1nd
+pkgrel=1
 pkgdesc='The universal proxy platform with the experimental eBPF inbound (reF1nd fork, x86-64-v3 static build)'
 arch=('x86_64')
 url='https://github.com/reF1nd/sing-box'
