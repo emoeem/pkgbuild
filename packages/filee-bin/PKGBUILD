@@ -18,7 +18,7 @@
 
 pkgname=filee-bin
 pkgver=2.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Offline file converter GUI and CLI (prebuilt upstream Linux x64 release)'
 arch=('x86_64')
 url='https://github.com/KnifeLemon/Filee'

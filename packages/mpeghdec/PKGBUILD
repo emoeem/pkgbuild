@@ -2,7 +2,7 @@
 
 pkgname=mpeghdec
 pkgver=4.0.1
-pkgrel=3
+pkgrel=4
 pkgdesc='Fraunhofer MPEG-H audio decoder'
 arch=('x86_64')
 url='https://mpegh.com/'

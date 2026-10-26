@@ -1,7 +1,7 @@
 pkgbase = filee-bin
 	pkgdesc = Offline file converter GUI and CLI (prebuilt upstream Linux x64 release)
 	pkgver = 2.1.0
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/KnifeLemon/Filee
 	arch = x86_64
 	license = MIT
