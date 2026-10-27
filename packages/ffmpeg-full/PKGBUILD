@@ -173,8 +173,16 @@ source=("https://ffmpeg.org/releases/ffmpeg-${pkgver}.tar.xz"{,.asc}
         '050-ffmpeg-fix-cuda-nvcc-with-gcc14.patch'
         '060-ffmpeg-lensfun-fix-pkgconfig.patch'
         '070-ffmpeg-whisper.cpp-fix-pkgconfig.patch'
-        '080-ffmpeg-openapv1.1-fix.patch'::'https://code.ffmpeg.org/FFmpeg/FFmpeg/commit/c54710db21c1827dbc3e47658a562525af0fe528.patch'
+        '080-ffmpeg-openapv1.1-fix.patch'
         'LICENSE')
+# 080 is vendored rather than fetched from
+# https://code.ffmpeg.org/FFmpeg/FFmpeg/commit/c54710db21c1827dbc3e47658a562525af0fe528.patch
+# because that endpoint re-renders the patch text: the git 'index' abbreviation
+# changed under a constant commit id, so the recorded sum went stale. makepkg
+# also never re-downloads a file already present in SRCDEST (it prints
+# "-> Found"), so updating the sum for a remote source cannot recover the build
+# while the cached copy is old -- ffmpeg-full 9.0.2-2.36 failed that way twice.
+# Content is the upstream commit; only the index abbreviation differs.
 sha256sums=('8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e'
             'SKIP'
             'SKIP'
