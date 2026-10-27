@@ -39,6 +39,42 @@ timing_end() {
     unset "TIMING_PHASE_START[$phase]"
 }
 
+# Retry a command whose failure is outside the build's control.
+#
+# Upstream mirrors are not always consistent with each other. On 2026-10-27 a
+# `pacman -Syu` inside the builder died with "failed to commit transaction
+# (unexpected error)" because one CDN edge returned 404 for a gcc package that
+# another edge served (cdn77.cachyos.org 404, mirror.cachyos.org 200, same
+# filename, sampled a minute apart). pacman skips a mirror after "too many
+# errors" and does not fall through to the rest, so a single stale edge fails a
+# build that has nothing wrong with it. The clean-chroot path has had a bounded
+# retry for exactly this since 2026-10-11; this makes the container path match.
+#
+#   retry_transient <attempts> <initial-delay-seconds> -- <command...>
+#
+# A real file conflict or a genuinely missing dependency still fails, after two
+# extra attempts -- cheaper than a red build caused by mirror skew.
+retry_transient() {
+    local attempts="$1"
+    local delay="$2"
+    shift 2
+    if [[ "${1:-}" == "--" ]]; then
+        shift
+    fi
+    local attempt=1
+    until "$@"; do
+        if ((attempt >= attempts)); then
+            printf 'Command still failing after %d attempts: %s\n' "$attempt" "$*" >&2
+            return 1
+        fi
+        printf 'Attempt %d/%d failed (upstream mirror transient?); retrying in %ds: %s\n' \
+            "$attempt" "$attempts" "$delay" "$*" >&2
+        sleep "$delay"
+        attempt=$((attempt + 1))
+        delay=$((delay * 2))
+    done
+}
+
 timing_total() {
     [[ -n "$TIMING_FILE" ]] || return 0
     local seconds

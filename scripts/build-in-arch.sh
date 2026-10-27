@@ -259,7 +259,12 @@ fi
 
 yay --version
 printf "Refreshing package databases and pruning stale binary caches...\n"
-pacman -Syu --noconfirm
+# 镜像之间的同步延迟会让某一条 CDN 边对仍在数据库里的包返 404(2026-10-27
+# 实测 cdn77 404 / mirror.cachyos.org 200,同一文件名),而 pacman 跳过一个
+# 镜像后不会把剩下的全试完,直接 "failed to commit transaction" 整包失败。
+# 这条路径以前没有重试,一次镜像抖动就红一个 build;clean-chroot 那条从
+# 2026-10-11 起就有,现在两边一致。
+retry_transient 3 20 -- pacman -Syu --noconfirm
 bash "$workspace_dir/scripts/validate-build-policy.sh"
 pacman -Sc --noconfirm
 
@@ -290,7 +295,7 @@ chmod 0755 /usr/local/bin/pacman
 if [[ "$package_name" == "ffmpeg-full" ]]; then
     # Resolve virtual/provider dependencies non-interactively and pin them to
     # the same concrete packages selected by this local CachyOS-v3 profile.
-    pacman -S --needed --noconfirm \
+    retry_transient 3 20 -- pacman -S --needed --noconfirm \
         sdl2-compat libglvnd l-smash onetbb tevent \
         tesseract-data-eng tesseract-data-osd
 fi
