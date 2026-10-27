@@ -113,6 +113,32 @@ ABI 是否不匹配、建议动作、允许的自动修复等级与置信度。
 level 1，记录状态是 `dispatched` 而非 `applied`，`build.yml` 不会为它产生提交或推送；
 若该工作流已有 queued / in_progress 的 run，则不重复派发。
 
+### checksum 失效先排除缓存
+
+`did not pass the validity check` 有两个成因，而日志无法区分它们：上游内容真的变了，
+或者 `SRCDEST` 里躺着一份与声明不符的旧字节。`makepkg` 对缓存里已有的文件只打印
+`-> Found <name>` 并不重新下载，随后哈希的就是那份旧内容——所以只靠重跑永远分不出
+是哪一种，而两种成因的处置完全相反。
+
+因此在任何重钉发生之前，`auto-repair.sh` 先调用 `validate-source-cache.sh` 复核缓存：
+
+- 缓存条目与声明不符 → 策略 `clear_stale_source_cache`（level 1，不写工作区任何文件），
+  删除该条目后由下一次构建重新下载。状态记为 `stale-cache-cleared`。
+- 缓存与声明一致 → 才继续原有的「`.aur-url` 包刷新校验和 / repository-managed 包交棒」
+  逻辑。
+
+这一条是纪律而不是优化：对陈旧缓存跑 `updpkgsums` 会把旧字节的哈希钉进 `PKGBUILD`，
+构建转绿而仓库从此声明了一份从未被校验过的内容。`tests/test_auto_repair.sh` 用两个
+方向锁住它——缓存陈旧时 PKGBUILD 与 `.SRCINFO` 的 sha256 必须逐字节不变；缓存干净时
+必须仍然落到 `refresh_checksum`。
+
+### 修复没跑也要说
+
+此前「找到策略但跑不了」（level 不够、预算用完、回滚）只把记录打印在一个折叠的
+`::group::` 里，步骤依旧 `exit 0`——于是一次运行可以全绿、什么都没发布、仓库仍然是坏的。
+现在 `build.yml` 把这些情形逐条写进 step summary、发 `::warning::` 注解，并在该包已有的
+build-failure issue 上留一条评论说明为什么没修。
+
 `AUTO_FIX_LEVEL` 是上限：脚本自身默认 2，但 CI 只在设置了 repository variable
 `AUTO_FIX_LEVEL` 时才抬高，否则传 `'1'`（`gh variable list` 目前为空），因此 level 2
 的修复在 CI 里目前是惰性的。验证失败会

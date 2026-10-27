@@ -22,7 +22,12 @@ rules:
     patterns:
       - "Failed to download"
       - "source file not found"
-      - "ERROR: One or more files"
+      # "ERROR: One or more files did not pass the validity check" used to be
+      # listed here as well. It is makepkg's *checksum* message, so it matched
+      # this rule and checksum-mismatch at the same time; which one won depended
+      # only on file order, and source-not-found maps to report-only, so the same
+      # failure could silently stop being repaired if the files were reordered.
+      # The two rules must not overlap.
     root_cause: "missing or moved source"
     action:
       kind: report

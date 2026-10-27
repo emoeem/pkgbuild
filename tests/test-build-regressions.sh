@@ -168,4 +168,58 @@ bash "$scx_overlay" "$scx_fixture" || fail 'scx-scheds-git overlay is not idempo
 [[ "$(sha256sum "$scx_fixture/PKGBUILD" | cut -d' ' -f1)" == "$first_sum" ]] \
     || fail 're-running the scx-scheds-git overlay rewrote the PKGBUILD'
 
+printf '%s\n' '9: verify a stale cached source is removed before makepkg can hash it'
+# The failure this guards: makepkg prints `-> Found <name>` for whatever SRCDEST
+# returned and hashes that, so a cached copy whose bytes no longer match the
+# package's declared checksum fails the validity check on every run and no
+# rebuild can ever pass, because nothing re-fetches the file.
+stale="$work/stale"
+mkdir -p "$stale/cache"
+empty_sum="$(printf '' | sha256sum | cut -d' ' -f1)"
+cat >"$stale/.SRCINFO" <<EOF
+pkgbase = fixture
+	source = mine.patch::https://example.invalid/mine.patch
+	sha256sums = $empty_sum
+EOF
+printf 'bytes that are not the declared content\n' >"$stale/cache/mine.patch"
+bash "$root/scripts/validate-source-cache.sh" "$stale" "$stale/cache" >"$stale/out.txt" 2>&1 \
+    || fail 'validator treated a stale cache entry as a fatal error instead of healing it'
+[[ ! -e "$stale/cache/mine.patch" ]] || fail 'stale cached source survived validation'
+grep -Fq 'stale entry/entries removed' "$stale/out.txt" || fail 'validator did not report the heal'
+
+printf '%s\n' '10: verify a matching cached source survives validation'
+: >"$stale/cache/mine.patch"
+bash "$root/scripts/validate-source-cache.sh" "$stale" "$stale/cache" >"$stale/out2.txt" 2>&1 \
+    || fail 'validator rejected a cache entry that matches the declaration'
+[[ -f "$stale/cache/mine.patch" ]] || fail 'matching cached source was removed'
+
+printf '%s\n' '11: verify a local source that drifted from its declared checksum fails fast'
+# A local file in the package directory is part of the repository. If its content
+# stops matching the declared checksum, that is a defect no cache can repair, so
+# the build must stop with the file named instead of failing ten minutes later
+# on a generic makepkg message.
+localdir="$work/local"
+mkdir -p "$localdir/cache"
+printf 'patch body\n' >"$localdir/blob.patch"
+blob_sum="$(sha256sum "$localdir/blob.patch" | cut -d' ' -f1)"
+cat >"$localdir/.SRCINFO" <<EOF
+pkgbase = fixture
+	source = blob.patch
+	sha256sums = $blob_sum
+EOF
+bash "$root/scripts/validate-source-cache.sh" "$localdir" "$localdir/cache" >/dev/null 2>&1 \
+    || fail 'validator rejected an intact local source'
+printf 'drifted\n' >>"$localdir/blob.patch"
+if out="$(bash "$root/scripts/validate-source-cache.sh" "$localdir" "$localdir/cache" 2>&1)"; then
+    fail 'validator accepted a local source that no longer matches its checksum'
+fi
+printf '%s' "$out" | grep -Fq 'blob.patch does not match its declared checksum' \
+    || fail 'validator did not name the drifted local source'
+
+printf '%s\n' '12: verify both build paths validate the source cache before makepkg runs'
+grep -Fq 'validate-source-cache.sh' "$root/scripts/build-in-arch.sh" \
+    || fail 'docker build path does not validate the source cache'
+grep -Fq 'validate-source-cache.sh' "$root/scripts/build-in-clean-chroot.sh" \
+    || fail 'clean-chroot build path does not validate the source cache'
+
 printf '%s\n' 'All build regression tests passed.'

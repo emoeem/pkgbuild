@@ -538,17 +538,27 @@ jobs:
 
       - name: Apply safe automatic repairs
         # The build already failed, so this step never turns a green run red.
-        # Two outcomes exist. A repair that is applied is committed (without
-        # [skip ci]) and the resulting push triggers a fresh build;
+        # Four outcomes exist, and every one of them is now reported:
+        #   applied     committed (without [skip ci]); the push rebuilds.
+        #   dispatched  handed a stale repository-managed checksum pin to the
+        #               update workflow that owns that source; nothing to commit.
+        #   blocked     a strategy was found but the run may not use it (level,
+        #               budget, rollback). Previously this was silently printed
+        #               inside a collapsed ::group:: and the step still exited 0,
+        #               so a run could be green, publish nothing and leave the
+        #               repository broken with no annotation anywhere.
+        #   report-only no strategy at all -- same visibility requirement.
         # scripts/repair-budget.sh stops the build -> fix -> build spiral after
-        # MAX_REPAIR_ATTEMPTS. A repair that is *dispatched* changes nothing
-        # here: it hands a stale repository-managed checksum pin to the update
-        # workflow that owns that source, so there is nothing to commit.
+        # MAX_REPAIR_ATTEMPTS.
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           AUTO_FIX_LEVEL: ${{ vars.AUTO_FIX_LEVEL || '1' }}
           MAX_REPAIR_ATTEMPTS: ${{ vars.MAX_REPAIR_ATTEMPTS || '2' }}
+          # The source cache lives in the workspace on the host side; the build
+          # container sees the same directory as /cache. Repair strategies that
+          # only touch the cache need it to point at the host path.
+          CACHE_DIR: ${{ github.workspace }}/.cache/pkgbuild
         run: |
           set -Eeuo pipefail
           shopt -s nullglob
@@ -556,16 +566,25 @@ jobs:
           touch state/repair-history.jsonl
           applied=()
           handed_off=()
+          healed=()
+          blocked=()
           for report in reports/*/; do
             failure="$report/failure.json"
             [[ -f "$failure" ]] || continue
             package="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["package"])' "$failure")"
+            # Same title the build-failure issue is opened under, so a blocked
+            # repair can be recorded on that issue instead of living only in a
+            # collapsed log group.
+            repair_category="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["category"])' "$failure")"
+            repair_cause="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("root_cause") or "unclassified")' "$failure" | tr '\n' ' ' | cut -c1-100)"
+            repair_title="[build-failure] $package: $repair_category: $repair_cause"
             echo "::group::Repair attempt for $package"
             if ! bash scripts/repair-budget.sh \
                   --package "$package" \
                   --history state/repair-history.jsonl \
                   --max "$MAX_REPAIR_ATTEMPTS"; then
               echo "::warning::Repair budget exhausted for $package; reporting only."
+              blocked+=("$package|budget-exhausted|the repair budget of $MAX_REPAIR_ATTEMPTS attempt(s) is already used up|$repair_title")
               echo "::endgroup::"
               continue
             fi
@@ -579,21 +598,71 @@ jobs:
                   --audit state/repair-history.jsonl; then
               echo "::warning::Automatic repair for $package did not succeed; the workspace was rolled back."
               cat "$report/repair-applied.json" 2>/dev/null || true
+              blocked+=("$package|rolled-back|the fix was applied but post-fix validation or the rebuild failed, so the workspace was restored|$repair_title")
               echo "::endgroup::"
               continue
             fi
             status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report/repair-applied.json")"
-            if [[ "$status" == "applied" ]]; then
-              applied+=("$package")
-            elif [[ "$status" == "dispatched" ]]; then
-              # The repair changed nothing locally: it handed the stale pin to
-              # the update workflow that owns this source, which re-pins the
-              # checksums and triggers the rebuild on its own.
-              handed_off+=("$package")
-            fi
+            case "$status" in
+              applied)
+                applied+=("$package")
+                ;;
+              stale-cache-cleared)
+                # Nothing in the workspace changed: a stale cached copy of a
+                # declared source was deleted so the next build re-fetches it.
+                healed+=("$package")
+                ;;
+              dispatched)
+                # The repair changed nothing locally: it handed the stale pin to
+                # the update workflow that owns this source, which re-pins the
+                # checksums and triggers the rebuild on its own.
+                handed_off+=("$package")
+                ;;
+              *)
+                detail="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("detail") or "")' "$report/repair-applied.json" | tr '\n|' '  ')"
+                blocked+=("$package|$status|$detail|$repair_title")
+                ;;
+            esac
             cat "$report/repair-applied.json"
             echo "::endgroup::"
           done
+          if (( ${#healed[@]} > 0 )); then
+            {
+              echo "## Source cache healed"
+              printf -- '- %s\n' "${healed[@]}"
+              echo
+              echo "A cached source no longer matched the checksum its package declares, so the entry was"
+              echo "removed and nothing was re-pinned. The next build of these packages re-fetches the source"
+              echo "and should pass; if it fails the same way, the cache was not the cause."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if (( ${#blocked[@]} > 0 )); then
+            # A repair that could not run is the case that used to be silent: the
+            # step printed the record inside a collapsed ::group:: and still
+            # exited 0, so the run looked healthy while nothing was repaired.
+            {
+              echo "## Automatic repair did not run"
+              echo
+              echo "| package | status | reason |"
+              echo "| --- | --- | --- |"
+            } >> "$GITHUB_STEP_SUMMARY"
+            for row in "${blocked[@]}"; do
+              IFS='|' read -r blocked_package blocked_status blocked_detail blocked_title <<<"$row"
+              printf 'No automatic repair for %s: %s (%s)\n' "$blocked_package" "$blocked_detail" "$blocked_status" >&2
+              printf '| %s | %s | %s |\n' "$blocked_package" "$blocked_status" "$blocked_detail" >> "$GITHUB_STEP_SUMMARY"
+              case "$blocked_status" in
+                budget-exhausted|rolled-back) ;; # already announced with ::warning:: above
+                *) printf '::warning::%s: automatic repair did not run (%s): %s\n' "$blocked_package" "$blocked_status" "$blocked_detail" ;;
+              esac
+              # The build-failure issue was opened earlier in this job; record the
+              # reason there so it survives the run page.
+              number="$(gh issue list --state open --limit 100 --json number,title 2>/dev/null |
+                python3 -c 'import json,sys; p=sys.argv[1]; rows=json.load(sys.stdin); print(next((x["number"] for x in rows if x["title"]==p), ""))' "$blocked_title" || true)"
+              if [[ -n "$number" ]]; then
+                gh issue comment "$number" --body "Automatic repair did not run for this failure: $blocked_status — $blocked_detail (run $GITHUB_RUN_ID)." || true
+              fi
+            done
+          fi
           if (( ${#handed_off[@]} > 0 )); then
             {
               echo "## Repairs handed off"
@@ -603,7 +672,7 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           if (( ${#applied[@]} == 0 )); then
-            if (( ${#handed_off[@]} == 0 )); then
+            if (( ${#handed_off[@]} == 0 && ${#healed[@]} == 0 )); then
               echo "No automatic repair was applied." >> "$GITHUB_STEP_SUMMARY"
             fi
             exit 0

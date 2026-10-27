@@ -48,9 +48,23 @@ runs:
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
       with:
         path: .cache/pkgbuild/sources
-        key: sources-v3-${{ inputs.generation }}-${{ inputs.flavor }}-${{ hashFiles('scripts/build-in-arch.sh', 'scripts/validate-source-cache.sh') }}
+        # The key must move whenever the *declaration* of the package's sources
+        # moves, not only when the download helper does. A package whose
+        # checksums were re-pinned (or whose source list changed) was previously
+        # restoring a cache saved under an identical key, and makepkg reports
+        # `-> Found <name>` for whatever the cache returned without re-fetching
+        # it -- so the stale copy was handed to the validity check and failed it
+        # forever, while every re-run reproduced the same failure.
+        #
+        # The key is scoped to one package on purpose: each job restores and
+        # re-saves only its own sources/ subdirectory, so re-pinning one
+        # package's checksums neither invalidates nor duplicates another's
+        # cache. scripts/validate-source-cache.sh still prunes any file the
+        # prefix restore brings back that no longer matches the declaration --
+        # the key is an optimisation, that check is the guarantee.
+        key: sources-v4-${{ inputs.generation }}-${{ inputs.flavor }}-${{ inputs.package_name || 'all' }}-${{ hashFiles(format('packages/{0}/PKGBUILD', inputs.package_name), format('packages/{0}/.SRCINFO', inputs.package_name), 'scripts/build-in-arch.sh', 'scripts/validate-source-cache.sh') }}
         restore-keys: |
-          sources-v3-${{ inputs.generation }}-${{ inputs.flavor }}-
+          sources-v4-${{ inputs.generation }}-${{ inputs.flavor }}-${{ inputs.package_name || 'all' }}-
     - name: Restore Cargo cache
       if: inputs.restore-caches == 'true'
       uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4

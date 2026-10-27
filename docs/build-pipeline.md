@@ -172,8 +172,9 @@ CachyOS/pacman 在 Podman 容器中执行 `ldconfig` 和 systemd hook 时会尝�
 - `/cache/pacman`：pacman 软件包缓存。
 - `/cache/sources/<package>`：按目标 package 隔离的 makepkg `SRCDEST`，尤其用于 VCS source。
 - VCS source 使用独立的 URL 身份校验；发现同名但不同远程仓库的缓存会在构建前自动清除，避免 `xclip` 一类 basename 冲突。
+- `scripts/validate-source-cache.sh` 在 `makepkg` 之前校验**每一个**声明过的 source：git 源比对 remote 身份，远程文件源比对声明的 checksum，不符就删掉缓存条目让本次构建重新下载；包目录里的本地文件若与声明不符则立即失败并点名，因为那是仓库自身的缺陷，任何缓存都修不了。两条构建路径（`build-in-arch.sh` 与 `build-in-clean-chroot.sh`）都会执行它。缓存只是加速器，不是事实来源。
 
-GitHub Actions 使用 `actions/cache` 恢复 `.cache/pkgbuild`，缓存 key 按 CachyOS-v3、standard/CUDA builder 和 builder 定义区分；key 失效时 `restore-keys` 仍按 flavor 前缀恢复最近的缓存。缓存失效只会增加下载时间，不会跳过依赖解析或 checksum 验证。下载的发布仓库资产存放在缓存目录之外的 `localrepo/`，因此不会被打进缓存快照。
+GitHub Actions 使用 `actions/cache` 恢复 `.cache/pkgbuild`，缓存 key 按 CachyOS-v3、standard/CUDA builder 和 builder 定义区分；key 失效时 `restore-keys` 仍按 flavor 前缀恢复最近的缓存。source 缓存层的 key 额外包含**该包自己的 `PKGBUILD` 与 `.SRCINFO`**，并按包名分段：重钉某个包的校验和会换掉它自己的 key（否则会以同一个 key 恢复旧缓存），同时不会让别的包的缓存失效或重复。缓存失效只会增加下载时间，不会跳过依赖解析或 checksum 验证。下载的发布仓库资产存放在缓存目录之外的 `localrepo/`，因此不会被打进缓存快照。
 
 ### CUDA Builder
 

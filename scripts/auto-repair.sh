@@ -155,6 +155,24 @@ confidence="${verdict[2]:-low}"
 level_hint="${verdict[3]:-none}"
 root_cause="${verdict[4]:-unclassified}"
 
+# Before anything re-pins a checksum, rule out the explanation that needs no
+# re-pin at all: a cache entry whose bytes no longer match the declaration.
+# makepkg prints `-> Found <name>` for whatever SRCDEST returned and hashes that,
+# so a stale cache entry and a genuinely changed upstream source produce the same
+# failure message -- and only one of those two may be answered with `updpkgsums`.
+# Re-pinning on the strength of a stale cache would bake a hash of the stale
+# bytes into the PKGBUILD, which is strictly worse than leaving the build red.
+source_cache_was_stale() {
+    local dir="$1" name="$2" cache="${CACHE_DIR:-}" leaf output status=0
+    [[ -n "$cache" ]] || return 1
+    leaf="${cache}/sources/${name}"
+    [[ -d "$leaf" ]] || return 1
+    output="$(bash "${script_dir}/validate-source-cache.sh" "$dir" "$leaf" 2>&1)" || status=$?
+    printf '%s\n' "$output" >&2
+    (( status == 0 )) || return 1
+    grep -q '^Removing ' <<<"$output" || return 1
+}
+
 strategy="none"
 strategy_level=0
 strategy_reason="no automatic repair is known for this failure"
@@ -172,7 +190,14 @@ case "$category" in
     SourceError)
         case "$rule_id" in
             checksum-mismatch)
-                if [[ -f "$package_dir/.aur-url" ]]; then
+                # A level 0 run must not touch a file, and the staleness check
+                # removes the stale entry as part of establishing the verdict,
+                # so it only runs when the run may write at all.
+                if (( max_level >= 1 )) && source_cache_was_stale "$package_dir" "$package_name"; then
+                    strategy="clear_stale_source_cache"
+                    strategy_level=1
+                    strategy_reason="the declared checksum did not match the cached copy, so the stale cache entry was removed; the next build re-fetches the source instead of hashing stale bytes"
+                elif [[ -f "$package_dir/.aur-url" ]]; then
                     strategy="refresh_checksum"
                     strategy_level=2
                     strategy_reason="an AUR-tracked source changed upstream; refresh the declared checksums"
@@ -317,6 +342,13 @@ if (( strategy_level > max_level )); then
     emit_record "blocked-by-level" \
         "strategy $strategy needs level$strategy_level but AUTO_FIX_LEVEL is $max_level" \
         "not-needed" "not-run"
+    exit 0
+fi
+
+# The cache-only strategy changes nothing in this workspace, so it must not go
+# through the snapshot/validate/commit transaction that marks a repair applied.
+if [[ "$strategy" == "clear_stale_source_cache" ]]; then
+    emit_record "stale-cache-cleared" "$strategy_reason" "not-needed" "not-run"
     exit 0
 fi
 

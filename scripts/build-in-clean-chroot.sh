@@ -153,6 +153,14 @@ export MAKEFLAGS="-j${MAKE_JOBS:-$(nproc)}" NPROC="${MAKE_JOBS:-$(nproc)}"
 export CFLAGS="${EMO_CFLAGS:-}" CXXFLAGS="${EMO_CXXFLAGS:-${EMO_CFLAGS:-}}" LDFLAGS="${EMO_LDFLAGS:-}" RUSTFLAGS="${EMO_RUSTFLAGS:-}"
 export CMAKE_BUILD_PARALLEL_LEVEL="${MAKE_JOBS:-$(nproc)}" SRCDEST="${cache_dir}/sources/${package_name}" CARGO_HOME="$cache_dir/cargo" CCACHE_DIR="$cache_dir/ccache" CCACHE_MAXSIZE=2G PATH="$nspawn_wrapper_dir:/usr/lib/ccache/bin:$PATH"
 mkdir -p "$SRCDEST" "$cache_dir/cargo" "$cache_dir/ccache"
+# The docker build path validates the restored source cache before makepkg runs;
+# the clean-chroot path used to skip it, so a stale cached source (a file whose
+# content no longer matches the package's declared checksum) failed the validity
+# check in exactly the same way a genuinely changed upstream would, and re-running
+# the build could never tell them apart. Validate here too: the check deletes the
+# stale entry so makepkg re-fetches it in this same run.
+printf 'Validating the source cache against the declared checksums...\n'
+bash "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/validate-source-cache.sh" "$source_dir" "$SRCDEST"
 printf 'Clean-chroot build: package=%s baseline=%s repo=%s\n' "$package_name" "$fingerprint" "$repo_dir"
 # Update this package's disposable work copy before invoking makechrootpkg.
 # This is intentionally not an update of the reusable baseline: every package

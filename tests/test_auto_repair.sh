@@ -200,4 +200,68 @@ if grep -q 'workflow run' "$MOCK_GH_LOG"; then
     fail 'a second refresh run was dispatched while one was in flight'
 fi
 
+printf '%s\n' '9: a stale source cache is cleared instead of re-pinning the checksums'
+# `updpkgsums` on a stale cache would bake a hash of the stale bytes into the
+# PKGBUILD: the build goes green and the repository now declares content it has
+# never validated. The cache has to be ruled out before any re-pin is allowed.
+stale_repo="$work/stale-repo"
+make_fixture "$stale_repo"
+printf 'https://aur.archlinux.org/demo.git\n' >"$stale_repo/packages/demo/.aur-url"
+cat >"$stale_repo/packages/demo/.SRCINFO" <<'EOF'
+pkgbase = demo
+	source = fixture.patch::https://example.invalid/fixture.patch
+	sha256sums = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+EOF
+stale_cache="$work/stale-cache"
+mkdir -p "$stale_cache/sources/demo"
+printf 'stale bytes, not the empty-file digest\n' >"$stale_cache/sources/demo/fixture.patch"
+write_failure "$work/stale-failure.json" SourceError checksum-mismatch level2
+pkgbuild_before="$(sha256sum "$stale_repo/packages/demo/PKGBUILD" | awk '{print $1}')"
+srcinfo_before="$(sha256sum "$stale_repo/packages/demo/.SRCINFO" | awk '{print $1}')"
+CACHE_DIR="$stale_cache" bash "$root/scripts/auto-repair.sh" --package demo \
+    --failure "$work/stale-failure.json" --root "$stale_repo" --level 2 --apply \
+    --json --out "$work/stale-record.json" >/dev/null \
+    || fail 'stale-cache repair exited non-zero'
+grep -q '"strategy": "clear_stale_source_cache"' "$work/stale-record.json" \
+    || fail 'auto-repair did not prefer clearing the stale cache over re-pinning'
+grep -q '"status": "stale-cache-cleared"' "$work/stale-record.json" \
+    || fail 'stale-cache repair did not report status stale-cache-cleared'
+[[ ! -e "$stale_cache/sources/demo/fixture.patch" ]] || fail 'stale cached source survived the repair'
+[[ "$pkgbuild_before" == "$(sha256sum "$stale_repo/packages/demo/PKGBUILD" | awk '{print $1}')" ]] \
+    || fail 'the repair rewrote the PKGBUILD while only a cache entry was stale'
+[[ "$srcinfo_before" == "$(sha256sum "$stale_repo/packages/demo/.SRCINFO" | awk '{print $1}')" ]] \
+    || fail 'the repair rewrote .SRCINFO while only a cache entry was stale'
+
+printf '%s\n' '10: a checksum mismatch with a clean cache still reaches the re-pin strategy'
+: >"$stale_cache/sources/demo/fixture.patch"
+CACHE_DIR="$stale_cache" bash "$root/scripts/auto-repair.sh" --package demo \
+    --failure "$work/stale-failure.json" --root "$stale_repo" --level 1 --apply \
+    --json --out "$work/clean-record.json" >/dev/null 2>&1 || true
+grep -q '"strategy": "refresh_checksum"' "$work/clean-record.json" \
+    || fail 'a clean cache did not fall through to the checksum-refresh strategy'
+grep -q '"status": "blocked-by-level"' "$work/clean-record.json" \
+    || fail 'the level gate did not block the checksum refresh at AUTO_FIX_LEVEL=1'
+
+printf '%s\n' '11: a repair that could not run is reported instead of exiting silently'
+grep -Fq 'Automatic repair did not run' "$root/.github/workflows/build.yml" \
+    || fail 'build.yml does not report blocked repairs'
+grep -Fq 'gh issue comment' "$root/.github/workflows/build.yml" \
+    || fail 'a blocked repair is not recorded on the build-failure issue'
+grep -Fq 'CACHE_DIR: ${{ github.workspace }}/.cache/pkgbuild' "$root/.github/workflows/build.yml" \
+    || fail 'the repair step does not point CACHE_DIR at the host source cache'
+
+printf '%s\n' '12: a report-only run never deletes the stale cache entry'
+# The staleness verdict is established by deleting the stale file, so a run that
+# is not allowed to write must not even ask the question.
+printf 'stale bytes again\n' >"$stale_cache/sources/demo/fixture.patch"
+CACHE_DIR="$stale_cache" bash "$root/scripts/auto-repair.sh" --package demo \
+    --failure "$work/stale-failure.json" --root "$stale_repo" --level 0 --apply \
+    --json --out "$work/level0-record.json" >/dev/null 2>&1 || true
+[[ -f "$stale_cache/sources/demo/fixture.patch" ]] \
+    || fail 'a level 0 (report-only) run deleted a cache entry'
+grep -q '"status": "blocked-by-level"' "$work/level0-record.json" \
+    || fail 'a level 0 run reported something other than blocked-by-level'
+grep -q '"strategy": "refresh_checksum"' "$work/level0-record.json" \
+    || fail 'a level 0 run did not fall through to the re-pin strategy it must refuse'
+
 printf '%s\n' 'All auto-repair tests passed.'

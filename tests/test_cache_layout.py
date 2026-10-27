@@ -51,7 +51,10 @@ class CacheLayerTests(unittest.TestCase):
         keys = self.cache_keys()
         self.assertGreaterEqual(len(keys), 4)
         for layer in LAYERS:
-            matching = [key for key in keys if key.startswith(f"{layer}-v3-")]
+            # Any key *version* is acceptable; what matters is that the layer
+            # owns a key of its own and that the key tracks the generation.
+            pattern = re.compile(rf"^{re.escape(layer)}-v\d+-")
+            matching = [key for key in keys if pattern.match(key)]
             self.assertTrue(matching, f"no cache key for layer {layer}: {keys}")
             for key in matching:
                 self.assertIn(
@@ -59,6 +62,32 @@ class CacheLayerTests(unittest.TestCase):
                     key,
                     f"cache key for {layer} does not depend on the builder generation",
                 )
+
+    def test_source_cache_key_tracks_the_package_source_declaration(self):
+        """A re-pinned checksum must change the source cache key.
+
+        The cache key used to hash only the download helper, so updating a
+        package's checksums restored a cache saved under an identical key.
+        makepkg reports `-> Found <name>` for whatever the cache returned and
+        hashes that, so the stale copy failed the validity check on every run
+        and no rebuild could ever pass. The declaration has to be part of the
+        key, and it has to be the *package's own* declaration.
+        """
+        sources_key = next(
+            key for key in self.cache_keys() if re.match(r"^sources-v\d+-", key)
+        )
+        self.assertIn("packages/{0}/PKGBUILD", sources_key)
+        self.assertIn("packages/{0}/.SRCINFO", sources_key)
+        self.assertIn("inputs.package_name", sources_key)
+        # The restore prefix must stay scoped to the same package, otherwise one
+        # package's sources are restored into another package's cache entry.
+        restore_entries = [
+            line.strip()
+            for line in ACTION.splitlines()
+            if line.strip().startswith("sources-v")
+        ]
+        self.assertTrue(restore_entries, "no sources cache restore prefix found")
+        self.assertIn("inputs.package_name", restore_entries[0])
 
     def test_layers_use_distinct_paths(self):
         for layer in LAYERS:
