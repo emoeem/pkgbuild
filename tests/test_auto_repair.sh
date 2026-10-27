@@ -264,4 +264,128 @@ grep -q '"status": "blocked-by-level"' "$work/level0-record.json" \
 grep -q '"strategy": "refresh_checksum"' "$work/level0-record.json" \
     || fail 'a level 0 run did not fall through to the re-pin strategy it must refuse'
 
+printf '%s\n' '13: an escalation stays closed without evidence or without the flag'
+make_fixture "$fixture"
+write_failure "$work/soname-failure.json" SONAMEError soname-mismatch level3
+history="$work/repair-history.jsonl"
+: >"$history"
+
+# 13a: escalation is off by default, so the level gate still wins.
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname-failure.json" \
+    --root "$fixture" --level 1 --json --out "$work/record.json" >/dev/null ||
+    fail 'level gate exited non-zero'
+grep -q '"status": "blocked-by-level"' "$work/record.json" \
+    || fail 'a level 3 SONAME repair was not blocked at AUTO_FIX_LEVEL=1'
+grep -q 'escalation is off' "$work/record.json" \
+    || fail 'the blocked record does not explain that escalation is available'
+
+# 13b: even with the flag, the first attempt at a failure is not evidence that
+# the cheap repair fails, so nothing is escalated yet.
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname-failure.json" \
+    --root "$fixture" --level 1 --escalate --audit "$history" \
+    --json --out "$work/record.json" >/dev/null || fail 'escalation run exited non-zero'
+grep -q '"status": "blocked-by-level"' "$work/record.json" \
+    || fail 'a first attempt was escalated without evidence'
+grep -q 'no earlier attempt at this exact failure' "$work/record.json" \
+    || fail 'the blocked record does not say why escalation stayed closed'
+
+printf '%s\n' '14: a repeat failure with the flag escalates one validated step'
+stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '{"package":"demo","rule":"soname-mismatch","category":"SONAMEError","status":"applied","timestamp":"%s"}\n' \
+    "$stamp" >"$history"
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname-failure.json" \
+    --root "$fixture" --level 1 --escalate --audit "$history" --escalate-max 3 \
+    --out "$work/escalated.json" >/dev/null || fail 'escalated run exited non-zero'
+grep -q '"escalated": true' "$work/escalated.json" \
+    || fail 'a proven repeat failure was not escalated'
+grep -q '"status": "dry-run"' "$work/escalated.json" \
+    || fail 'the escalated run did not reach its strategy'
+grep -Fq 'Escalated:  yes' <(
+    bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname-failure.json" \
+        --root "$fixture" --level 1 --escalate --audit "$history" --escalate-max 3 2>/dev/null
+) || fail 'the human-readable record does not show the escalation'
+
+printf '%s\n' '14b: the escalated strategy actually applies and is recorded as such'
+make_fixture "$fixture"
+printf '{"package":"demo","rule":"soname-mismatch","category":"SONAMEError","status":"applied","timestamp":"%s"}\n' \
+    "$stamp" >"$history"
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname-failure.json" \
+    --root "$fixture" --level 1 --escalate --audit "$history" --escalate-max 3 \
+    --metrics "$work/applied-metrics.jsonl" --apply \
+    --json --out "$work/escalated-applied.json" >/dev/null ||
+    fail 'the escalated repair did not succeed'
+grep -q '"status": "applied"' "$work/escalated-applied.json" \
+    || fail 'the escalated repair was not applied'
+grep -qE '^pkgrel=2$' "$fixture/packages/demo/PKGBUILD" \
+    || fail 'the escalated bump_pkgrel did not change pkgrel'
+grep -q '"escalated": true' "$work/applied-metrics.jsonl" \
+    || fail 'the metrics line does not record the escalation'
+
+printf '%s\n' '15: an escalation is one-shot per failure signature'
+printf '{"package":"demo","rule":"soname-mismatch","category":"SONAMEError","status":"applied","escalated":true,"timestamp":"%s"}\n' \
+    "$stamp" >>"$history"
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname-failure.json" \
+    --root "$fixture" --level 1 --escalate --audit "$history" \
+    --json --out "$work/record.json" >/dev/null || fail 'second escalation run exited non-zero'
+grep -q '"status": "blocked-by-level"' "$work/record.json" \
+    || fail 'a failure that was already escalated was escalated again'
+grep -q 'already escalated once' "$work/record.json" \
+    || fail 'the blocked record does not say escalation was already spent'
+
+printf '%s\n' '16: re-pinning a checksum is never reachable by escalation'
+: >"$stale_cache/sources/demo/fixture.patch"
+printf '{"package":"demo","rule":"checksum-mismatch","category":"SourceError","status":"applied","timestamp":"%s"}\n' \
+    "$stamp" >"$work/repin-history.jsonl"
+CACHE_DIR="$stale_cache" bash "$root/scripts/auto-repair.sh" --package demo \
+    --failure "$work/stale-failure.json" --root "$stale_repo" --level 1 --escalate \
+    --audit "$work/repin-history.jsonl" --escalate-max 3 \
+    --json --out "$work/record.json" >/dev/null 2>&1 || true
+grep -q '"strategy": "refresh_checksum"' "$work/record.json" \
+    || fail 'the fixture no longer reaches the re-pin strategy'
+grep -q '"status": "blocked-by-level"' "$work/record.json" \
+    || fail 'escalation let a checksum re-pin through with a clean cache'
+grep -q 'never escalated' "$work/record.json" \
+    || fail 'the blocked record does not explain that a re-pin is never escalated'
+
+printf '%s\n' '17: every attempt appends one compact metrics line'
+metrics="$work/autopilot-runs.jsonl"
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname-failure.json" \
+    --root "$fixture" --level 1 --audit "$work/metrics-history.jsonl" \
+    --metrics "$metrics" --json --out "$work/record.json" >/dev/null ||
+    fail 'metrics run exited non-zero'
+[[ -f "$metrics" ]] || fail 'no metrics file was written'
+[[ "$(wc -l <"$metrics")" -eq 1 ]] || fail 'the metrics file does not hold exactly one line'
+python3 - "$metrics" <<'PY' || fail 'the metrics line is missing a field or is not JSON'
+import json, sys
+line = json.loads(open(sys.argv[1], encoding="utf-8").read().strip())
+required = {"ts", "package", "rule", "category", "strategy", "level",
+            "max_level", "escalated", "status", "attempt", "duration_ms"}
+missing = required - set(line)
+if missing:
+    print(f"missing {sorted(missing)}", file=sys.stderr)
+    sys.exit(1)
+if line["status"] != "blocked-by-level" or line["escalated"] is not False:
+    print(f"unexpected row: {line}", file=sys.stderr)
+    sys.exit(1)
+PY
+# A run without --metrics must not write anything: tests and hand runs must not
+# append to the repository's own metrics file by accident.
+[[ ! -e "$work/no-metrics.jsonl" ]] || fail 'a metrics file appeared before it was asked for'
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname-failure.json" \
+    --root "$fixture" --level 1 --json --out "$work/record.json" >/dev/null ||
+    fail 'run without --metrics exited non-zero'
+[[ ! -e "$root/state/autopilot-runs.jsonl" ]] \
+    || fail 'a run without --metrics still wrote to state/autopilot-runs.jsonl'
+
+printf '%s\n' '18: a run without --json prints its record instead of staying silent'
+# `json_only` arrives from argv as the string "0", which is truthy in Python, so
+# `if not json_only` never fired and no repair ever printed a readable record.
+human="$(bash "$root/scripts/auto-repair.sh" --package demo \
+    --failure "$work/soname-failure.json" --root "$fixture" --level 1 2>/dev/null)"
+grep -Fq 'Repair #1' <<<"$human" || fail 'a human-readable run printed no record header'
+grep -Fq 'Strategy:   ' <<<"$human" || fail 'a human-readable run printed no strategy line'
+[[ -z "$(bash "$root/scripts/auto-repair.sh" --package demo \
+    --failure "$work/soname-failure.json" --root "$fixture" --level 1 --json 2>/dev/null)" ]] \
+    || fail '--json still printed the human-readable record'
+
 printf '%s\n' 'All auto-repair tests passed.'

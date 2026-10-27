@@ -555,6 +555,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AUTO_FIX_LEVEL: ${{ vars.AUTO_FIX_LEVEL || '1' }}
           MAX_REPAIR_ATTEMPTS: ${{ vars.MAX_REPAIR_ATTEMPTS || '2' }}
+          # Escalation is opt-in per run and gated inside the script: it only
+          # opens when this exact failure was already attempted once inside the
+          # window, only for strategies the rebuild itself verifies, never for a
+          # checksum re-pin, and only once per failure. Without evidence it
+          # changes nothing, so enabling it here cannot raise the level of a
+          # first-time failure.
+          REPAIR_ESCALATE: ${{ vars.REPAIR_ESCALATE || '1' }}
+          REPAIR_ESCALATE_MAX: ${{ vars.REPAIR_ESCALATE_MAX || '3' }}
           # The source cache lives in the workspace on the host side; the build
           # container sees the same directory as /cache. Repair strategies that
           # only touch the cache need it to point at the host path.
@@ -568,6 +576,7 @@ jobs:
           handed_off=()
           healed=()
           blocked=()
+          escalated_packages=()
           for report in reports/*/; do
             failure="$report/failure.json"
             [[ -f "$failure" ]] || continue
@@ -593,9 +602,11 @@ jobs:
                   --failure "$failure" \
                   --root "$GITHUB_WORKSPACE" \
                   --level "$AUTO_FIX_LEVEL" \
+                  --escalate-max "$REPAIR_ESCALATE_MAX" \
                   --apply \
                   --out "$report/repair-applied.json" \
-                  --audit state/repair-history.jsonl; then
+                  --audit state/repair-history.jsonl \
+                  --metrics state/autopilot-runs.jsonl; then
               echo "::warning::Automatic repair for $package did not succeed; the workspace was rolled back."
               cat "$report/repair-applied.json" 2>/dev/null || true
               blocked+=("$package|rolled-back|the fix was applied but post-fix validation or the rebuild failed, so the workspace was restored|$repair_title")
@@ -603,6 +614,12 @@ jobs:
               continue
             fi
             status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report/repair-applied.json")"
+            # An escalated repair ran above the configured level on the strength of
+            # an earlier failed attempt. That is the one outcome a reviewer has to
+            # be able to see without opening the audit log.
+            if python3 -c 'import json,sys; raise SystemExit(0 if json.load(open(sys.argv[1])).get("escalated") else 1)' "$report/repair-applied.json"; then
+              escalated_packages+=("$package ($status)")
+            fi
             case "$status" in
               applied)
                 applied+=("$package")
@@ -671,6 +688,17 @@ jobs:
               echo "The owning update workflow re-pins the stale checksums and triggers the rebuild; nothing was changed or committed here."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+          if (( ${#escalated_packages[@]} > 0 )); then
+            {
+              echo "## Repairs escalated above AUTO_FIX_LEVEL"
+              printf -- '- %s\n' "${escalated_packages[@]}"
+              echo
+              echo "Each of these ran after the same failure had already been attempted once in the window,"
+              echo "and each was verified by a rebuild that rolls the workspace back when it fails."
+              echo "A checksum re-pin is never escalated: a failed build is not evidence that new upstream"
+              echo "content is trusted."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           if (( ${#applied[@]} == 0 )); then
             if (( ${#handed_off[@]} == 0 && ${#healed[@]} == 0 )); then
               echo "No automatic repair was applied." >> "$GITHUB_STEP_SUMMARY"
@@ -686,6 +714,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add packages state/repair-history.jsonl
+          # Run metrics are versioned too, but only when an attempt produced one:
+          # `git add` on a missing path fails the step.
+          [[ -f state/autopilot-runs.jsonl ]] && git add state/autopilot-runs.jsonl || true
           if git diff --cached --quiet; then
             echo "Repairs produced no committed change."
             exit 0
@@ -694,6 +725,18 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" pull --rebase origin main
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD
+
+      - name: Upload repair run metrics
+        # The number worth watching is repaired/triaged, and a triaged-but-blocked
+        # attempt never reaches the commit above (that branch exits before it).
+        # The artifact keeps those rows instead of losing them with the runner.
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: autopilot-runs-${{ github.run_id }}
+          path: state/autopilot-runs.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
 
   publish:
     name: Publish pacman repository release

@@ -139,12 +139,40 @@ level 1，记录状态是 `dispatched` 而非 `applied`，`build.yml` 不会为�
 现在 `build.yml` 把这些情形逐条写进 step summary、发 `::warning::` 注解，并在该包已有的
 build-failure issue 上留一条评论说明为什么没修。
 
+### 有证据才升一级（escalation）
+
 `AUTO_FIX_LEVEL` 是上限：脚本自身默认 2，但 CI 只在设置了 repository variable
-`AUTO_FIX_LEVEL` 时才抬高，否则传 `'1'`（`gh variable list` 目前为空），因此 level 2
-的修复在 CI 里目前是惰性的。验证失败会
-**逐字节回滚**工作区：`tests/test_auto_repair.sh` 用 sha256 断言「失败的修复不会留下
-半改的 PKGBUILD」。`scripts/repair-budget.sh` 用 `state/repair-history.jsonl` 限制
+`AUTO_FIX_LEVEL` 时才抬高，否则传 `'1'`。上限是**在看见失败之前下的判断**，而 level 2
+只有一个策略（`refresh_checksum`），所以单纯调这个数字并不能让修复变有用——它只会让
+「接受新上游内容」变得更容易，那不是我们想要的那一步。
+
+真正缺的是：同一次失败已经试过一次、便宜的修法被证明无效之后，该做的是一次**更贵但
+可被验证**的动作，而不是把同一个修法再跑一遍。所以升级是条件和证据驱动的，四条同时满足
+才开门（`--escalate` / `REPAIR_ESCALATE=1`，默认关；CI 打开）：
+
+1. `state/repair-history.jsonl` 里存在同一 `(package, rule, category)` 的成功记录（重复失败，
+   不是第一次猜测），窗口由 `REPAIR_SIGNATURE_WINDOW_HOURS` 控制，默认 24 小时；
+2. 策略在可升级集合内：`regenerate_srcinfo`、`clear_stale_source_cache`、`clear_cache`、
+   `bump_pkgrel`——全部由随后的重建验证，失败就逐字节回滚工作区；
+3. **`refresh_checksum` 永不可升级**：重钉意味着接受新的上游内容，而一次构建失败不构成
+   「新内容是可信的」的证据。提高上限不能把「拒绝」变成「同意」；
+4. 目标级别不超过 `REPAIR_ESCALATE_MAX`（默认 3）、永不触及 level 4，且该失败在窗口内
+   没有已经被升级过——否则一个包会靠连续失败把级别一级一级抬上去。
+
+验证失败会**逐字节回滚**工作区：`tests/test_auto_repair.sh` 用 sha256 断言「失败的修复不会
+留下半改的 PKGBUILD」。`scripts/repair-budget.sh` 用 `state/repair-history.jsonl` 限制
 「build → fix → build」循环（默认 24 小时窗口内最多 2 次），到顶即交给人工。
+
+### 运行指标（`state/autopilot-runs.jsonl`）
+
+每次尝试追加一行紧凑 JSON（`ts` / `package` / `rule` / `category` / `strategy` / `level` /
+`max_level` / `escalated` / `status` / `attempt` / `duration_ms`），**不论结果**。要看的
+比值是 `repaired / triaged`：一个「找到了策略但被挡回去」的尝试永远不会出现在只记录
+成功修复的日志里，而这正是「运行全绿、仓库仍坏」的成因。
+
+有修复落地时它随 `state/repair-history.jsonl` 一起提交；没有任何修复时该步骤在提交之前就
+退出了，所以同一份文件也由 `autopilot-runs-<run id>` artifact 保留（`if: always()`）。
+
 
 ## 7. 运行时验证与发布闸门
 

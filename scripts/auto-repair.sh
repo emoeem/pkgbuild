@@ -24,6 +24,25 @@
 #   3  repairs that need a rebuild + validation to be trusted
 #   4  forbidden: only a suggested patch is written, never applied
 #
+# Escalation (--escalate, off by default):
+#   A configured maximum is a guess made before the failure was seen. Once the
+#   same failure has already been attempted once in the window, that guess has
+#   evidence against it, and the honest response is one more expensive but
+#   *validated* step instead of the same cheap one that just failed.
+#
+#   Escalation therefore requires all of:
+#     * an earlier record for this package with the same rule and category in
+#       the audit history (a repeat, not a first guess);
+#     * a strategy in the escalatable set -- regenerate_srcinfo,
+#       clear_stale_source_cache, clear_cache, bump_pkgrel. Every one of them is
+#       checked by a rebuild that rolls the workspace back when it fails;
+#     * refresh_checksum is never escalated. Re-pinning accepts new upstream
+#       content, and a failed build is not evidence that the new content is
+#       trusted. Raising the level must not turn a refusal into consent;
+#     * level <= --escalate-max (default 3) and never level 4;
+#     * no earlier escalation of this same failure in the window, so a package
+#       cannot ratchet itself up the levels one failure at a time.
+#
 # Usage:
 #   auto-repair.sh --package NAME --failure failure.json [options]
 
@@ -40,6 +59,9 @@ root=""
 max_level="${AUTO_FIX_LEVEL:-2}"
 max_attempts="${MAX_REPAIR_ATTEMPTS:-2}"
 attempts_used="${REPAIR_ATTEMPTS_USED:-0}"
+escalate_enabled="${REPAIR_ESCALATE:-0}"
+escalate_max="${REPAIR_ESCALATE_MAX:-3}"
+metrics_file="${REPAIR_METRICS:-}"
 apply=0
 audit_file=""
 out_file=""
@@ -56,6 +78,9 @@ while (( $# > 0 )); do
         --level) max_level="$2"; shift 2 ;;
         --max-attempts) max_attempts="$2"; shift 2 ;;
         --attempts-used) attempts_used="$2"; shift 2 ;;
+        --escalate) escalate_enabled=1; shift ;;
+        --escalate-max) escalate_max="$2"; shift 2 ;;
+        --metrics) metrics_file="$2"; shift 2 ;;
         --apply) apply=1; shift ;;
         --audit) audit_file="$2"; shift 2 ;;
         --out) out_file="$2"; shift 2 ;;
@@ -63,7 +88,8 @@ while (( $# > 0 )); do
         --validate-cmd) validate_cmd="$2"; shift 2 ;;
         --json) json_only=1; shift ;;
         --help | -h)
-            sed -n '2,26p' "${BASH_SOURCE[0]}"
+            # Print the leading comment block, however long it grows.
+            awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"
             exit 0
             ;;
         *)
@@ -85,6 +111,12 @@ readonly root
 [[ "$max_level" =~ ^[0-4]$ ]] || { printf 'invalid --level\n' >&2; exit 2; }
 [[ "$max_attempts" =~ ^[0-9]+$ ]] || { printf 'invalid --max-attempts\n' >&2; exit 2; }
 [[ "$attempts_used" =~ ^[0-9]+$ ]] || { printf 'invalid --attempts-used\n' >&2; exit 2; }
+[[ "$escalate_enabled" =~ ^[01]$ ]] || { printf 'invalid REPAIR_ESCALATE\n' >&2; exit 2; }
+# 4 is forbidden and 0 is below every real level, so an escalation ceiling
+# outside 1..3 could only ever be a typo that silently disables the feature.
+[[ "$escalate_max" =~ ^[1-3]$ ]] || { printf 'invalid --escalate-max (1..3)\n' >&2; exit 2; }
+
+started_epoch="$(date -u +%s)"
 
 package_dir="$root/packages/$package_name"
 if [[ ! -f "$package_dir/PKGBUILD" ]]; then
@@ -173,8 +205,68 @@ source_cache_was_stale() {
     grep -q '^Removing ' <<<"$output" || return 1
 }
 
+# Only strategies whose result the rebuild itself verifies may be reached by an
+# escalation. refresh_checksum is deliberately absent: it is the one strategy
+# that accepts new upstream content, and a failed build is not evidence that the
+# new content is trusted -- raising the level must never turn a refusal into
+# consent.
+strategy_is_escalatable() {
+    case "$1" in
+        regenerate_srcinfo | clear_stale_source_cache | clear_cache | bump_pkgrel) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Two numbers for one failure signature: how many attempts already succeeded
+# (applied / dispatched / stale-cache-cleared) inside the window, and how many
+# of those were escalations. A signature is (package, rule, category), which is
+# what the classifier can actually distinguish -- the message text is not stable
+# enough to key on.
+prior_signature_attempts() {
+    local rule="$1" category="$2" window="${REPAIR_SIGNATURE_WINDOW_HOURS:-24}"
+    if [[ -z "$audit_file" || ! -f "$audit_file" ]]; then
+        printf '0 0\n'
+        return 0
+    fi
+    python3 - "$audit_file" "$package_name" "$rule" "$category" "$window" <<'PY'
+import json, sys
+from datetime import datetime, timedelta, timezone
+
+history, package, rule, category, window = sys.argv[1:6]
+cutoff = datetime.now(timezone.utc) - timedelta(hours=int(window))
+count = escalated = 0
+for line in open(history, encoding="utf-8", errors="replace"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if record.get("package") != package or record.get("rule") != rule:
+        continue
+    if record.get("category") != category:
+        continue
+    if record.get("status") not in {"applied", "dispatched", "stale-cache-cleared"}:
+        continue
+    stamp = record.get("timestamp") or record.get("generated_at") or ""
+    try:
+        moment = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        moment = datetime.now(timezone.utc)
+    if moment < cutoff:
+        continue
+    count += 1
+    if record.get("escalated"):
+        escalated += 1
+print(f"{count} {escalated}")
+PY
+}
+
 strategy="none"
 strategy_level=0
+escalated=0
+escalation_reason=""
 strategy_reason="no automatic repair is known for this failure"
 
 case "$category" in
@@ -254,6 +346,12 @@ attempt=$(( attempts_used + 1 ))
 
 emit_record() {
     local status="$1" detail="$2" rollback_status="$3" validation_status="$4"
+    # Environment rather than more positional arguments: the record is already at
+    # twenty, and these three are metadata about the run, not about the repair.
+    export REPAIR_ESCALATED="$escalated"
+    export REPAIR_ESCALATION_REASON="$escalation_reason"
+    export REPAIR_METRICS_FILE="$metrics_file"
+    export REPAIR_DURATION_MS="$(( ($(date -u +%s) - started_epoch) * 1000 ))"
     python3 - \
         "$package_name" "$attempt" "$rule_id" "$category" "$strategy" \
         "$strategy_level" "$confidence" "$strategy_reason" "$status" "$detail" \
@@ -268,6 +366,11 @@ from datetime import datetime, timezone
     status, detail, rollback, validation, max_attempts, max_level,
     out_file, audit_file, json_only, record_dir, analyzer_level, analyzer_cause,
 ) = sys.argv[1:21]
+
+# argv is text: "0" is a truthy string, so `if not json_only` never fired and the
+# human-readable record was never printed -- the only visible trace of a repair
+# was the JSON the workflow cat'ed afterwards. Convert before testing it.
+json_only = json_only == "1"
 
 record = {
     "schema": 1,
@@ -291,6 +394,14 @@ record = {
     "analyzer": {"level": analyzer_level, "root_cause": analyzer_cause},
     "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
+# The level that was actually used differs from the configured one exactly when
+# an escalation happened, so the record has to say both.
+escalated = os.environ.get("REPAIR_ESCALATED") == "1"
+if escalated:
+    record["escalated"] = True
+    record["escalation"] = os.environ.get("REPAIR_ESCALATION_REASON", "")
+elif os.environ.get("REPAIR_ESCALATION_REASON"):
+    record["escalation_blocked"] = os.environ["REPAIR_ESCALATION_REASON"]
 if record_dir and os.path.isdir(record_dir):
     digests = os.path.join(record_dir, "after.json")
     patch = os.path.join(record_dir, "diff.patch")
@@ -312,6 +423,36 @@ if out_file:
 if audit_file:
     with open(audit_file, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n")
+
+metrics_file = os.environ.get("REPAIR_METRICS_FILE", "")
+if metrics_file:
+    # One compact line per attempt, whatever the outcome. The ratio worth
+    # watching is repaired/triaged: a strategy that is found and then blocked
+    # never appears in a log that only records applied repairs, which is exactly
+    # how a run can stay green while nothing is fixed.
+    line = {
+        "ts": record["timestamp"],
+        "package": package,
+        "rule": rule,
+        "category": category,
+        "strategy": strategy,
+        "level": record["level"],
+        "max_level": int(max_level),
+        "escalated": escalated,
+        "status": status,
+        "attempt": int(attempt),
+        "duration_ms": int(os.environ.get("REPAIR_DURATION_MS") or 0),
+    }
+    try:
+        parent = os.path.dirname(metrics_file)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(metrics_file, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(line, sort_keys=True, ensure_ascii=False) + "\n")
+    except OSError as error:
+        # Metrics must never change the verdict of a repair.
+        print(f"could not append run metrics: {error}", file=sys.stderr)
+
 if not json_only:
     print(f"Repair #{attempt}")
     print("--------------------")
@@ -319,6 +460,8 @@ if not json_only:
     print(f"Reason:     {reason}")
     print(f"Rule:       {rule} ({category})")
     print(f"Strategy:   {strategy} ({record['level']})")
+    if escalated:
+        print(f"Escalated:  yes, above AUTO_FIX_LEVEL={max_level}")
     print(f"Status:     {status}")
     print(f"Detail:     {detail}")
     print(f"Validation: {validation}")
@@ -338,9 +481,34 @@ if (( strategy_level == 0 )); then
     exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# Level ceiling, with one evidence-gated exception.
+# ---------------------------------------------------------------------------
+escalated=0
+escalation_reason=""
 if (( strategy_level > max_level )); then
+    if (( escalate_enabled == 0 )); then
+        escalation_reason="escalation is off; pass --escalate (or set REPAIR_ESCALATE=1) to allow one validated step after a repeat failure"
+    elif ! strategy_is_escalatable "$strategy"; then
+        escalation_reason="$strategy is never escalated: it would accept new upstream content on the strength of a failed build"
+    elif (( strategy_level > escalate_max )); then
+        escalation_reason="$strategy needs level$strategy_level, above the level$escalate_max escalation ceiling"
+    else
+        read -r prior_attempts prior_escalations <<<"$(prior_signature_attempts "$rule_id" "$category")"
+        if (( prior_attempts == 0 )); then
+            escalation_reason="no earlier attempt at this exact failure in the window, so nothing yet shows the cheap repair fails"
+        elif (( prior_escalations > 0 )); then
+            escalation_reason="this failure was already escalated once in the window; a human has to look at it"
+        else
+            escalated=1
+            escalation_reason="a previous attempt (${prior_attempts} in the window) at this exact failure did not help, and $strategy is verified by a rebuild that rolls the workspace back when it fails"
+        fi
+    fi
+fi
+
+if (( strategy_level > max_level )) && (( escalated == 0 )); then
     emit_record "blocked-by-level" \
-        "strategy $strategy needs level$strategy_level but AUTO_FIX_LEVEL is $max_level" \
+        "strategy $strategy needs level$strategy_level but AUTO_FIX_LEVEL is $max_level ($escalation_reason)" \
         "not-needed" "not-run"
     exit 0
 fi
