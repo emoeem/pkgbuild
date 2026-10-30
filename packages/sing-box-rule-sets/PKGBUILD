@@ -40,7 +40,7 @@
 # 但只用来决定"要不要 bump 版本触发重建"，不再写入 sha256sums。
 
 pkgname=sing-box-rule-sets
-pkgver=20261029
+pkgver=20261030
 pkgrel=1
 pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, Loyalsoldier enhanced geosite (cn/non-cn), always-direct list, CN ad-SDK extras'
 arch=('any')
