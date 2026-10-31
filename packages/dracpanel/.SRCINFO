@@ -1,7 +1,7 @@
 pkgbase = dracpanel
 	pkgdesc = DracPanel: FlClash-style web UI for sing-box (Dracula palette optional)
 	pkgver = 0.1.0
-	pkgrel = 10
+	pkgrel = 11
 	url = https://github.com/emoeem/pkgbuild
 	install = dracpanel.install
 	arch = any
@@ -12,6 +12,6 @@ pkgbase = dracpanel
 	replaces = dracula-panel-for-sing-box
 	options = !strip
 	source = dracpanel-0.1.0.tar.zst
-	sha256sums = 2aa52514ce29c68e9654da44e4049a117c4eabead6f72be9a39ccd91c846aedc
+	sha256sums = 77704eefd53eccf38db88ada9a87ba3027ae1f6dd902d3db077c083ebe37a819
 
 pkgname = dracpanel
