@@ -12,6 +12,6 @@ pkgbase = dracpanel
 	replaces = dracula-panel-for-sing-box
 	options = !strip
 	source = dracpanel-0.1.0.tar.zst
-	sha256sums = 77704eefd53eccf38db88ada9a87ba3027ae1f6dd902d3db077c083ebe37a819
+	sha256sums = 348ec0808ca97aae4355771855ded087a765ed802eb3d122d7827d8fdbd8e560
 
 pkgname = dracpanel
