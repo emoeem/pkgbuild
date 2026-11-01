@@ -1,0 +1,15 @@
+# Runtime-verify suppressions for the bundled upstream runtime.
+# Each line is a grep pattern matched against "check: detail". Every entry
+# must say why the failure is by design.
+#
+# The musl-flavored koffi binary is a spare upstream ships for Alpine; on this
+# glibc package the loader resolves koffi through the glibc build next to it,
+# and libc.musl-x86_64.so.1 does not exist as a system package.
+^unresolved-library: .*koffi-linux-x64/musl_x64/koffi\.node: libc\.musl-x86_64\.so\.1$
+#
+# _tkinter was built against tcl/tk 9.0, whose libraries ship inside the
+# payload (resources/runtime/primary-runtime/dependencies/python/lib/). The
+# application puts that directory on its own library path at startup; the
+# stock ldd probe does not reproduce it, and Arch repositories only carry
+# tcl/tk 8.6, so no system package can satisfy these SONAMEs.
+^unresolved-library: .*lib-dynload/_tkinter\.cpython-312-x86_64-linux-gnu\.so: libtcl9tk9\.0\.so,libtcl9\.0\.so$

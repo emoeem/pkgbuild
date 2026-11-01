@@ -60,6 +60,25 @@ report="$work/report.jsonl"
 
 note_failure() {
     local package_name="$1" check="$2" detail="$3"
+    # Per-package suppression: packages/<name>/.runtime-verify-ignore holds one
+    # grep pattern per line, matched against "check: detail". It exists for
+    # payloads that ship an upstream-built runtime whose files cannot resolve
+    # against system paths by design (a musl-flavored helper binary on a glibc
+    # system, a bundled interpreter extension whose libraries the application
+    # loads through its own library path). Every ignore must be justified in
+    # the file itself.
+    local ignore_file="${root}/packages/${package_name}/.runtime-verify-ignore"
+    if [[ -f "$ignore_file" ]]; then
+        local entry="${check}: ${detail}"
+        while IFS= read -r pattern; do
+            pattern="${pattern%%#*}"
+            [[ -n "$pattern" ]] || continue
+            if grep -qE "$pattern" <<<"$entry"; then
+                printf 'SUPPRESSED (%s): %s: %s\n' "$package_name" "$check" "$detail" >&2
+                return 0
+            fi
+        done <"$ignore_file"
+    fi
     failures=$(( failures + 1 ))
     printf 'FAIL: %s: %s: %s\n' "$package_name" "$check" "$detail" >&2
     python3 -c '

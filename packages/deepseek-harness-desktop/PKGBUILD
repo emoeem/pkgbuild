@@ -34,7 +34,8 @@ license=('MIT')
 depends=(
   'alsa-lib' 'at-spi2-core' 'cairo' 'dbus' 'expat' 'glib2' 'gtk3' 'libcups'
   'libx11' 'libxcb' 'libxcomposite' 'libxdamage' 'libxext' 'libxfixes'
-  'libxkbcommon' 'libxrandr' 'mesa' 'nss' 'pango' 'systemd-libs' 'xdg-utils'
+  'libxkbcommon' 'libxrandr' 'libxcrypt-compat' 'mesa' 'nss' 'pango'
+  'systemd-libs' 'xdg-utils'
 )
 optdepends=(
   'zenity: native directory dialogs for local directory selection'
@@ -102,6 +103,11 @@ package() {
   # Arch layout: private application payload under /usr/lib, entry point in /usr/bin.
   install -d "$pkgdir/usr/lib/$pkgname" "$pkgdir/usr/bin"
   cp -a "$appdir/." "$pkgdir/usr/lib/$pkgname/"
+
+  # koffi ships a musl build next to the glibc one; on this package the loader
+  # only ever resolves the glibc variant, and the musl binary's libc dependency
+  # cannot be met by any system package. Drop the spare file.
+  rm -f "$pkgdir/usr/lib/$pkgname/resources/app.asar.unpacked/dsh/node_modules/@koromix/koffi-linux-x64/musl_x64/koffi.node"
 
   install -Dm755 /dev/stdin "$pkgdir/usr/bin/$pkgname" <<'EOF'
 #!/bin/sh

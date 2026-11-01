@@ -25,6 +25,7 @@ pkgbase = deepseek-harness-desktop
 	depends = libxfixes
 	depends = libxkbcommon
 	depends = libxrandr
+	depends = libxcrypt-compat
 	depends = mesa
 	depends = nss
 	depends = pango
