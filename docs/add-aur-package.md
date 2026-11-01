@@ -49,14 +49,17 @@ https://aur.archlinux.org/package-name.git
 
 ## 捆绑 runtime 的包的 namcap 例外
 
-`packages/<name>/.namcap-exclude` 每行一个 namcap **规则名**，
-`scripts/run-namcap.sh` 把它们合并成一个 `--exclude` 规则列表（namcap 的
-`-e` 接受逗号分隔的 RULELIST，`-i` 是显示 info 消息的开关，不能用来忽略）。
-规则名就是 `namcap -L` 列出的名字，例如 `pydepends`、`rpath`、`runpath`。
+`packages/<name>/.namcap-exclude` 每行一个 namcap **规则名**（`namcap -L`
+第一列），`scripts/run-namcap.sh` 把它反做成 `--rules` 白名单：取全部启用
+规则，去掉列出的那些。
+
+不用 `--exclude` 是因为 namcap 自己的循环 bug：它每轮都执行
+`active_modules.update(modules)`，逗号列表会把上一轮排除的规则加回来，多个
+名字里只有最后一个真正生效。白名单的 `-r` 是逐个累加，没有这个问题。
 
 它只用于上游把完整运行时打进载荷的包：namcap 只看系统包，会把载荷内自带的
-Python 模块报成缺失依赖，也会把上游构建机留下的 RPATH/RUNPATH 报成不安全
-路径，两者都不是本仓库能修的问题。不写这个文件就必须让 namcap 全量通过，
+Python 模块报成缺失依赖（`pydepends`），也会把上游构建机留下的 RPATH/RUNPATH
+报成不安全路径（`rpath`、`runpath`）。不写这个文件就必须让 namcap 全量通过，
 这是默认路径。
 
 ## 推送后的自动流程
