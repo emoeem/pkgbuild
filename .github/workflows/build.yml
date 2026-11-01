@@ -359,8 +359,8 @@ jobs:
           set -Eeuo pipefail
           ignore_file="packages/$PACKAGE_NAME/.namcap-ignore"
           report="$(python3 scripts/namcap_warnings.py --package "$PACKAGE_NAME" --warnings-file dist/namcap.txt --ignore-file "$ignore_file")"
-          key="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["key"])' "$report")"
-          warnings="$(python3 -c 'import json,sys; print(chr(10).join(json.loads(sys.argv[1])["warnings"]))' "$report")"
+          key="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["key"])' < "$report")"
+          warnings="$(python3 -c 'import json,sys; print(chr(10).join(json.load(sys.stdin)["warnings"]))' < "$report")"
           [[ -n "$key" ]] || exit 0
           issue="$(gh issue list --state open --limit 100 --json number,title | python3 -c 'import json,sys; title=sys.argv[1]; rows=json.load(sys.stdin); print(next((x["number"] for x in rows if x["title"]==title), ""))' "$key")"
           body_file="$(mktemp)"

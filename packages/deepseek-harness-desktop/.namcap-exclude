@@ -14,3 +14,7 @@
 pydepends
 rpath
 runpath
+#   unusedsodepends  The payload carries its own .so set; namcap flags every
+#                    NEEDED stub glibc >= 2.34 folded into libc, and every
+#                    vendored library nothing in the package links against.
+unusedsodepends
