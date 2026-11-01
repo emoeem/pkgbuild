@@ -31,7 +31,6 @@
 | Package | Arch | 说明 |
 | --- | --- | --- |
 | `ffmpeg-full` | `x86_64` | 启用大量编解码器、CUDA 和 Whisper 支持的 FFmpeg |
-| `deepseek-harness-desktop` | `x86_64` | DeepSeek Harness 桌面应用：Electron 壳 + 内置 dsh runtime（含 Node.js/pnpm/CPython/Office 库），Linux 桌面目标由本仓库补丁启用 |
 | `linuxqq-wayland-fix-git` | `x86_64` | 修复 Linux QQ 在 Wayland 下的屏幕共享、声音共享、剪贴板和截图 |
 | `mpeghdec` | `x86_64` | Fraunhofer MPEG-H 解码器 |
 | `quirc` | `x86_64` | QR 解码库 |
