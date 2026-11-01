@@ -18,7 +18,7 @@
 
 pkgname=dracpanel
 pkgver=0.1.0
-pkgrel=11
+pkgrel=12
 pkgdesc='DracPanel: FlClash-style web UI for sing-box (Dracula palette optional)'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
@@ -31,7 +31,7 @@ conflicts=('dracula-panel-for-sing-box')
 replaces=('dracula-panel-for-sing-box')
 install=dracpanel.install
 source=("dracpanel-${pkgver}.tar.zst")
-sha256sums=('348ec0808ca97aae4355771855ded087a765ed802eb3d122d7827d8fdbd8e560')
+sha256sums=('4ce8f9c3b9f8fbfde0093d4f568eb246dcb3c10b006c988231602cfa18c20696')
 
 _json_field() {
     # Pull a top-level string field out of a small JSON file without jq.

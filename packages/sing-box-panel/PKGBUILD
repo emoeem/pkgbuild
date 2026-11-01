@@ -8,7 +8,8 @@
 # 0.2.0 起为 Go 移植（行为与 0.1.x Python 版逐端点对齐），并新增：
 #   - /api/history（流量历史持久化，7 天 JSONL）与 /api/notifications 事件流
 #   - /api/system-proxy、/api/local-ip、/api/memory、/api/profiles/import
-#   - /api/state 返回 api_version=8 + features（UI 跳过能力探测）
+#   - /api/state 返回 api_version=9 + features（UI 跳过能力探测）
+#   - DNS 统计：/api/dns、/api/dns/queries（journal debug 行）、/api/dns/probe（上游探测）
 # UI 由 dracpanel 包提供（/usr/share/dracpanel/ui 或 panel.json 的 ui_dir）。
 #
 # 二进制为上游仓库的预编译产物（CGO_ENABLED=0，-trimpath，纯静态链接）。
@@ -19,7 +20,7 @@ _zash_ver=3.29.1
 
 pkgname=sing-box-panel
 pkgver=0.2.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Local web panel for sing-box: service control, subscriptions/nodes, per-app eBPF policy, safe config pipeline, traffic history'
 arch=('x86_64')
 url='https://github.com/emoeem/pkgbuild'
@@ -35,7 +36,7 @@ source=(
     "zashboard-${_zash_ver}.zip::https://github.com/Zephyruso/zashboard/releases/download/v${_zash_ver}/dist-no-fonts.zip"
 )
 sha256sums=(
-    '028251921ad013a82ff4442069099dec6977ad2a272d796da139ba5a3facad11'
+    '6aeb166a0219104003ba6ca556db2430adbb9b48486fac8a235e1bfd5c02981d'
     '184f1c74f1c5f541bd91ef630682dc058bef01650a9cc18746c87d6be17dbad0'
     'baa5447ef7acfe7ea9e2d8f5a021fcc7fd3a3a3b5a650e3faf3ebc25a7ef0070'
     '21371cd111b6b3d87774f3ea3ddeacdcb0f6aff8690a16d652daa3ea6e3b0145'
