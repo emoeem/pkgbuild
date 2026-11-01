@@ -1,0 +1,14 @@
+# Upstream ships a complete runtime inside the payload
+# (resources/runtime/primary-runtime): CPython with its site-packages, plus
+# native extensions and helper binaries built on the upstream build host.
+#
+#   depends  The Python modules those .py files import (charset-normalizer,
+#            attrs, markupsafe, yaml) live inside the payload. namcap only
+#            consults system packages, so they look missing. Vendoring a
+#            system copy would change what the application loads.
+#   rpath    The shipped ELF files keep the upstream build-host RPATH/RUNPATH
+#            (/tools/deps/lib, the sherpa-onnx build tree). Rewriting them
+#            means patching upstream artifacts this package deliberately does
+#            not touch (`options=(!strip)`).
+depends
+rpath

@@ -47,6 +47,14 @@ https://aur.archlinux.org/package-name.git
 - `.SRCINFO` 中声明的本地源文件是否齐全。
 - `pkgbase`、`pkgver` 和 `pkgrel` 是否可读取。
 
+## 捆绑 runtime 的包的 namcap 例外
+
+`packages/<name>/.namcap-ignore-tags` 每行一个 namcap tag，由
+`scripts/run-namcap.sh` 转成 `-i <tag>`。它只用于上游把完整运行时打进载荷的
+包：namcap 只看系统包，会把载荷内自带的 Python 模块报成缺失依赖，也会把上游
+构建机留下的 RPATH 报成不安全路径，两者都不是本仓库能修的问题。不写这个文件
+就必须让 namcap 全量通过，这是默认路径。
+
 ## 推送后的自动流程
 
 `packages/**` 的变化会先触发 `check.yml`，在 Arch Linux 容器中运行
