@@ -3,7 +3,10 @@ set -Eeuo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="$root/scripts/dispatch-stale-rebuilds.sh"
 tmp="$(mktemp -d)"
-trap 'rm -rf -- "$tmp"' EXIT INT TERM
+cleanup() {
+  rm -rf -- "$tmp" "${retry_tmp:-}" "${fail_tmp:-}" "${queued_tmp:-}"
+}
+trap cleanup EXIT INT TERM
 mkdir -p "$tmp/bin" "$tmp/packages/demo-stale" "$tmp/packages/demo-active" "$tmp/packages/demo-failed" "$tmp/state"
 printf 'pkgname=demo-stale\n' > "$tmp/packages/demo-stale/PKGBUILD"
 printf 'pkgname=demo-active\n' > "$tmp/packages/demo-active/PKGBUILD"
@@ -58,4 +61,147 @@ grep -q 'gh workflow run build.yml .* -f packages=demo-stale' "$MOCK_LOG"
 grep -q 'stale=demo-stale' "$GITHUB_OUTPUT"
 # 回归:第二层循环曾因变量名不匹配(_job_status vs job_status)在 set -u 下
 # 第一行数据就崩,SKIP/DEFER 全部失灵——脚本能走完并正确分类即证明已修。
-printf 'dispatch-stale-rebuilds tests passed: skip-active, defer-recent-failure, ignore-missing, dispatch-clean\n'
+#
+# --- dispatch 的瞬时 5xx ----------------------------------------------------
+# 2026-10-27 的 ABI watch 在 `gh workflow run` 上收到 HTTP 502，直接退出 1，
+# 一个 stale 包也没重建。下面三种情形分别覆盖：重试后成功、彻底失败、以及
+# 502 其实已在 GitHub 侧入队（不能再 dispatch 第二次）。
+
+# 场景 A：第一次 502，第二次成功。
+retry_tmp="$(mktemp -d)"
+mkdir -p "$retry_tmp/bin" "$retry_tmp/packages/demo-stale" "$retry_tmp/state"
+printf 'pkgname=demo-stale\n' > "$retry_tmp/packages/demo-stale/PKGBUILD"
+printf 'demo-stale\n' > "$retry_tmp/stale.txt"
+retry_log="$retry_tmp/state/gh.log"
+retry_count="$retry_tmp/state/count"
+cat > "$retry_tmp/bin/gh" <<MOCK
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'gh %s\n' "\$*" >> "$retry_log"
+case "\${1:-}" in
+  api) : ;;
+  workflow)
+    count=\$(( \$(cat "$retry_count" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "\$count" > "$retry_count"
+    if (( count == 1 )); then
+      printf 'gh: Server Error (HTTP 502)\n' >&2
+      exit 1
+    fi
+    ;;
+esac
+MOCK
+chmod +x "$retry_tmp/bin/gh"
+(
+  cd "$retry_tmp"
+  PATH="$retry_tmp/bin:$PATH" \
+    GITHUB_REPOSITORY=emoeem/pkgbuild \
+    GITHUB_STEP_SUMMARY="$retry_tmp/state/summary.txt" \
+    GITHUB_OUTPUT="$retry_tmp/state/output.txt" \
+    DISPATCH_RETRY_DELAY=0 DISPATCH_VERIFY_ATTEMPTS=1 DISPATCH_VERIFY_DELAY=0 \
+    bash "$script" "$retry_tmp/stale.txt"
+) || {
+  printf 'FAIL: a transient 502 aborted the dispatch instead of retrying\n' >&2
+  exit 1
+}
+[[ "$(cat "$retry_count")" == 2 ]] || {
+  printf 'FAIL: expected one retry after the 502, got %s attempt(s)\n' "$(cat "$retry_count")" >&2
+  exit 1
+}
+grep -q 'stale=demo-stale' "$retry_tmp/state/output.txt" \
+  || { printf 'FAIL: retried dispatch did not record the stale package\n' >&2; exit 1; }
+
+# 场景 B：每次 dispatch 都 502，且 API 里没有对应的 run —— 必须失败。
+fail_tmp="$(mktemp -d)"
+mkdir -p "$fail_tmp/bin" "$fail_tmp/packages/demo-stale" "$fail_tmp/state"
+printf 'pkgname=demo-stale\n' > "$fail_tmp/packages/demo-stale/PKGBUILD"
+printf 'demo-stale\n' > "$fail_tmp/stale.txt"
+fail_count="$fail_tmp/state/count"
+cat > "$fail_tmp/bin/gh" <<MOCK
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "\${1:-}" in
+  api) : ;;
+  workflow)
+    count=\$(( \$(cat "$fail_count" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "\$count" > "$fail_count"
+    printf 'gh: Server Error (HTTP 502)\n' >&2
+    exit 1
+    ;;
+esac
+MOCK
+chmod +x "$fail_tmp/bin/gh"
+if (
+  cd "$fail_tmp"
+  PATH="$fail_tmp/bin:$PATH" \
+    GITHUB_REPOSITORY=emoeem/pkgbuild \
+    GITHUB_STEP_SUMMARY="$fail_tmp/state/summary.txt" \
+    GITHUB_OUTPUT="$fail_tmp/state/output.txt" \
+    DISPATCH_ATTEMPTS=2 DISPATCH_RETRY_DELAY=0 \
+    DISPATCH_VERIFY_ATTEMPTS=1 DISPATCH_VERIFY_DELAY=0 \
+    bash "$script" "$fail_tmp/stale.txt"
+); then
+  printf 'FAIL: a dispatch that never landed was reported as successful\n' >&2
+  exit 1
+fi
+[[ "$(cat "$fail_count")" == 2 ]] || {
+  printf 'FAIL: expected two dispatch attempts before giving up, got %s\n' "$(cat "$fail_count")" >&2
+  exit 1
+}
+
+# 场景 C：gh 报 502，但 build.yml 里目标包已经 queued —— 视为已 dispatch，
+# 且不再发第二次，否则同一批包会被构建两遍。
+queued_tmp="$(mktemp -d)"
+mkdir -p "$queued_tmp/bin" "$queued_tmp/packages/demo-stale" "$queued_tmp/state"
+printf 'pkgname=demo-stale\n' > "$queued_tmp/packages/demo-stale/PKGBUILD"
+printf 'demo-stale\n' > "$queued_tmp/stale.txt"
+queued_count="$queued_tmp/state/count"
+queued_summary="$queued_tmp/state/summary.txt"
+cat > "$queued_tmp/bin/gh" <<MOCK
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "\${1:-}" in
+  api)
+    count=\$(cat "$queued_count" 2>/dev/null || echo 0)
+    case "\$2" in
+      *workflows/build.yml/runs*)
+        if (( count >= 1 )); then
+          printf '3\tin_progress\t\t${now}\n'
+        fi
+        ;;
+      */runs/3/jobs*)
+        printf 'demo-stale\tin_progress\t\n'
+        ;;
+    esac
+    ;;
+  workflow)
+    count=\$(( \$(cat "$queued_count" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "\$count" > "$queued_count"
+    printf 'gh: Server Error (HTTP 502)\n' >&2
+    exit 1
+    ;;
+esac
+MOCK
+chmod +x "$queued_tmp/bin/gh"
+(
+  cd "$queued_tmp"
+  PATH="$queued_tmp/bin:$PATH" \
+    GITHUB_REPOSITORY=emoeem/pkgbuild \
+    GITHUB_STEP_SUMMARY="$queued_summary" \
+    GITHUB_OUTPUT="$queued_tmp/state/output.txt" \
+    DISPATCH_RETRY_DELAY=0 DISPATCH_VERIFY_ATTEMPTS=2 DISPATCH_VERIFY_DELAY=0 \
+    bash "$script" "$queued_tmp/stale.txt"
+) || {
+  printf 'FAIL: a 502 that had already queued the rebuild was reported as failure\n' >&2
+  exit 1
+}
+[[ "$(cat "$queued_count")" == 1 ]] || {
+  printf 'FAIL: dispatch was repeated after the rebuild had already queued (%s attempts)\n' \
+    "$(cat "$queued_count")" >&2
+  exit 1
+}
+grep -q 'already queued/running; treating it as dispatched' "$queued_summary" \
+  || { printf 'FAIL: the ambiguous dispatch outcome was not explained\n' >&2; exit 1; }
+grep -q 'stale=demo-stale' "$queued_tmp/state/output.txt" \
+  || { printf 'FAIL: queued dispatch did not record the stale package\n' >&2; exit 1; }
+
+printf 'dispatch-stale-rebuilds tests passed: skip-active, defer-recent-failure, ignore-missing, dispatch-clean, retry-502, fail-502, queued-after-502\n'

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Timing helpers sourced by scripts/build-in-arch.sh.
+# Timing and transient-retry helpers sourced by the build and dispatch scripts.
 #
 # Holds only what bash can measure exactly: wall clock around orchestration
 # phases, and cheap resource counters (children CPU time, cgroup peak memory,
@@ -57,6 +57,7 @@ timing_end() {
 retry_transient() {
     local attempts="$1"
     local delay="$2"
+    local reason="${RETRY_TRANSIENT_REASON:-upstream mirror transient?}"
     shift 2
     if [[ "${1:-}" == "--" ]]; then
         shift
@@ -67,8 +68,8 @@ retry_transient() {
             printf 'Command still failing after %d attempts: %s\n' "$attempt" "$*" >&2
             return 1
         fi
-        printf 'Attempt %d/%d failed (upstream mirror transient?); retrying in %ds: %s\n' \
-            "$attempt" "$attempts" "$delay" "$*" >&2
+        printf 'Attempt %d/%d failed (%s); retrying in %ds: %s\n' \
+            "$attempt" "$attempts" "$reason" "$delay" "$*" >&2
         sleep "$delay"
         attempt=$((attempt + 1))
         delay=$((delay * 2))

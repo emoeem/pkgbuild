@@ -222,4 +222,108 @@ grep -Fq 'validate-source-cache.sh' "$root/scripts/build-in-arch.sh" \
 grep -Fq 'validate-source-cache.sh' "$root/scripts/build-in-clean-chroot.sh" \
     || fail 'clean-chroot build path does not validate the source cache'
 
+printf '%s\n' '13: verify a URL source shadowed by a drifted package-dir file fails fast'
+# makepkg resolves $startdir/<name> before SRCDEST for URL-declared files too.
+# A committed copy that disagrees with the declared checksum is a repository
+# defect (ffmpeg-full 9.0.2-2.36 at ced12ff), not a stale cache that a rebuild
+# can heal.
+shadow="$work/shadow"
+mkdir -p "$shadow/cache"
+printf 'committed bytes\n' >"$shadow/mine.patch"
+shadow_sum="$(sha256sum "$shadow/mine.patch" | cut -d' ' -f1)"
+cat >"$shadow/.SRCINFO" <<EOF
+pkgbase = fixture
+	source = mine.patch::https://example.invalid/mine.patch
+	sha256sums = $shadow_sum
+EOF
+bash "$root/scripts/validate-source-cache.sh" "$shadow" "$shadow/cache" >/dev/null 2>&1 \
+    || fail 'validator rejected a URL source whose package-dir copy matches'
+printf 'remote rendering\n' >>"$shadow/mine.patch"
+if out="$(bash "$root/scripts/validate-source-cache.sh" "$shadow" "$shadow/cache" 2>&1)"; then
+    fail 'validator accepted a URL source shadowed by a drifted package-dir copy'
+fi
+printf '%s' "$out" | grep -Fq 'mine.patch shadows the remote source' \
+    || fail 'validator did not name the package-dir copy that shadows the URL source'
+printf '%s' "$out" | grep -Fq 'the build would hash' \
+    || fail 'validator did not explain that makepkg prefers the package-dir copy'
+
+printf '%s\n' '14: verify the ffmpeg-full overlay restores the vendored openapv patch after an AUR sync'
+# Reproduce the 2026-10-27 sync: AUR declares 080 as a URL with its own
+# checksum while the repository keeps the vendored bytes. The overlay must
+# reconcile the declaration to the committed file on every run.
+overlay_fixture="$work/ffmpeg-full"
+mkdir -p "$overlay_fixture"
+cp "$root/packages/ffmpeg-full/PKGBUILD" "$root/packages/ffmpeg-full/.SRCINFO" \
+    "$root/packages/ffmpeg-full"/0*.patch "$overlay_fixture/"
+vendored_sum="$(sha256sum "$overlay_fixture/080-ffmpeg-openapv1.1-fix.patch" | cut -d' ' -f1)"
+python3 - "$overlay_fixture/PKGBUILD" "$overlay_fixture/.SRCINFO" "$vendored_sum" <<'PY'
+from pathlib import Path
+import sys
+
+pkgbuild, srcinfo, vendored_sum = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+url = 'https://code.ffmpeg.org/FFmpeg/FFmpeg/commit/c54710db21c1827dbc3e47658a562525af0fe528.patch'
+remote_sum = '6eda059a' + '0' * 56
+
+text = pkgbuild.read_text()
+text = text.replace("        '080-ffmpeg-openapv1.1-fix.patch'\n",
+                    "        '080-ffmpeg-openapv1.1-fix.patch'::'" + url + "'\n", 1)
+text = text.replace(vendored_sum, remote_sum, 1)
+pkgbuild.write_text(text)
+
+text = srcinfo.read_text()
+text = text.replace('\tsource = 080-ffmpeg-openapv1.1-fix.patch\n',
+                    '\tsource = 080-ffmpeg-openapv1.1-fix.patch::' + url + '\n', 1)
+text = text.replace(f'\tsha256sums = {vendored_sum}\n',
+                    f'\tsha256sums = {remote_sum}\n', 1)
+srcinfo.write_text(text)
+PY
+bash "$root/scripts/overlays/ffmpeg-full.sh" "$overlay_fixture" >/dev/null \
+    || fail 'ffmpeg-full overlay failed on an AUR-style PKGBUILD'
+grep -qF "        '080-ffmpeg-openapv1.1-fix.patch'" "$overlay_fixture/PKGBUILD" \
+    || fail 'overlay did not restore the plain vendored openapv source entry'
+grep -qF "'080-ffmpeg-openapv1.1-fix.patch'::" "$overlay_fixture/PKGBUILD" \
+    && fail 'overlay left the openapv source pointing at a remote URL'
+grep -qF "            '$vendored_sum'" "$overlay_fixture/PKGBUILD" \
+    || fail 'overlay did not restore the checksum of the vendored openapv patch'
+grep -qF '	source = 080-ffmpeg-openapv1.1-fix.patch' "$overlay_fixture/.SRCINFO" \
+    || fail 'overlay did not restore the openapv entry in .SRCINFO'
+grep -qF "	sha256sums = $vendored_sum" "$overlay_fixture/.SRCINFO" \
+    || fail 'overlay did not restore the openapv checksum in .SRCINFO'
+first_sum="$(sha256sum "$overlay_fixture/PKGBUILD" | cut -d' ' -f1)"
+bash "$root/scripts/overlays/ffmpeg-full.sh" "$overlay_fixture" >/dev/null \
+    || fail 'ffmpeg-full overlay is not idempotent'
+[[ "$(sha256sum "$overlay_fixture/PKGBUILD" | cut -d' ' -f1)" == "$first_sum" ]] \
+    || fail 're-running the ffmpeg-full overlay rewrote the PKGBUILD'
+# And if AUR drops the patch entirely, the overlay must add the committed copy
+# back instead of building without the openapv 1.1 fix.
+python3 - "$overlay_fixture/PKGBUILD" "$overlay_fixture/.SRCINFO" "$vendored_sum" <<'PY'
+from pathlib import Path
+import sys
+
+pkgbuild, srcinfo, vendored_sum = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+text = pkgbuild.read_text()
+text = text.replace("        '080-ffmpeg-openapv1.1-fix.patch'\n", '', 1)
+text = text.replace(f"            '{vendored_sum}'\n", '', 1)
+text = '\n'.join(line for line in text.splitlines()
+                 if not (line.lstrip().startswith('patch') and 'openapv' in line)) + '\n'
+pkgbuild.write_text(text)
+
+text = srcinfo.read_text()
+text = text.replace('\tsource = 080-ffmpeg-openapv1.1-fix.patch\n', '', 1)
+text = text.replace(f'\tsha256sums = {vendored_sum}\n', '', 1)
+srcinfo.write_text(text)
+PY
+bash "$root/scripts/overlays/ffmpeg-full.sh" "$overlay_fixture" >/dev/null \
+    || fail 'ffmpeg-full overlay failed to re-inject a missing openapv patch'
+grep -qF "        '080-ffmpeg-openapv1.1-fix.patch'" "$overlay_fixture/PKGBUILD" \
+    || fail 'overlay did not re-inject the vendored openapv source entry'
+grep -qF "            '$vendored_sum'" "$overlay_fixture/PKGBUILD" \
+    || fail 'overlay did not re-inject the vendored openapv checksum'
+[[ "$(grep -cE '^    patch .*openapv.*[.]patch' "$overlay_fixture/PKGBUILD")" == 1 ]] \
+    || fail 'overlay did not re-inject the openapv prepare line exactly once'
+
+printf '%s\n' '15: verify package checks hash declared sources before a sync commits'
+grep -Fq 'validate-source-cache.sh' "$root/scripts/check-package.sh" \
+    || fail 'check-package.sh does not validate source checksums at sync time'
+
 printf '%s\n' 'All build regression tests passed.'

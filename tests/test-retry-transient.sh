@@ -98,6 +98,24 @@ else
     fail "arguments were mangled: $seen"
 fi
 
+# --- the caller can say what kind of transient failure it is retrying ------
+calls=0
+fails_once() {
+    calls=$((calls + 1))
+    ((calls == 1)) && return 1
+    return 0
+}
+if RETRY_TRANSIENT_REASON='GitHub API transient?' \
+        retry_transient 2 0 -- fails_once 2>"$work/msg3"; then
+    if ((calls == 2)) && grep -q 'GitHub API transient' "$work/msg3"; then
+        ok 'a caller can replace the generic retry reason'
+    else
+        fail 'the caller-specific retry reason was not used'
+    fi
+else
+    fail 'retry_transient failed while retrying with a custom reason'
+fi
+
 if ((failures > 0)); then
     printf '%s failure(s)\n' "$failures" >&2
     exit 1

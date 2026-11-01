@@ -82,6 +82,22 @@ for package_name in "${package_names[@]}"; do
             "${package_dir}/.SRCINFO"
     )
 
+    # A URL-declared source may be shadowed by a same-named file in the package
+    # directory, which makepkg resolves before SRCDEST or the network. The cache
+    # validator hashes that copy against the declaration; running it here makes
+    # an AUR sync fail before committing, instead of dispatching a build that
+    # can only die in the source validity check (ffmpeg-full 9.0.2-2.36).
+    probe_cache="$(mktemp -d)"
+    if ! validation="$(bash "${repo_root}/scripts/validate-source-cache.sh" \
+        "$package_dir" "$probe_cache" 2>&1)"; then
+        rmdir -- "$probe_cache" 2>/dev/null || true
+        printf '%s\n' "$validation" >&2
+        printf '%s has a source whose content does not match its declared checksum.\n' \
+            "$package_name" >&2
+        exit 1
+    fi
+    rmdir -- "$probe_cache" 2>/dev/null || true
+
     pkgbase="$(
         awk -F ' = ' '$1 == "pkgbase" { print $2; exit }' \
             "${package_dir}/.SRCINFO"

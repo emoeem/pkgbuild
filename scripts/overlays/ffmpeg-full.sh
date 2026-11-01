@@ -118,45 +118,193 @@ PY2
 #     Without the upstream fix (FFmpeg commit c54710db) a rebuild against
 #     openapv 1.1.1.0 fails, while the already published ffmpeg-full still
 #     needs the removed liboapv.so.2 -- which breaks every consumer of
-#     libavcodec, mpv included. AUR ships this patch itself since pkgrel 2, so
-#     only add our own copy when the synced PKGBUILD does not carry one.
-oapv_patch='080-ffmpeg-liboapvenc-openapv-1.1.patch'
-oapv_patch_url='https://github.com/FFmpeg/FFmpeg/commit/c54710db21c1827dbc3e47658a562525af0fe528.patch'
-oapv_patch_sum='f773a85ec68f3b26e0b2ab3cddb7a304df5be8eb5c1887c9b627e23e782c7ec2'
-oapv_injected=0
+#     libavcodec, mpv included.
+#
+#     This repository vendors that commit as 080-ffmpeg-openapv1.1-fix.patch
+#     instead of fetching it from code.ffmpeg.org: that endpoint re-renders the
+#     patch text, so its `index` abbreviation changes under a constant commit id
+#     and a remote checksum goes stale. AUR meanwhile declares the patch as a
+#     URL source. Both forms must agree: makepkg resolves a file source from
+#     $startdir before SRCDEST or the network, so the committed file is what
+#     gets hashed. A sync that brought back AUR's URL declaration while keeping
+#     the vendored bytes made ffmpeg-full 9.0.2-2.36 die in the validity check
+#     at ced12ff. Reconcile on every sync: one plain source entry whose
+#     checksum is the hash of the committed file.
+oapv_patch='080-ffmpeg-openapv1.1-fix.patch'
+oapv_path="${package_dir}/${oapv_patch}"
+[[ -f "$oapv_path" ]] || fail "vendored openapv patch is missing: ${oapv_patch}"
+oapv_sum="$(sha256sum -- "$oapv_path" | cut -d' ' -f1)"
 
-if ! grep -qE 'c54710db|openapv[^'"'"']*[.]patch' "$pkgbuild"; then
-    oapv_injected=1
-    python3 - "$pkgbuild" "$oapv_patch" "$oapv_patch_url" "$oapv_patch_sum" <<'PY3'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-name, url, digest = sys.argv[2], sys.argv[3], sys.argv[4]
-s = path.read_text()
-
-source_anchor = "        '070-ffmpeg-whisper.cpp-fix-pkgconfig.patch'\n"
-sums_anchor = "            '2c846c629ad129ae8ce50791de4f1d390714db6d6420a35406b83b9b44999d4a'\n"
-prepare_anchor = '    patch -d "ffmpeg-${pkgver}" -Np1 -i "${srcdir}/050-ffmpeg-fix-cuda-nvcc-with-gcc14.patch"\n'
-
-for label, anchor in (('source', source_anchor),
-                      ('sha256sums', sums_anchor),
-                      ('prepare', prepare_anchor)):
-    if s.count(anchor) != 1:
-        raise SystemExit(f'{label} anchor not found exactly once')
-
-s = s.replace(source_anchor,
-              source_anchor + f"        '{name}'::\"{url}\"\n", 1)
-s = s.replace(sums_anchor,
-              sums_anchor + f"            '{digest}'\n", 1)
-s = s.replace(prepare_anchor,
-              prepare_anchor +
-              '    patch -d "ffmpeg-${pkgver}" -Np1 -i "${srcdir}/' + name + '"\n', 1)
-path.write_text(s)
-PY3
+# AUR's .SRCINFO supplies the source/checksum ordering used below. Refresh it
+# from the PKGBUILD first when possible so a stale AUR copy cannot shift the
+# index onto a different checksum.
+if command -v makepkg > /dev/null 2>&1; then
+    ( cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO ) ||
+        fail 'unable to refresh .SRCINFO before reconciling the openapv patch'
 fi
 
-# Exactly one openapv patch must be applied, whether it came from AUR or from us.
+python3 - "$pkgbuild" "$srcinfo" "$oapv_patch" "$oapv_sum" <<'PY3'
+from pathlib import Path
+import re
+import sys
+
+pkgbuild_path = Path(sys.argv[1])
+srcinfo_path = Path(sys.argv[2])
+patch_name = sys.argv[3]
+patch_sum = sys.argv[4]
+markers = ('openapv', 'c54710db')
+
+
+def fail(message):
+    raise SystemExit(f'ffmpeg-full overlay: {message}')
+
+
+def field_lines(lines, field):
+    prefix = f'\t{field} = '
+    return [i for i, line in enumerate(lines) if line.startswith(prefix)]
+
+
+def field_values(lines, field):
+    prefix = f'\t{field} = '
+    return [line[len(prefix):].rstrip('\n') for line in lines if line.startswith(prefix)]
+
+
+def filename_of(spec):
+    if '::' in spec:
+        return spec.split('::', 1)[0]
+    value = spec[len('git+'):] if spec.startswith('git+') else spec
+    value = value.split('#', 1)[0].split('?', 1)[0]
+    return value.rsplit('/', 1)[-1]
+
+
+def line_end(text, pos):
+    end = text.find('\n', pos)
+    return len(text) if end < 0 else end + 1
+
+
+srcinfo_lines = srcinfo_path.read_text().splitlines(keepends=True)
+source_rows = field_lines(srcinfo_lines, 'source')
+sum_rows = field_lines(srcinfo_lines, 'sha256sums')
+sources = field_values(srcinfo_lines, 'source')
+sums = field_values(srcinfo_lines, 'sha256sums')
+if not sources or len(sources) != len(sums):
+    fail(f'.SRCINFO declares {len(sources)} source(s) but {len(sums)} checksum(s)')
+
+matches = [i for i, spec in enumerate(sources) if any(m in spec for m in markers)]
+if len(matches) > 1:
+    fail('more than one openapv source entry in .SRCINFO')
+index = matches[0] if matches else None
+
+text = pkgbuild_path.read_text()
+source_decl = re.search(r'^source=\(', text, re.M)
+sums_decl = re.search(r'^sha256sums=\(', text, re.M)
+if not source_decl or not sums_decl:
+    fail('PKGBUILD is missing source=() or sha256sums=()')
+source_end = text.find(')', source_decl.end())
+sums_end = text.find(')', sums_decl.end())
+if source_end < 0 or sums_end < 0:
+    fail('PKGBUILD source and sha256sums arrays must be closed')
+
+if index is not None:
+    old_name = filename_of(sources[index])
+
+    # Replace the checksum at the same index. The array is one quoted value per
+    # entry, so the .SRCINFO index maps directly; only that token changes.
+    if sums_end <= sums_decl.end():
+        fail('sha256sums=() is empty')
+    tokens = list(re.finditer(r"'[^']*'|\"[^\"]*\"", text[sums_decl.end():sums_end]))
+    if len(tokens) != len(sums):
+        fail(f'PKGBUILD declares {len(tokens)} checksum(s) but .SRCINFO has {len(sums)}')
+    token = tokens[index]
+    offset = sums_decl.end()
+    text = text[:offset + token.start()] + f"'{patch_sum}'" + text[offset + token.end():]
+
+    # Collapse the source entry to the committed file name. AUR may declare
+    # `name::url`; the whole line goes, or the URL would remain attached.
+    pattern = (r'^([ \t]*)' + re.escape("'" + old_name + "'") + r'[^\n]*$')
+    match = re.search(pattern, text[source_decl.end():source_end], re.M)
+    if not match:
+        fail(f'source=() does not declare {old_name}')
+    replacement = match.group(1) + f"'{patch_name}'"
+    start = source_decl.end() + match.start()
+    text = text[:start] + replacement + text[line_end(text, start) - 1:]
+
+    # prepare() must apply the committed file, whatever AUR called it.
+    prepared = 0
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith('patch') and old_name in line:
+            lines[i] = line.replace(old_name, patch_name)
+            prepared += 1
+    if prepared != 1:
+        fail(f'prepare() applies {old_name} {prepared} time(s)')
+    text = ''.join(lines)
+
+    srcinfo_lines[source_rows[index]] = f'\tsource = {patch_name}\n'
+    srcinfo_lines[sum_rows[index]] = f'\tsha256sums = {patch_sum}\n'
+else:
+    # AUR dropped the patch entirely: add the committed copy after 070.
+    anchor = next((i for i, spec in enumerate(sources)
+                   if '070-ffmpeg-whisper.cpp-fix-pkgconfig.patch' in spec), None)
+    if anchor is None:
+        fail('no 070-ffmpeg-whisper.cpp-fix-pkgconfig.patch entry to anchor the openapv source')
+    anchor_sum = sums[anchor]
+
+    match = re.search(r'^([ \t]*)[^\n]*070-ffmpeg-whisper\.cpp-fix-pkgconfig[.]patch[^\n]*$',
+                      text[source_decl.end():source_end], re.M)
+    if not match:
+        fail('source=() has no 070-ffmpeg-whisper.cpp-fix-pkgconfig.patch entry')
+    position = source_decl.end() + match.end()
+    text = text[:position] + f"\n{match.group(1)}'{patch_name}'" + text[position:]
+
+    # The source insertion above moved everything that follows it, so the
+    # sha256sums offsets from the original scan are no longer valid.
+    sums_decl = re.search(r'^sha256sums=\(', text, re.M)
+    sums_end = text.find(')', sums_decl.end()) if sums_decl else -1
+    if sums_end < 0:
+        fail('PKGBUILD sha256sums=() disappeared during the openapv rewrite')
+    sums_block = text[sums_decl.end():sums_end]
+    match = re.search(r'^([ \t]*)' + re.escape("'" + anchor_sum + "'") + r'[^\n]*$',
+                      sums_block, re.M)
+    if not match:
+        fail('sha256sums=() has no checksum for the 070 patch')
+    position = sums_decl.end() + match.end()
+    text = text[:position] + f"\n{match.group(1)}'{patch_sum}'" + text[position:]
+
+    match = re.search(r'^([ \t]*).*050-ffmpeg-fix-cuda-nvcc-with-gcc14[.]patch[^\n]*$', text, re.M)
+    if not match:
+        fail('prepare() has no 050-ffmpeg-fix-cuda-nvcc-with-gcc14.patch line')
+    position = match.end()
+    text = (text[:position] +
+            f'\n    patch -d "ffmpeg-${{pkgver}}" -Np1 -i "${{srcdir}}/{patch_name}"' +
+            text[position:])
+
+    srcinfo_lines.insert(source_rows[anchor] + 1, f'\tsource = {patch_name}\n')
+    srcinfo_lines.insert(sum_rows[anchor] + 2, f'\tsha256sums = {patch_sum}\n')
+
+pkgbuild_path.write_text(text)
+srcinfo_path.write_text(''.join(srcinfo_lines))
+
+# The result must be a single plain entry whose checksum describes the file.
+lines = pkgbuild_path.read_text().splitlines()
+source_entries = [line for line in lines if line.strip().startswith("'")
+                  and patch_name in line]
+if len(source_entries) != 1 or '::' in source_entries[0]:
+    fail(f'the vendored openapv source entry is missing, duplicated or still remote: {source_entries}')
+declared = [line for line in lines if line.strip() == f"'{patch_sum}'"]
+if len(declared) != 1:
+    fail('the vendored openapv checksum is missing or duplicated')
+applied = [line for line in lines if line.lstrip().startswith('patch') and patch_name in line]
+if len(applied) != 1:
+    fail('the vendored openapv patch is not applied exactly once in prepare()')
+PY3
+
+[[ "$(grep -cF "'${oapv_patch}'" "$pkgbuild")" == 1 ]] ||
+    fail 'the vendored openapv source entry is missing or duplicated in PKGBUILD'
+[[ "$(grep -cF "'${oapv_sum}'" "$pkgbuild")" == 1 ]] ||
+    fail 'the vendored openapv checksum is missing or duplicated in PKGBUILD'
+grep -qF "'${oapv_patch}'::" "$pkgbuild" &&
+    fail 'the openapv source still points at a remote URL'
 [[ "$(grep -cE '^    patch .*openapv.*[.]patch' "$pkgbuild")" == 1 ]] ||
     fail 'the openapv patch is not applied exactly once in prepare()'
 
@@ -171,31 +319,6 @@ if command -v makepkg > /dev/null 2>&1; then
     ( cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO )
 else
     sed -i -E "s/^(\tpkgrel = ).*/\1${final_pkgrel}/" "$srcinfo"
-    if (( oapv_injected )) && ! grep -qF "	source = ${oapv_patch}::" "$srcinfo"; then
-        python3 - "$srcinfo" "$oapv_patch" "$oapv_patch_url" "$oapv_patch_sum" <<'PY4'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-name, url, digest = sys.argv[2], sys.argv[3], sys.argv[4]
-source_anchor = '\tsource = 070-ffmpeg-whisper.cpp-fix-pkgconfig.patch\n'
-sums_anchor = '\tsha256sums = 2c846c629ad129ae8ce50791de4f1d390714db6d6420a35406b83b9b44999d4a\n'
-
-lines = path.read_text().splitlines(keepends=True)
-if sum(line == source_anchor for line in lines) != 1 or \
-        sum(line == sums_anchor for line in lines) != 1:
-    raise SystemExit('.SRCINFO anchors not found exactly once')
-
-out = []
-for line in lines:
-    out.append(line)
-    if line == source_anchor:
-        out.append(f'\tsource = {name}::{url}\n')
-    elif line == sums_anchor:
-        out.append(f'\tsha256sums = {digest}\n')
-path.write_text(''.join(out))
-PY4
-    fi
     if ! grep -qF 'optdepends = cuda: for NVIDIA NPP filters' "$srcinfo"; then
         awk -v line="\toptdepends = cuda: for NVIDIA NPP filters (scale_npp, transpose_npp, overlay_npp)" '
             /\toptdepends = nvidia-utils:/ && !optdepend_done {
@@ -222,14 +345,6 @@ grep -q -- '--disable-libnpp' "$pkgbuild" &&
     fail 'libnpp disable flag still present'
 [[ "$(grep -cF 'cuda: for NVIDIA NPP filters' "$pkgbuild")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in PKGBUILD'
-if (( oapv_injected )); then
-    [[ "$(grep -cF "'${oapv_patch}'::\"${oapv_patch_url}\"" "$pkgbuild")" == 1 ]] ||
-        fail 'injected liboapv patch source entry duplicated or missing in PKGBUILD'
-    [[ "$(grep -cF "'${oapv_patch_sum}'" "$pkgbuild")" == 1 ]] ||
-        fail 'injected liboapv patch checksum duplicated or missing in PKGBUILD'
-    [[ "$(grep -cF "	source = ${oapv_patch}::${oapv_patch_url}" "$srcinfo")" == 1 ]] ||
-        fail 'injected liboapv patch source entry duplicated or missing in .SRCINFO'
-fi
 grep -q "^pkgrel=${final_pkgrel}$" "$pkgbuild" ||
     fail 'pkgrel bump missing'
 grep -qE "$(printf '\t')pkgrel = ${final_pkgrel}$" "$srcinfo" ||
@@ -237,7 +352,5 @@ grep -qE "$(printf '\t')pkgrel = ${final_pkgrel}$" "$srcinfo" ||
 [[ "$(grep -cF 'optdepends = cuda: for NVIDIA NPP filters' "$srcinfo")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in .SRCINFO'
 
-oapv_source='from AUR'
-(( oapv_injected )) && oapv_source='backported'
-printf 'ffmpeg-full overlay applied: libnpp enabled, openapv 1.1 fix %s, pkgrel %s.\n' \
-    "$oapv_source" "$final_pkgrel"
+printf 'ffmpeg-full overlay applied: libnpp enabled, openapv 1.1 fix from the vendored patch, pkgrel %s.\n' \
+    "$final_pkgrel"

@@ -12,10 +12,14 @@
 #
 #   * Git sources        -- the cached remote must be the declared remote
 #                           (unchanged behaviour).
-#   * Remote file sources -- the cached copy is hashed. A mismatch means the
-#                           cache is stale, so the entry is deleted and the
-#                           build re-fetches it in this same run. Self-healing,
-#                           no retry, no human.
+#   * Remote file sources -- a same-named file in the package directory wins
+#                           over both SRCDEST and the network, because makepkg
+#                           resolves $startdir first for every non-VCS source.
+#                           It is therefore hashed like a local source, and a
+#                           mismatch is a repository defect. Otherwise the
+#                           cached copy is hashed; a mismatch means the cache
+#                           is stale, so the entry is deleted and the build
+#                           re-fetches it in this same run.
 #   * Local file sources  -- the repository's own copy is hashed. A mismatch
 #                           there is a defect in the repository (the declared
 #                           checksum does not describe the committed file), not
@@ -133,7 +137,28 @@ for (( i = 0; i < ${#sources[@]}; i++ )); do
     [[ -n "$name" ]] || continue
 
     if [[ "$spec" == *"://"* ]]; then
-        # Remote file: the cached copy is what makepkg would hash.
+        # makepkg resolves $startdir/<name> before SRCDEST for URL-declared
+        # files too, so a committed copy of the same name is what actually gets
+        # hashed. If it disagrees with the declaration, the build cannot pass
+        # regardless of what the cache holds -- that is a repository defect, not
+        # a stale cache, and deleting it here would silently switch the build to
+        # the network copy.
+        local_path="${package_dir}/${name}"
+        if [[ -f "$local_path" && -n "$expected" && "$expected" != "SKIP" ]]; then
+            actual="$(file_digest "$local_path" "$expected")"
+            verified_local=$(( verified_local + 1 ))
+            if [[ -n "$actual" && "$actual" != "$expected" ]]; then
+                printf 'ERROR: %s shadows the remote source declared for %s and does not match its checksum.\n' \
+                    "$local_path" "$name" >&2
+                printf '  actual:   %s\n' "$actual" >&2
+                printf '  declared: %s\n' "$expected" >&2
+                printf 'makepkg prefers the package directory copy over the source cache, so this file is what the build would hash.\n' >&2
+                defects=$(( defects + 1 ))
+            fi
+        fi
+
+        # Remote file: the cached copy is what makepkg would hash when the
+        # package directory has no copy of its own.
         cache_path="${source_cache_dir}/${name}"
         [[ -f "$cache_path" ]] || continue
         [[ -n "$expected" && "$expected" != "SKIP" ]] || continue
@@ -176,7 +201,7 @@ for (( i = 0; i < ${#sources[@]}; i++ )); do
 done
 
 if (( defects > 0 )); then
-    printf 'Source cache validation failed: %s local source(s) do not match their declared checksum.\n' "$defects" >&2
+    printf 'Source cache validation failed: %s source(s) do not match their declared checksum.\n' "$defects" >&2
     exit 1
 fi
 
