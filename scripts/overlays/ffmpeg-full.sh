@@ -137,8 +137,9 @@ oapv_sum="$(sha256sum -- "$oapv_path" | cut -d' ' -f1)"
 
 # AUR's .SRCINFO supplies the source/checksum ordering used below. Refresh it
 # from the PKGBUILD first when possible so a stale AUR copy cannot shift the
-# index onto a different checksum.
-if command -v makepkg > /dev/null 2>&1; then
+# index onto a different checksum. makepkg refuses to run as root, and the CI
+# integration job does run as root: fall back to the textual path there.
+if command -v makepkg > /dev/null 2>&1 && (( EUID != 0 )); then
     ( cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO ) ||
         fail 'unable to refresh .SRCINFO before reconciling the openapv patch'
 fi
@@ -315,7 +316,7 @@ grep -qF "'${oapv_patch}'::" "$pkgbuild" &&
 [[ "$(sed -nE 's/^pkgrel=([0-9]+(\.[0-9]+)?)$/\1/p' "$pkgbuild")" == "$final_pkgrel" ]] ||
     fail 'pkgrel changed between overlay steps'
 
-if command -v makepkg > /dev/null 2>&1; then
+if command -v makepkg > /dev/null 2>&1 && (( EUID != 0 )); then
     ( cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO )
 else
     sed -i -E "s/^(\tpkgrel = ).*/\1${final_pkgrel}/" "$srcinfo"
