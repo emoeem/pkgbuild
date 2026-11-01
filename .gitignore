@@ -22,3 +22,6 @@ pkg/
 
 # local tool state
 .mimosa/
+
+# ZCode local tool state
+.zcode/
