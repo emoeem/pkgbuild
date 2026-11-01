@@ -49,11 +49,15 @@ https://aur.archlinux.org/package-name.git
 
 ## 捆绑 runtime 的包的 namcap 例外
 
-`packages/<name>/.namcap-ignore-tags` 每行一个 namcap tag，由
-`scripts/run-namcap.sh` 转成 `-i <tag>`。它只用于上游把完整运行时打进载荷的
-包：namcap 只看系统包，会把载荷内自带的 Python 模块报成缺失依赖，也会把上游
-构建机留下的 RPATH 报成不安全路径，两者都不是本仓库能修的问题。不写这个文件
-就必须让 namcap 全量通过，这是默认路径。
+`packages/<name>/.namcap-exclude` 每行一个 namcap **规则名**，
+`scripts/run-namcap.sh` 把它们合并成一个 `--exclude` 规则列表（namcap 的
+`-e` 接受逗号分隔的 RULELIST，`-i` 是显示 info 消息的开关，不能用来忽略）。
+规则名就是 `namcap -L` 列出的名字，例如 `pydepends`、`rpath`、`runpath`。
+
+它只用于上游把完整运行时打进载荷的包：namcap 只看系统包，会把载荷内自带的
+Python 模块报成缺失依赖，也会把上游构建机留下的 RPATH/RUNPATH 报成不安全
+路径，两者都不是本仓库能修的问题。不写这个文件就必须让 namcap 全量通过，
+这是默认路径。
 
 ## 推送后的自动流程
 

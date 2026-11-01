@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Per-package tag suppression: packages/<name>/.namcap-ignore-tags holds one
-# namcap tag per line. It exists for packages that ship an upstream-built
-# runtime inside the payload (deepseek-harness-desktop bundles CPython,
-# site-packages and native extensions): namcap infers dependencies from system
-# packages only, so modules resolved inside the payload look missing, and the
-# shipped binaries keep their build-host RPATH. Neither is a packaging defect
-# this repository can fix without rewriting upstream artifacts.
-ignore_args=()
+# Per-package rule exclusion: packages/<name>/.namcap-exclude holds namcap rule
+# names, one per line or comma-separated. It exists for packages that ship an
+# upstream-built runtime inside the payload (deepseek-harness-desktop bundles
+# CPython, site-packages and native extensions): namcap infers dependencies
+# from system packages only, so modules resolved inside the payload look
+# missing, and the shipped binaries keep their build-host RPATH. Neither is a
+# packaging defect this repository can fix without rewriting upstream
+# artifacts. namcap's -e takes a comma-separated RULELIST, so the lines are
+# joined into one argument.
+exclude_names=""
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(dirname -- "$script_dir")"
 target="${1:-}"
@@ -24,13 +26,15 @@ case "$target" in
         [[ -f "$target" ]] && package_dir="$(cd -- "$(dirname -- "$target")" && pwd)"
         ;;
 esac
-if [[ -n "$package_dir" && -f "${package_dir}/.namcap-ignore-tags" ]]; then
-    while IFS= read -r tag; do
-        tag="${tag%%#*}"
-        tag="$(printf '%s' "$tag" | tr -d '[:space:]')"
-        [[ -n "$tag" ]] && ignore_args+=(-i "$tag")
-    done <"${package_dir}/.namcap-ignore-tags"
+if [[ -n "$package_dir" && -f "${package_dir}/.namcap-exclude" ]]; then
+    while IFS= read -r line; do
+        line="${line%%#*}"
+        line="$(printf '%s' "$line" | tr -d '[:space:]')"
+        [[ -n "$line" ]] && exclude_names="${exclude_names:+$exclude_names,}${line}"
+    done <"${package_dir}/.namcap-exclude"
 fi
+namcap_args=()
+[[ -n "$exclude_names" ]] && namcap_args=(--exclude "$exclude_names")
 
 backup="$(mktemp)"
 trap 'cp "$backup" /etc/pacman.conf; rm -f "$backup"' EXIT
@@ -41,4 +45,4 @@ cp /etc/pacman.conf "$backup"
 # hide it only for namcap's read of pacman.conf.
 sed -i '/^DisableSandboxNetwork$/d' /etc/pacman.conf
 
-runuser -u builder -- env HOME=/home/builder namcap "${ignore_args[@]}" "$@"
+runuser -u builder -- env HOME=/home/builder namcap "${namcap_args[@]}" "$@"
