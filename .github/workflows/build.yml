@@ -350,6 +350,11 @@ jobs:
           )
 
       - name: Report namcap warnings
+        # Advisory: this step only files an issue for humans. The hard namcap
+        # gate is run-namcap.sh inside the build step; a reporting hiccup
+        # (GitHub API blips, oversized warning payloads) must never fail the
+        # job after the package has been built and verified.
+        continue-on-error: true
         if: success() && hashFiles('dist/namcap.txt') != '' && (github.event_name != 'workflow_dispatch' || inputs.build_mode != 'chroot')
         shell: bash
         env:
