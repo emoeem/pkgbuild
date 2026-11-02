@@ -3,7 +3,7 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前维护 13 个 package base。
+当前维护 14 个 package base。
 
 ## Features
 
@@ -43,6 +43,7 @@
 | `svt-jpeg-xs-git` | `x86_64` | JPEG XS 编解码器 |
 | `vapoursynth-plugin-mlrt-ncnn-runtime` | `x86_64` | VapourSynth MLRT NCNN runtime |
 | `xclip-git` | `x86_64` | X11 剪贴板命令行工具 |
+| `trae-cn-appimage` | `x86_64` | Trae CN（字节跳动 AI IDE）重打包成单文件 AppImage：官方 Linux tar.gz 解包后用 vendored type2 runtime + zstd squashfs 组装，安装到 `/opt/trae-cn-appimage` |
 
 版本以各目录中的 `PKGBUILD` 和 `.SRCINFO` 为准。
 

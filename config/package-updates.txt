@@ -25,3 +25,7 @@ sing-box-ebpf workflow .github/workflows/sing-box-ebpf-update.yml
 filee-bin workflow .github/workflows/filee-update.yml
 sing-box-panel manual source lives in this repo plus a pinned zashboard archive; bumped by hand
 dracpanel manual static UI built from the fork source tarball; bump the tarball, sha256sums and .SRCINFO by hand
+# Trae CN ships only a .deb/.rpm plus the raw Electron tarball this package
+# repacks. Bumping means a new CDN release directory: update pkgver, the
+# sha256sums, and .SRCINFO together.
+trae-cn-appimage manual upstream CDN tarball repacked into an AppImage; bump pkgver, sha256sums and .SRCINFO by hand

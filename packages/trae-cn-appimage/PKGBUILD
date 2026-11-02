@@ -1,0 +1,143 @@
+# Maintainer: emoeem
+#
+# Upstream ships a .deb (and an rpm) for Linux, plus the raw Electron tarball
+# that the deb is built from:
+#   https://lf-cdn.trae.com.cn/obj/trae-com-cn/pkg/app/releases/stable/<ver>/linux/TRAE_CN-linux-x64.tar.gz
+# This package repacks that tarball into a single-file AppImage so it can be
+# run without installing anything, and installs it under /opt with a launcher
+# and a desktop entry. The AppImage is the payload: no files are unpacked on
+# install, which also keeps the installed size well below the deb layout.
+#
+# The AppImage runtime (type2, zstd-capable) is vendored as runtime-x86_64
+# instead of being fetched from the rolling "continuous" AppImage tag: the CI
+# build must stay reproducible, and that tag is rebuilt in place.
+#
+# Updating: bump pkgver to the release directory in the CDN URL, refresh
+# sha256sums, regenerate .SRCINFO. check() fails if the assembled image is not
+# a readable AppImage, so a broken runtime/squashfs pairing never ships.
+
+pkgname=trae-cn-appimage
+pkgver=2.3.98528
+pkgrel=1
+pkgdesc='Trae CN (ByteDance AI IDE) repacked as a portable single-file AppImage'
+arch=('x86_64')
+url='https://www.trae.cn/'
+license=('LicenseRef-Trae')
+depends=('fuse2' 'nss' 'alsa-lib' 'gtk3' 'at-spi2-core' 'libsecret' 'libxkbfile')
+optdepends=(
+    'libappindicator-gtk3: system tray icon'
+    'xdg-utils: open external links with the default browser'
+    'zeromq: bundled ckg code-indexer'
+)
+makedepends=('squashfs-tools')
+options=('!strip' '!debug')
+install=trae-cn-appimage.install
+
+_cdn='https://lf-cdn.trae.com.cn/obj/trae-com-cn/pkg/app/releases/stable'
+_upstream="trae-cn-${pkgver}-x64.tar.gz"
+
+source=(
+    "${_upstream}::${_cdn}/${pkgver}/linux/TRAE_CN-linux-x64.tar.gz"
+    'AppRun'
+    'trae-cn-appimage.sh'
+    'trae-cn-appimage.desktop'
+    'trae-cn.png'
+    'runtime-x86_64'
+)
+noextract=("${_upstream}")
+sha256sums=(
+    'f5d052190a9934c4d953ed7b36388b005cdb8278ee883fe7603f7ab4c5ee99dc'
+    'd69d2f3fc05880a1c9197bc0ee629be952a3d7d663d18b0d164fad1a13bd0f9c'
+    'b398c768a6fb25b13c2cec4579333d59e71de26b61350c0b19dce29c72889c49'
+    '87d5b000ea0b758a07c9cf5bd1e2af689d25479f7e5485d90491c4daa6e55267'
+    '74ddd8b5ea8c4e8fb8fb202b20eaae8e1ee7e57283a8cd414ecf9cf1b5bd631d'
+    '617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46'
+)
+
+_image="Trae-CN-${pkgver}-x86_64.AppImage"
+
+build() {
+    local appdir="${srcdir}/AppDir"
+    local root="${appdir}/usr/lib/trae-cn"
+    local squashfs="${srcdir}/trae-cn.squashfs"
+    local jobs
+    jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+
+    rm -rf "$appdir" "$squashfs"
+    install -d "$root"
+    tar -xf "${srcdir}/${_upstream}" -C "$root" --no-same-owner
+
+    # Drop what the Electron tarball ships for other platforms or for
+    # verification tooling: detached signatures, Windows scripts, log dumps and
+    # the duplicate node_modules copy (resources/node_modules.asar is the one
+    # the app actually loads).
+    find "$root" -type f -name '*.asc' -delete
+    find "$root" -type f -name '*.bat' -delete
+    find "$root" -type d -name 'rush-logs' -prune -exec rm -rf {} +
+    rm -rf "$root/node_modules"
+
+    install -Dm755 "${srcdir}/AppRun" "${appdir}/AppRun"
+    install -Dm644 "${srcdir}/trae-cn.png" "${appdir}/trae-cn.png"
+    ln -sf trae-cn.png "${appdir}/.DirIcon"
+    install -Dm644 "${srcdir}/trae-cn-appimage.desktop" "${appdir}/trae-cn.desktop"
+    install -Dm644 "${srcdir}/trae-cn.png" \
+        "${appdir}/usr/share/icons/hicolor/1024x1024/apps/trae-cn.png"
+
+    # zstd keeps the image at ~590 MiB while decompressing on demand; the
+    # vendored runtime is the version that understands it (the AppImageKit
+    # continuous runtime only supports xz/zlib).
+    mksquashfs "$appdir" "$squashfs" \
+        -noappend -comp zstd -Xcompression-level 15 -b 128K \
+        -no-xattrs -all-root -no-progress -processors "$jobs"
+
+    cat "${srcdir}/runtime-x86_64" "$squashfs" > "${srcdir}/${_image}"
+    chmod 755 "${srcdir}/${_image}"
+}
+
+check() {
+    local image="${srcdir}/${_image}"
+    local magic offset
+
+    magic=$(dd if="$image" bs=1 skip=8 count=2 status=none)
+    if [[ "$magic" != "AI" ]]; then
+        error 'assembled image has no AppImage magic at offset 8'
+        return 1
+    fi
+
+    offset=$("$image" --appimage-offset) || {
+        error 'bundled runtime cannot read its own squashfs offset'
+        return 1
+    }
+    if (( offset < 100000 )); then
+        error "unexpected squashfs offset: $offset"
+        return 1
+    fi
+
+    # Prove the squashfs is readable by the runtime, not just present: this is
+    # exactly the failure mode of pairing a zstd image with an xz-only runtime.
+    rm -rf "${srcdir}/check-extract"
+    mkdir -p "${srcdir}/check-extract"
+    (
+        cd "${srcdir}/check-extract" || exit 1
+        "$image" --appimage-extract 'trae-cn.desktop' >/dev/null 2>&1
+        [[ -f squashfs-root/trae-cn.desktop ]]
+    )
+}
+
+package() {
+    local root="${srcdir}/AppDir/usr/lib/trae-cn"
+
+    install -Dm755 "${srcdir}/${_image}" "$pkgdir/opt/trae-cn-appimage/Trae-CN.AppImage"
+    install -Dm755 "${srcdir}/trae-cn-appimage.sh" "$pkgdir/usr/bin/trae-cn-appimage"
+    install -Dm644 "${srcdir}/trae-cn-appimage.desktop" \
+        "$pkgdir/usr/share/applications/trae-cn-appimage.desktop"
+    install -Dm644 "${srcdir}/trae-cn.png" \
+        "$pkgdir/usr/share/icons/hicolor/1024x1024/apps/trae-cn-appimage.png"
+
+    install -Dm644 "${root}/resources/app/LICENSE.txt" \
+        "$pkgdir/usr/share/licenses/${pkgname}/LICENSE"
+    install -Dm644 "${root}/resources/app/ThirdPartyNotices.txt" \
+        "$pkgdir/usr/share/licenses/${pkgname}/ThirdPartyNotices"
+    install -Dm644 "${root}/LICENSES.chromium.html" \
+        "$pkgdir/usr/share/licenses/${pkgname}/LICENSES.chromium.html"
+}

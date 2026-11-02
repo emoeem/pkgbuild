@@ -1,0 +1,15 @@
+post_install() {
+    printf '\n  Trae CN (AppImage) installed.\n'
+    printf '  -> Launch: trae-cn-appimage   (or the "Trae CN" menu entry)\n'
+    printf '  -> Image:  /opt/trae-cn-appimage/Trae-CN.AppImage\n'
+    printf '  -> Extra Chromium flags: ~/.config/trae-cn-flags.conf\n'
+    printf '  -> Without FUSE: run with --appimage-extract-and-run\n\n'
+}
+
+post_upgrade() {
+    printf '\n  Trae CN (AppImage) upgraded to %s.\n\n' "$1"
+}
+
+post_remove() {
+    printf '\n  Trae CN (AppImage) removed; your profile stayed in ~/.config/Trae CN/.\n\n'
+}
