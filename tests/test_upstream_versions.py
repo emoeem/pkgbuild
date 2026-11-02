@@ -32,7 +32,7 @@ class UpstreamVersionTests(unittest.TestCase):
 
     def test_release_sources_are_not_aur_sources(self):
         definitions, _ = load_definitions(ROOT)
-        self.assertEqual('regex', definitions['ffmpeg-full']['source'])
+        self.assertEqual('github', definitions['ffmpeg-full']['source'])
         self.assertEqual('github', definitions['quirc']['source'])
         self.assertEqual('github', definitions['mpeghdec']['source'])
 

@@ -150,21 +150,26 @@ def main() -> int:
     published = read_published_versions(args.published_db) if args.published_db else None
     baselines, baseline_origin = resolve_baselines(definitions, baselines, published)
     args.config.parent.mkdir(parents=True, exist_ok=True)
-    config = {'__config__': {'oldver': str(args.oldver), 'newver': str(args.newver), 'max_concurrency': 4}}
+    # 30s 而非默认 20s:上游 release 页偶尔慢到 20s 边缘,超时会整轮判失败。
+    config = {'__config__': {'oldver': str(args.oldver), 'newver': str(args.newver), 'max_concurrency': 4, 'http_timeout': 30}}
     config.update(definitions)
     try:
         import tomli_w
         args.config.write_text(tomli_w.dumps(config), encoding='utf-8')
     except ImportError:
-        # Minimal TOML writer for string/bool fields used by our package sources.
-        def q(value: str) -> str: return json.dumps(value)
-        lines = ['[__config__]', f'oldver = {q(str(args.oldver))}', f'newver = {q(str(args.newver))}', 'max_concurrency = 4', '']
+        # Minimal TOML writer for the scalar fields used by our package sources.
+        def fmt(value: object) -> str:
+            if isinstance(value, bool):
+                return str(value).lower()
+            if isinstance(value, (int, float)):
+                return str(value)
+            return json.dumps(value)
+        lines = ['[__config__]']
+        lines.extend(f'{key} = {fmt(value)}' for key, value in config['__config__'].items())
         for name, entry in definitions.items():
-            lines.append(f'[{q(name)}]')
-            for key, value in entry.items():
-                lines.append(f'{key} = {str(value).lower() if isinstance(value, bool) else q(value)}')
-            lines.append('')
-        args.config.write_text('\n'.join(lines), encoding='utf-8')
+            lines.extend(['', f'[{json.dumps(name)}]'])
+            lines.extend(f'{key} = {fmt(value)}' for key, value in entry.items())
+        args.config.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     args.oldver.write_text(json.dumps(baselines, indent=2, sort_keys=True) + '\n', encoding='utf-8')
     if args.run:
         # Never let a stale newver file make a failed upstream lookup look clean.

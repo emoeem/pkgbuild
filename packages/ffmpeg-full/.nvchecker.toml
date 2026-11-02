@@ -1,4 +1,8 @@
 [ffmpeg-full]
-source = "regex"
-url = "https://ffmpeg.org/releases/"
-regex = 'ffmpeg-([0-9]+\.[0-9]+(?:\.[0-9]+)?)\.tar\.xz'
+source = "github"
+github = "FFmpeg/FFmpeg"
+use_max_tag = true
+prefix = "n"
+# Release tags are nX.Y[.Z]; the prefix strip above expects them. Keep n9.1-dev
+# and any rc tags out of the comparison — the package tracks stable releases.
+include_regex = 'n[0-9]+\.[0-9]+(\.[0-9]+)?'
