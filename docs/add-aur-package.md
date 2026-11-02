@@ -39,6 +39,11 @@ https://aur.archlinux.org/package-name.git
 `sync-aur-packages.sh` 在临时目录浅克隆 AUR 仓库，记录当前 Git commit
 到 `.aur-commit`，然后复制 PKGBUILD、`.SRCINFO`、补丁和其他顶层文件。
 
+同名文件冲突时的规则：仓库自己的隐藏元数据（`.nvchecker.toml`、
+`.gitignore`、`.namcap-ignore` 等）保留本地版本；AUR 包内容的普通文件
+（补丁、LICENSE 等）以 AUR 为准，本地改动必须写进
+`scripts/overlays/<包名>.sh`，否则每次同步都会被覆盖。
+
 `check-package.sh` 随后检查：
 
 - 包目录名称是否合法。

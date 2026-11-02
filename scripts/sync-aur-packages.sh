@@ -44,9 +44,9 @@ for package_name in "${package_names[@]}"; do
     # come from AUR and then receive its explicit overlay; .SRCINFO is regenerated
     # from that result. The source URL/commit are refreshed from AUR every run.
     # Everything else in the current package tree is local state: local-only
-    # files are restored, and conflicting local files win with a warning. This
-    # deliberately includes hidden metadata such as .nvchecker.toml,
-    # .namcap-ignore and .gitignore, as well as local patches/assets.
+    # files are restored, hidden metadata (.nvchecker.toml, .namcap-ignore,
+    # .gitignore) wins on conflict, and any other conflicting file follows AUR
+    # with a warning — local changes to AUR-owned files belong in an overlay.
     if [[ -d "$package_dir" ]]; then
         preserved_manifest="$temporary_dir/preserved-files-$package_name"
         git -C "$repo_root" ls-files --cached --others --exclude-standard -z -- \
@@ -72,6 +72,26 @@ for package_name in "${package_names[@]}"; do
 
             mkdir -p "$(dirname "$staged_path")"
             if [[ -e "$staged_path" || -L "$staged_path" ]]; then
+                # 同名冲突分两类:隐藏文件是仓库自己的元数据,保留本地版本;
+                # 包内容的普通文件以 AUR 为准,本地改动必须写进
+                # scripts/overlays/<包名>.sh。旧策略「本地一律优先」会让
+                # AUR 更新过的源文件永远停在旧内容,而 PKGBUILD 的
+                # sha256sums 已随 AUR 前进,同步就卡在校验和上永远修不好
+                # (svt-jpeg-xs-git 的补丁,2026-11-02)。
+                if [[ "$(basename -- "$relative_path")" != .* ]]; then
+                    # 内容相同就静默沿用 AUR 那份,只有真的改过才提示。
+                    if [[ -f "$local_path" && -f "$staged_path" ]] \
+                        && cmp -s -- "$local_path" "$staged_path"; then
+                        continue
+                    fi
+                    if [[ -L "$local_path" && -L "$staged_path" ]] \
+                        && [[ "$(readlink "$local_path")" == "$(readlink "$staged_path")" ]]; then
+                        continue
+                    fi
+                    printf 'warning: %s: AUR version replaces locally modified %s (move local changes into scripts/overlays/%s.sh)\n' \
+                        "$package_name" "$relative_path" "$package_name" >&2
+                    continue
+                fi
                 if [[ -L "$local_path" && -L "$staged_path" ]]; then
                     if [[ "$(readlink "$local_path")" != "$(readlink "$staged_path")" ]]; then
                         printf 'warning: %s: keeping local version of conflicting file %s\n' \
