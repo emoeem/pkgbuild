@@ -3,7 +3,7 @@
 这个项目把 `packages/*/PKGBUILD` 自动构建成 Arch Linux `x86_64`
 软件包，并在私有 `repo` 分支维护标准 pacman 仓库数据库。
 
-当前维护 14 个 package base。
+当前维护 15 个 package base。
 
 ## Features
 
@@ -40,6 +40,7 @@
 | `dracpanel` | `any` | Dracula 主题的 sing-box 桌面 Web UI（官方 dashboard fork + 本地管理模块）；安装到 `/usr/share/dracpanel/ui` |
 | `filee-bin` | `x86_64` | Filee 离线文件转换器（GUI + `filee` CLI，直接重新打包上游预编译的 Linux x64 发布件；每 2 小时自动跟踪上游 release） |
 | `sing-box-rule-sets` | `any` | sing-box 补充规则集：anti-AD 广告表、最新 geoip/cn、mihomo 国内 IP 表、**lyc8503 增强 geosite（国内/境外分流补充）**、必须直连清单、国内广告补漏（每日自动比对上游） |
+| `honk-core-bin` | `x86_64` | honk 的实验性 eBPF 透明代理引擎（上游预编译 release 二进制重打包；`provides`/`conflicts` `honk-core`，GeoIP/GeoSite 复用 `v2ray-geoip`、`v2ray-domain-list-community`；跟踪 AUR 更新，另对上游 GitHub release 做提前预警） |
 | `svt-jpeg-xs-git` | `x86_64` | JPEG XS 编解码器 |
 | `vapoursynth-plugin-mlrt-ncnn-runtime` | `x86_64` | VapourSynth MLRT NCNN runtime |
 | `xclip-git` | `x86_64` | X11 剪贴板命令行工具 |
