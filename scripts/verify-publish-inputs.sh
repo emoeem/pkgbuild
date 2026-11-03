@@ -6,6 +6,12 @@ root="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # 已发布仓库目录（x86_64 包所在目录）。给了它就会额外检查「这次发布是不是
 # 真的能让已安装的机器升上去」；没给就不检查，保持脚本可单独使用。
 published="${3:-}"
+# CI runs the publication gate with SKIP_NOOP_PUBLISH=1: an artifact whose
+# exact version is already in the repository is moved aside instead of failing
+# the whole batch. The default stays strict so a local/manual run still catches
+# a stale source pkgrel. A downgrade (artifact older than published) is never
+# skipped.
+skip_noop="${SKIP_NOOP_PUBLISH:-0}"
 
 pkg_version_from_file() {
     bsdtar -xOf "$1" .PKGINFO |
@@ -190,7 +196,23 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
         if [[ -n "$bumped_rel" && "$actual" == "${expected%-*}-${bumped_rel}" ]]; then
             # bump 之后的版本如果撞上（或落后于）已发布版本，这次 bump 根本
             # 没有前进：发布出去客户端也升不上去，只能先让源码树追上仓库。
-            if [[ "$already_published" == yes || "$behind_published" == yes ]]; then
+            if [[ "$behind_published" == yes ]]; then
+                printf 'Publication would not upgrade %s: artifact=%s is behind the published %s; reconcile the source pkgrel (write-back) instead of republishing it\n' \
+                    "$name" "$actual" "$published_value" >&2
+                exit 1
+            fi
+            if [[ "$already_published" == yes ]]; then
+                if [[ "$skip_noop" == 1 ]]; then
+                    # 同版本产物不是升级，也不是降级：把它挪出待发布目录，
+                    # 让同批的其他包继续发布。源码树的 pkgrel 不在这里回写
+                    # （回写会把 3.6 拉回 2.41），交给下一次 AUR sync/bump。
+                    skipped_dir="$incoming/skipped-noop"
+                    mkdir -p "$skipped_dir"
+                    mv -- "$pkg" "$skipped_dir/"
+                    printf 'SKIP no-op publish for %s: artifact=%s already published=%s; moved to %s\n' \
+                        "$name" "$actual" "$published_value" "$skipped_dir" >&2
+                    continue
+                fi
                 printf 'Publication would not upgrade %s: artifact=%s already published=%s; the pkgrel bump lands on a version installed clients already have — reconcile the source pkgrel (write-back) instead of republishing it\n' \
                     "$name" "$actual" "$published_value" >&2
                 exit 1

@@ -826,6 +826,12 @@ jobs:
 
       - name: Verify publication inputs match source
         shell: bash
+        env:
+          # A push build can race the AUR sync that bumps pkgrel: the build
+          # artifact then carries the version that is already published. Skip
+          # that exact duplicate instead of failing the whole batch; a real
+          # downgrade still fails below in the script.
+          SKIP_NOOP_PUBLISH: "1"
         run: |
           set -Eeuo pipefail
           # 第三个参数是已发布的仓库目录（fetch 步骤已建好，没有 release 时为空

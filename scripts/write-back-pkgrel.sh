@@ -14,6 +14,27 @@ root="${2:?usage: write-back-pkgrel.sh <incoming-packages-dir> <repo-root>}"
 [[ -d "$incoming" ]] || { printf 'missing incoming dir: %s\n' "$incoming" >&2; exit 2; }
 [[ -d "$root/.git" ]] || { printf 'not a git repository: %s\n' "$root" >&2; exit 2; }
 
+# pkgrel 可以是小数（2.6、2.10），按整数逐段比较；非数字段返回 1（不判）。
+# 回写只允许前进：构建产物的 pkgrel 落后或等于源码树时必须原地不动，否则
+# 一次同版本重发会把已经抬高的源码 pkgrel 拉回去（ffmpeg-full 的 2.6/2.7
+# 事故就是回写方向错了）。
+pkgrel_at_most() { # <candidate> <baseline>; 0 = candidate <= baseline
+    local a="$1" b="$2" i max x y
+    local -a av bv
+    IFS='.' read -r -a av <<< "$a"
+    IFS='.' read -r -a bv <<< "$b"
+    max=${#av[@]}
+    (( ${#bv[@]} > max )) && max=${#bv[@]}
+    for ((i = 0; i < max; i++)); do
+        x="${av[i]:-0}"
+        y="${bv[i]:-0}"
+        [[ "$x" =~ ^[0-9]+$ && "$y" =~ ^[0-9]+$ ]] || return 1
+        (( 10#$x < 10#$y )) && return 0
+        (( 10#$x > 10#$y )) && return 1
+    done
+    return 0
+}
+
 declare -A dir_of=()
 for srcinfo in "$root"/packages/*/.SRCINFO; do
     [[ -f "$srcinfo" ]] || continue
@@ -68,6 +89,11 @@ for package_file in "$incoming"/*/*.pkg.tar.zst; do
         continue
     fi
     if [[ "$src_rel" == "$built_rel" ]]; then
+        continue
+    fi
+    if pkgrel_at_most "$built_rel" "$src_rel"; then
+        printf 'SKIP %s: built pkgrel %s is not newer than source %s\n' \
+            "$directory" "$built_rel" "$src_rel" >&2
         continue
     fi
     sed -i -E "s/^pkgrel=.*/pkgrel=${built_rel}/" "$pkgbuild"

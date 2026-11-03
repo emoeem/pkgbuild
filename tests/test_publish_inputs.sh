@@ -184,6 +184,33 @@ fi
 grep -q 'Publication would not upgrade ffmpeg-full' <<<"$output"
 echo 'ok: a bumped pkgrel that collides with the published version is rejected'
 
+# CI 的 push build 会和 AUR sync 的 pkgrel bump 抢跑：产物版本正好是仓库里
+# 已有的版本。SKIP_NOOP_PUBLISH=1 把它挪出待发布目录，让同批其他包继续发布；
+# 源码 pkgrel 不在这里回写，交给下一次 sync/bump。
+rm -f "$tmp/incoming"/*
+rm -rf "$tmp/incoming/skipped-noop"
+make_case ffmpeg-full 9.0.2 2.6 9.0.2-2.7 no
+make_published ffmpeg-full 9.0.2-2.7
+output="$(SKIP_NOOP_PUBLISH=1 run_case with-published 2>&1)"
+grep -q 'SKIP no-op publish for ffmpeg-full' <<<"$output"
+[[ -f "$tmp/incoming/skipped-noop/ffmpeg-full-9.0.2-2.7-x86_64.pkg.tar.zst" ]]
+[[ ! -f "$tmp/incoming/ffmpeg-full-9.0.2-2.7-x86_64.pkg.tar.zst" ]]
+echo 'ok: SKIP_NOOP_PUBLISH moves an exact duplicate aside'
+
+# 跳过同版本不等于放过降级：产物比已发布版本旧时，即使开了 flag 也必须失败。
+rm -rf "$tmp/incoming"/*
+make_case ffmpeg-full 9.0.2 2.8 9.0.2-2.9 no
+make_published ffmpeg-full 9.0.2-2.10
+if output="$(SKIP_NOOP_PUBLISH=1 run_case with-published 2>&1)"; then
+    echo 'expected a downgrade to fail even with SKIP_NOOP_PUBLISH=1' >&2
+    exit 1
+fi
+grep -q 'is behind the published' <<<"$output"
+echo 'ok: SKIP_NOOP_PUBLISH does not permit a downgrade'
+
+# 恢复后续用例依赖的已发布版本（9.0.2-2.7）。
+make_published ffmpeg-full 9.0.2-2.7
+
 # 版本真的前进了就放行（9.0.2-2.8 盖过已发布的 9.0.2-2.7）。
 rm -f "$tmp/incoming"/*
 make_case ffmpeg-full 9.0.2 2.8 9.0.2-2.8 no

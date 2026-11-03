@@ -65,6 +65,14 @@ grep -q 'No pkgrel write-back needed.' <<<"$output"
 [[ "$(git -C "$source_tree" log --format=%s | grep -c 'write back bumped pkgrel')" == 1 ]]
 echo 'ok: an already aligned package writes nothing back and commits nothing'
 
+# 同版本重发时，构建产物的 pkgrel 可能落后于源码树（AUR sync 已把源码抬到
+# 3.6，产物仍是 2.41）。回写只能前进，绝不能把源码降回去。
+write_pkginfo 9.0.2-2.5
+output="$(run_back)"
+grep -q 'SKIP ffmpeg-full: built pkgrel 2.5 is not newer than source 2.7' <<<"$output"
+grep -qx 'pkgrel=2.7' "$source_tree/packages/ffmpeg-full/PKGBUILD"
+echo 'ok: a built pkgrel behind the source tree is not written back'
+
 write_pkginfo 9.0.3-2.9
 output="$(run_back)"
 grep -q 'SKIP ffmpeg-full: source pkgver 9.0.2 already differs from built 9.0.3' <<<"$output"
