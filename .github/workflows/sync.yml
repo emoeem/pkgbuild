@@ -19,13 +19,19 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
   sync:
     name: Update AUR-managed packages
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+    outputs:
+      # Available to the notify job even when the run ends red.
+      partial: ${{ steps.sync.outputs.partial }}
+      failures: ${{ steps.sync.outputs.failures }}
 
     steps:
       - name: Checkout
@@ -34,9 +40,11 @@ jobs:
           persist-credentials: false
 
       - name: Sync AUR files
+        id: sync
         shell: bash
         env:
           REQUESTED_PACKAGES: ${{ inputs.packages }}
+          SYNC_FAILURES_FILE: ${{ runner.temp }}/sync-failures.tsv
         run: |
           set -Eeuo pipefail
           selection="${REQUESTED_PACKAGES:-all}"
@@ -46,11 +54,29 @@ jobs:
             IFS=',' read -ra packages <<< "$selection"
             args=("${packages[@]}")
           fi
+          rc=0
+          # Exit 3 = partial failure: per-package isolation already kept the
+          # failed packages at their committed state, so the run must go on
+          # committing and dispatching the successful ones (and turn red at
+          # the end). Any other non-zero exit is an environment/usage failure
+          # and stops the job right here.
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$RUNNER_TEMP:/runner-temp" \
+            --env SYNC_FAILURES_FILE=/runner-temp/sync-failures.tsv \
             ghcr.io/${{ github.repository_owner }}/pkgbuild-builder:latest \
-            bash /workspace/scripts/sync-aur-packages.sh "${args[@]}"
+            bash /workspace/scripts/sync-aur-packages.sh "${args[@]}" || rc=$?
+          if (( rc == 3 )); then
+            {
+              echo 'partial=true'
+              echo 'failures<<SYNC_FAILURES_EOF'
+              cat "$SYNC_FAILURES_FILE"
+              echo 'SYNC_FAILURES_EOF'
+            } >> "$GITHUB_OUTPUT"
+          elif (( rc != 0 )); then
+            exit "$rc"
+          fi
 
       - name: Detect changed packages
         id: changes
@@ -105,3 +131,36 @@ jobs:
             -f packages="$PACKAGES" \
             -f make_jobs=4
           printf 'Dispatched a rebuild for: %s\n' "$PACKAGES"
+
+      - name: Fail the run on partial sync failures
+        if: steps.sync.outputs.partial == 'true'
+        shell: bash
+        env:
+          FAILURES: ${{ steps.sync.outputs.failures }}
+        run: |
+          set -Eeuo pipefail
+          # Kept last on purpose: the successful packages above were already
+          # committed and dispatched; this only makes the run (and its
+          # failure-notification issue) reflect the isolated failures.
+          printf '::error::AUR sync finished with per-package failures; successful packages were committed and dispatched. Failures:\n%s\n' "$FAILURES"
+          exit 3
+
+  notify:
+    name: Notify failure or recovery
+    needs: [sync]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout (for the local composite action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Update the failure issue
+        uses: $/.github/actions/notify-failure
+        with:
+          title: "[CI] Sync AUR package sources failed"
+          outcome: ${{ needs.sync.result == 'failure' && 'failure' || (needs.sync.result == 'success' && 'recovered' || 'none') }}
+          details: ${{ needs.sync.outputs.failures }}
