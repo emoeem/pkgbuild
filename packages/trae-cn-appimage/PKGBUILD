@@ -18,7 +18,7 @@
 
 pkgname=trae-cn-appimage
 pkgver=2.3.98528
-pkgrel=1
+pkgrel=2
 pkgdesc='Trae CN (ByteDance AI IDE) repacked as a portable single-file AppImage'
 arch=('x86_64')
 url='https://www.trae.cn/'
@@ -43,6 +43,14 @@ source=(
     'trae-cn-appimage.desktop'
     'trae-cn.png'
     'runtime-x86_64'
+    'trae-cn-appimage-16.png'
+    'trae-cn-appimage-24.png'
+    'trae-cn-appimage-32.png'
+    'trae-cn-appimage-48.png'
+    'trae-cn-appimage-64.png'
+    'trae-cn-appimage-128.png'
+    'trae-cn-appimage-256.png'
+    'trae-cn-appimage-512.png'
 )
 noextract=("${_upstream}")
 sha256sums=(
@@ -52,6 +60,14 @@ sha256sums=(
     '87d5b000ea0b758a07c9cf5bd1e2af689d25479f7e5485d90491c4daa6e55267'
     '74ddd8b5ea8c4e8fb8fb202b20eaae8e1ee7e57283a8cd414ecf9cf1b5bd631d'
     '617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46'
+    '81bc954aca77339b637ff8e87063462b96f993035d0257096988c853a68c6486'
+    '601cc2071a63f68d0c8f6550b1099267b4a10734422f703d00b7764a55b278e1'
+    '99412a80a310fa9ad86983f719d96b906550d41b559672859261eb2b31efc580'
+    '114054a2f4f08a0f620d54102d490af5c187c582d2ee1880fa1efec6472af7aa'
+    'd69cfeb9bcb8e18b4b1a42aa80f463bf68e0876ea25f442e6d3783c33def7cfc'
+    '6e5787a9d4c52c6193442faecb8a16829d9a2441c4730dddd37d592049ee8a10'
+    '79d7deba67a7d9e5f0484adb24e5cd9d09aed51c6035216009528f0b2ab9751a'
+    '239120f3b240851caee8469fdfaa4024d357e2b8942c8b6856472e10960e67d0'
 )
 
 _image="Trae-CN-${pkgver}-x86_64.AppImage"
@@ -82,6 +98,8 @@ build() {
     install -Dm644 "${srcdir}/trae-cn-appimage.desktop" "${appdir}/trae-cn.desktop"
     install -Dm644 "${srcdir}/trae-cn.png" \
         "${appdir}/usr/share/icons/hicolor/1024x1024/apps/trae-cn.png"
+    install -Dm644 "${srcdir}/trae-cn-appimage-256.png" \
+        "${appdir}/usr/share/icons/hicolor/256x256/apps/trae-cn.png"
 
     # zstd keeps the image at ~590 MiB while decompressing on demand; the
     # vendored runtime is the version that understands it (the AppImageKit
@@ -131,8 +149,18 @@ package() {
     install -Dm755 "${srcdir}/trae-cn-appimage.sh" "$pkgdir/usr/bin/trae-cn-appimage"
     install -Dm644 "${srcdir}/trae-cn-appimage.desktop" \
         "$pkgdir/usr/share/applications/trae-cn-appimage.desktop"
-    install -Dm644 "${srcdir}/trae-cn.png" \
-        "$pkgdir/usr/share/icons/hicolor/1024x1024/apps/trae-cn-appimage.png"
+    # Icon sizes matter more than they look: Qt's QIconLoader does not scale
+    # across hicolor directories, so a lone 1024x1024 entry resolves to a null
+    # icon for a 48px launcher row and the entry falls back to a generic icon.
+    # Ship the full ladder plus the legacy /usr/share/pixmaps path that
+    # non-theme-aware lookups still scan.
+    local size
+    for size in 16 24 32 48 64 128 256 512; do
+        install -Dm644 "${srcdir}/trae-cn-appimage-${size}.png" \
+            "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/trae-cn-appimage.png"
+    done
+    install -Dm644 "${srcdir}/trae-cn-appimage-256.png" \
+        "$pkgdir/usr/share/pixmaps/trae-cn-appimage.png"
 
     install -Dm644 "${root}/resources/app/LICENSE.txt" \
         "$pkgdir/usr/share/licenses/${pkgname}/LICENSE"
@@ -140,4 +168,14 @@ package() {
         "$pkgdir/usr/share/licenses/${pkgname}/ThirdPartyNotices"
     install -Dm644 "${root}/LICENSES.chromium.html" \
         "$pkgdir/usr/share/licenses/${pkgname}/LICENSES.chromium.html"
+
+    # Guard against silently regressing to a single 1024px entry: that is a
+    # valid package but an invisible icon in every launcher.
+    local icon_count
+    icon_count=$(find "$pkgdir/usr/share/icons/hicolor" -type f \
+        -name 'trae-cn-appimage.png' | wc -l)
+    if (( icon_count != 8 )); then
+        error "expected 8 hicolor icon sizes, found ${icon_count}"
+        return 1
+    fi
 }
