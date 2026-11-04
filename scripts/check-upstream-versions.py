@@ -151,7 +151,9 @@ def main() -> int:
     baselines, baseline_origin = resolve_baselines(definitions, baselines, published)
     args.config.parent.mkdir(parents=True, exist_ok=True)
     # 30s 而非默认 20s:上游 release 页偶尔慢到 20s 边缘,超时会整轮判失败。
-    config = {'__config__': {'oldver': str(args.oldver), 'newver': str(args.newver), 'max_concurrency': 4, 'http_timeout': 30}}
+    # tries=3:瞬时网络抖动(HTTP 599 连接超时,2026-11-02 实际发生过一次)
+    # 不该让整轮 upstream-check 变红,nvchecker 逐条目自带重试就消化掉。
+    config = {'__config__': {'oldver': str(args.oldver), 'newver': str(args.newver), 'max_concurrency': 4, 'http_timeout': 30, 'tries': 3}}
     config.update(definitions)
     try:
         import tomli_w

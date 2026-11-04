@@ -26,7 +26,9 @@ class UpstreamVersionTests(unittest.TestCase):
 
     def test_git_pkgver_baseline_uses_short_commit_suffix(self):
         definitions, baselines = load_definitions(ROOT)
-        self.assertEqual('e0940ac', baselines['svt-jpeg-xs-git'])
+        # 与 packages/svt-jpeg-xs-git/PKGBUILD 的 pkgver 后缀同 commit 更新
+        # （2026-11-05：上游 01bc7cc，前值 e0940ac 已漂移）。
+        self.assertEqual('01bc7cc', baselines['svt-jpeg-xs-git'])
         self.assertEqual('git', definitions['svt-jpeg-xs-git']['source'])
         self.assertTrue(definitions['svt-jpeg-xs-git']['use_commit'])
 
@@ -51,7 +53,7 @@ class UpstreamVersionTests(unittest.TestCase):
             expected = {'quirc', 'mpeghdec', 'ffmpeg-full', 'svt-jpeg-xs-git', 'vapoursynth-plugin-mlrt-ncnn-runtime'}
             self.assertIn('__config__', config)
             self.assertEqual(expected, set(oldver))
-            self.assertEqual('e0940ac', oldver['svt-jpeg-xs-git'])
+            self.assertEqual('01bc7cc', oldver['svt-jpeg-xs-git'])
 
     def test_missing_upstream_results_fail_instead_of_looking_clean(self):
         with self.assertRaisesRegex(ValueError, 'refusing to report a clean scan'):
