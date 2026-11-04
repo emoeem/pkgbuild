@@ -8,7 +8,6 @@ on:
 permissions:
   contents: read
   packages: read
-  issues: write
 
 concurrency:
   group: upstream-version-check
@@ -18,6 +17,10 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -137,3 +140,22 @@ jobs:
               gh issue close "$number" --reason completed --comment "No longer reported: the published repository is current with upstream for $package (or the package left the tracked set). Closing as resolved."
             fi
           done < <(gh issue list --state open --limit 100 --json number,title --search "[upstream] in:title" | jq -c '.[]')
+
+  notify:
+    name: Notify failure or recovery
+    needs: [check]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout (for the local composite action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Update the failure issue
+        uses: $/.github/actions/notify-failure
+        with:
+          title: "[CI] Upstream version check failed"
+          outcome: ${{ needs.check.result == 'failure' && 'failure' || (needs.check.result == 'success' && 'recovered' || 'none') }}

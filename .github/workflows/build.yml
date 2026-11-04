@@ -923,3 +923,24 @@ jobs:
           set -Eeuo pipefail
           bash source/scripts/write-back-pkgrel.sh \
             "$GITHUB_WORKSPACE/incoming-packages" "$GITHUB_WORKSPACE/source"
+
+  notify:
+    name: Notify failure or recovery
+    needs: [select, build, repair, publish]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout (for the local composite action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Update the failure issue
+        uses: $/.github/actions/notify-failure
+        with:
+          title: "[CI] Repository build/publish failed"
+          # 全 skip 的 no-op run（select 出空集）既不算失败也不算恢复：build
+          # 真正成功一次才关闭挂着的 issue。
+          outcome: ${{ contains(needs.*.result, 'failure') && 'failure' || (needs.build.result == 'success' && 'recovered' || 'none') }}

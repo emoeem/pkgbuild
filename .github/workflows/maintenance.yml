@@ -204,3 +204,23 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           bash scripts/dispatch-stale-rebuilds.sh maintenance-out/stale.txt
+
+  notify:
+    name: Notify failure or recovery
+    needs: [clean-artifacts, refresh-chroot-baseline, cache-usage, check-sonames]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout (for the local composite action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Update the failure issue
+        uses: $/.github/actions/notify-failure
+        with:
+          title: "[CI] Maintenance failed"
+          # 周 job 在平日是 skipped：只要有失败就算失败，没有失败就算恢复。
+          outcome: ${{ contains(needs.*.result, 'failure') && 'failure' || 'recovered' }}

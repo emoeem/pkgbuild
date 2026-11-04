@@ -21,8 +21,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
-  issues: write
 
 concurrency:
   group: abi-watch
@@ -40,6 +38,10 @@ jobs:
   detect:
     name: Detect drift and dispatch rebuilds
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -198,3 +200,22 @@ jobs:
             gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
               --comment '所有已发布包与当前仓库的依赖 / SONAME 一致。'
           fi
+
+  notify:
+    name: Notify failure or recovery
+    needs: [detect]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout (for the local composite action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Update the failure issue
+        uses: $/.github/actions/notify-failure
+        with:
+          title: "[CI] ABI watch failed"
+          outcome: ${{ needs.detect.result == 'failure' && 'failure' || (needs.detect.result == 'success' && 'recovered' || 'none') }}

@@ -25,7 +25,7 @@ jobs:
 
       - name: Set up CachyOS builder
         id: builder
-        uses: ./.github/actions/setup-builder
+        uses: $/.github/actions/setup-builder
         with:
           restore-caches: 'false'
 
@@ -62,3 +62,22 @@ jobs:
             --env REPOSITORY_NAME=emoeem \
             "$BUILDER_IMAGE" \
             bash /workspace/scripts/repository-install-test.sh
+
+  notify:
+    name: Notify failure or recovery
+    needs: [install-all-published-packages]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout (for the local composite action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Update the failure issue
+        uses: $/.github/actions/notify-failure
+        with:
+          title: "[CI] Full repository install test failed"
+          outcome: ${{ needs.install-all-published-packages.result == 'failure' && 'failure' || (needs.install-all-published-packages.result == 'success' && 'recovered' || 'none') }}

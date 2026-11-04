@@ -17,10 +17,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   packages: read
-  # `gh workflow run build.yml` needs actions: write.
-  actions: write
 
 concurrency:
   # Shared with sync.yml, refresh-rule-sets.yml and sing-box-ebpf-update.yml:
@@ -34,6 +32,12 @@ jobs:
     # The candidate download is ~114 MiB and the package is ~100 MiB; the build
     # itself is only repackaging, so this is generous.
     timeout-minutes: 60
+    permissions:
+      # Commit the bump, dispatch build.yml (actions: write), pull the GHCR
+      # builder image (packages: read).
+      contents: write
+      packages: read
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -181,3 +185,22 @@ jobs:
           done
           printf 'Could not dispatch a rebuild for filee-bin\n' >&2
           exit 1
+
+  notify:
+    name: Notify failure or recovery
+    needs: [update]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout (for the local composite action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Update the failure issue
+        uses: $/.github/actions/notify-failure
+        with:
+          title: "[CI] filee-bin update failed"
+          outcome: ${{ needs.update.result == 'failure' && 'failure' || (needs.update.result == 'success' && 'recovered' || 'none') }}

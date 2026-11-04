@@ -20,8 +20,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 concurrency:
   # Shared with sync.yml: both commit to main, so they must not race each other
@@ -34,6 +33,9 @@ jobs:
     name: Check upstream rule-set sources
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    permissions:
+      contents: write
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,3 +102,22 @@ jobs:
             -f packages=sing-box-rule-sets \
             -f make_jobs=4
           printf 'Dispatched a rebuild for sing-box-rule-sets\n'
+
+  notify:
+    name: Notify failure or recovery
+    needs: [refresh]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout (for the local composite action)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Update the failure issue
+        uses: $/.github/actions/notify-failure
+        with:
+          title: "[CI] Refresh sing-box rule-sets failed"
+          outcome: ${{ needs.refresh.result == 'failure' && 'failure' || (needs.refresh.result == 'success' && 'recovered' || 'none') }}
