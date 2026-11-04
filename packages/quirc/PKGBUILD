@@ -4,7 +4,7 @@
 _pkgname="quirc"
 pkgname="$_pkgname"
 pkgver=1.2
-pkgrel=7
+pkgrel=7  # emoeem overlay: quirc pkgrel bump
 pkgdesc="QR decoder library"
 url="https://github.com/dlbeer/quirc"
 license=('ISC')
