@@ -274,8 +274,15 @@ jobs:
           # the legacy subtree that old snapshots had already cached.
           rm -rf .cache/pkgbuild/repo
           mkdir -p localrepo/x86_64
-          if gh release view repo --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release download repo --repo "$GITHUB_REPOSITORY" --pattern "*.pkg.tar.zst" --dir localrepo/x86_64 --clobber
+          # gh release 走的 CDN 偶发 connection reset（run 41889210674 的
+          # svt-jpeg-xs-git job 一次瞬断就报废整个 14 分钟编译），这里两步都
+          # 用仓库现成的 retry_transient 指数退避消化掉；repo release 常驻，
+          # "不存在"重试三次的代价只在假想场景里发生。
+          source "$GITHUB_WORKSPACE/scripts/lib/timing.sh"
+          if retry_transient 3 20 -- gh release view repo --repo "$GITHUB_REPOSITORY"; then
+            retry_transient 3 20 -- gh release download repo \
+              --repo "$GITHUB_REPOSITORY" --pattern "*.pkg.tar.zst" \
+              --dir localrepo/x86_64 --clobber
           fi
 
       - name: Build in reusable CachyOS builder
