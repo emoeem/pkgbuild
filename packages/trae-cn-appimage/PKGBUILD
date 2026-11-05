@@ -18,7 +18,7 @@
 
 pkgname=trae-cn-appimage
 pkgver=2.3.98528
-pkgrel=2
+pkgrel=3
 pkgdesc='Trae CN (ByteDance AI IDE) repacked as a portable single-file AppImage'
 arch=('x86_64')
 url='https://www.trae.cn/'

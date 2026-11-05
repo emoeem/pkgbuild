@@ -1,7 +1,7 @@
 pkgbase = trae-cn-appimage
 	pkgdesc = Trae CN (ByteDance AI IDE) repacked as a portable single-file AppImage
 	pkgver = 2.3.98528
-	pkgrel = 2
+	pkgrel = 3
 	url = https://www.trae.cn/
 	install = trae-cn-appimage.install
 	arch = x86_64
