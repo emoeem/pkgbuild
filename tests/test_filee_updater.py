@@ -6,6 +6,8 @@ import importlib.util
 import shutil
 import tempfile
 import unittest
+import urllib.error
+from email.message import Message
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +15,22 @@ SPEC = importlib.util.spec_from_file_location("update_filee", ROOT / "scripts/up
 assert SPEC and SPEC.loader
 updater = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(updater)
+
+
+class FakeResponse:
+    """The context-manager-only, read-only response fetch_bytes expects."""
+
+    def __init__(self, payload: bytes = b"payload"):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read(self):
+        return self.payload
 
 
 class VersionTests(unittest.TestCase):
@@ -137,6 +155,77 @@ class UpdateFileTests(unittest.TestCase):
             package = self.copy_package(root)
             pkgver, _, checksum = updater.current_values((package / "PKGBUILD").read_text())
             self.assertFalse(updater.update_files(root, pkgver, checksum))
+
+
+class FetchRetryTests(unittest.TestCase):
+    """fetch_bytes must survive transient API errors (a lone 504 failed run
+    42464934005 on 2026-11-08); permanent errors must not retry."""
+
+    URL = updater.LATEST_RELEASE_URL
+
+    def setUp(self):
+        self.sleeps = []
+        self.requests = 0
+        self.outcomes = []
+        self.errors = []
+        real_urlopen, real_sleep = updater.urllib.request.urlopen, updater.time.sleep
+
+        def fake_urlopen(request, timeout=None):
+            self.requests += 1
+            outcome = self.outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                self.errors.append(outcome)
+                raise outcome
+            return outcome
+
+        def restore():
+            updater.urllib.request.urlopen = real_urlopen
+            updater.time.sleep = real_sleep
+            for error in self.errors:
+                if isinstance(error, urllib.error.HTTPError):
+                    error.close()
+
+        updater.urllib.request.urlopen = fake_urlopen
+        updater.time.sleep = self.sleeps.append
+        self.addCleanup(restore)
+
+    def http_error(self, code: int, msg: str, retry_after: str | None = None):
+        headers = Message()
+        if retry_after is not None:
+            headers["Retry-After"] = retry_after
+        return urllib.error.HTTPError(self.URL, code, msg, headers, None)
+
+    def test_transient_504_is_retried_until_success(self):
+        self.outcomes = [self.http_error(504, "Gateway Timeout") for _ in range(2)]
+        self.outcomes.append(FakeResponse(b"release json"))
+        self.assertEqual(b"release json", updater.fetch_bytes(self.URL))
+        self.assertEqual(3, self.requests)
+        self.assertEqual(list(updater.FETCH_BACKOFF_SECONDS[:2]), self.sleeps)
+
+    def test_connection_error_is_transient_too(self):
+        self.outcomes = [urllib.error.URLError("timed out"), FakeResponse()]
+        self.assertEqual(b"payload", updater.fetch_bytes(self.URL))
+        self.assertEqual(2, self.requests)
+        self.assertEqual([updater.FETCH_BACKOFF_SECONDS[0]], self.sleeps)
+
+    def test_retry_after_header_is_honored(self):
+        self.outcomes = [self.http_error(429, "Too Many Requests", retry_after="7"), FakeResponse()]
+        updater.fetch_bytes(self.URL)
+        self.assertEqual([7], self.sleeps)
+
+    def test_permanent_404_fails_without_retry(self):
+        self.outcomes = [self.http_error(404, "Not Found")]
+        with self.assertRaises(urllib.error.HTTPError):
+            updater.fetch_bytes(self.URL)
+        self.assertEqual(1, self.requests)
+        self.assertEqual([], self.sleeps)
+
+    def test_exhausted_retries_reraise_the_last_error(self):
+        self.outcomes = [self.http_error(503, "Service Unavailable") for _ in range(updater.FETCH_ATTEMPTS)]
+        with self.assertRaises(urllib.error.HTTPError):
+            updater.fetch_bytes(self.URL)
+        self.assertEqual(updater.FETCH_ATTEMPTS, self.requests)
+        self.assertEqual(list(updater.FETCH_BACKOFF_SECONDS), self.sleeps)
 
 
 if __name__ == "__main__":

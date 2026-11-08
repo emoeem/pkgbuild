@@ -13,7 +13,10 @@ typed by hand:
     .SRCINFO together;
   * the same version with a different checksum is an error, not an update:
     silently repinning a published tag would make "1.12.0" mean two different
-    artifacts.
+    artifacts;
+  * transient API failures (a stray 504, a dropped connection) are retried
+    with backoff, while a persistent failure still exits 2 so the workflow's
+    notify job reports it.
 
 The candidate build in .github/workflows/filee-update.yml is what proves the
 tarball still has the expected layout and starts; this script only decides
@@ -26,6 +29,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -38,6 +42,12 @@ VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 TARBALL_NAME = "Filee-{version}-linux-x64.tar.gz"
 SUMS_NAME = "Filee-{version}-linux-x64-SHA256SUMS.txt"
+# HTTP statuses worth retrying on a scheduled poll; anything else (404 on a
+# vanished release, 401 on a bad token) is a real problem and must page us.
+TRANSIENT_HTTP_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+FETCH_ATTEMPTS = 4
+FETCH_BACKOFF_SECONDS = (5, 15, 30)
+MAX_RETRY_AFTER_SECONDS = 60
 
 
 def request_headers() -> dict[str, str]:
@@ -52,10 +62,42 @@ def request_headers() -> dict[str, str]:
     return headers
 
 
+def transient_error(exc: Exception) -> bool:
+    """True for failures a retry can plausibly fix; HTTPError is a URLError."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in TRANSIENT_HTTP_STATUS
+    return isinstance(exc, (urllib.error.URLError, TimeoutError))
+
+
+def retry_delay(exc: Exception, attempt: int) -> int:
+    delay = FETCH_BACKOFF_SECONDS[attempt - 1]
+    headers = getattr(exc, "headers", None)
+    if isinstance(exc, urllib.error.HTTPError) and headers is not None:
+        try:
+            delay = max(delay, int(headers.get("Retry-After", "")))
+        except (TypeError, ValueError):
+            pass
+    return min(delay, MAX_RETRY_AFTER_SECONDS)
+
+
 def fetch_bytes(url: str) -> bytes:
-    request = urllib.request.Request(url, headers=request_headers())
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return response.read()
+    """GET url; a single 504 once failed the whole scheduled run (2026-11-08)."""
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        request = urllib.request.Request(url, headers=request_headers())
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.read()
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            if attempt == FETCH_ATTEMPTS or not transient_error(exc):
+                raise
+            delay = retry_delay(exc, attempt)
+            print(
+                f"filee updater: {exc}; retrying in {delay}s "
+                f"(attempt {attempt}/{FETCH_ATTEMPTS})",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable: the last attempt always re-raises")
 
 
 def fetch_json(url: str):
