@@ -205,12 +205,27 @@ assert_contains "STALE 文本（直接依赖）" "$drift_out" \
     "STALE demo: direct dependency tool changed 1.0-1 -> 1.1-1"
 assert_eq "stale 文件记下包名" "demo" "$(cat "$tmp/drift/stale.txt")"
 
+# pkgrel-only 不再触发（2026-11-10）：提供者原地重打包不改变 ABI 承诺，真正的
+# 硬破坏由 check-repository-sonames.sh 直接比对 ELF NEEDED。旧规则把 pkgrel
+# 也算进比较，ffmpeg-full（约 120 个滚动依赖）因此每天被重建 3-5 次。
 rm -f "$tmp/drift/stale.txt"
 printf 'tool 1.0-1\nextra-tool 3.0-4\n' > "$tmp/drift/pacman-db"
 run_drift "$tmp/drift/stale.txt"
-assert_eq "声明触发的依赖同样报 STALE" "1" "$(stale_lines)"
+assert_eq "pkgrel-only 不报 STALE" "0" "$(stale_lines)"
+assert_contains "pkgrel-only 只留 NOTE" "$drift_out" \
+    "NOTE demo: declared dependency extra-tool rebuilt 3.0-2 -> 3.0-4 (pkgrel only; not a rebuild trigger)"
+if [[ -e "$tmp/drift/stale.txt" ]]; then
+    assert_eq "pkgrel-only 不写 stale 文件" "" "$(cat "$tmp/drift/stale.txt")"
+else
+    pass "pkgrel-only 不写 stale 文件"
+fi
+
+rm -f "$tmp/drift/stale.txt"
+printf 'tool 1.0-1\nextra-tool 3.1-2\n' > "$tmp/drift/pacman-db"
+run_drift "$tmp/drift/stale.txt"
+assert_eq "声明依赖改 pkgver 同样报 STALE" "1" "$(stale_lines)"
 assert_contains "STALE 文本（声明触发）" "$drift_out" \
-    "STALE demo: declared dependency extra-tool changed 3.0-2 -> 3.0-4"
+    "STALE demo: declared dependency extra-tool changed 3.0-2 -> 3.1-2"
 
 printf '\n%s checks, %s failure(s)\n' "$checks" "$failures"
 if (( failures > 0 )); then

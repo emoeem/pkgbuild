@@ -33,10 +33,18 @@ strip_dep() { printf '%s' "$1" | sed -E 's/[<>=].*$//'; }
 
 # .BUILDINFO records `installed = <name>-<version>-<pkgrel>-<arch>` (for example
 # `7zip-26.03-1.1-x86_64_v3`) while `pacman -Si` prints `Version : 26.03-1.1`, so
-# both sides are reduced to `<version>-<pkgrel>` before comparing.  The pkgrel is
-# deliberately part of the comparison: a dependency rebuilt with a new pkgrel can
-# have bumped its SONAMEs, so a pkgrel-only difference is still a reason to
-# rebuild this package.
+# both sides are reduced to `<version>-<pkgrel>` before comparing.
+#
+# A pkgrel-only difference is NOT a rebuild trigger (2026-11-10). The old rule
+# counted it "because a rebuilt dependency can have bumped its SONAMEs", but
+# that case is exactly what check-repository-sonames.sh measures directly and
+# authoritatively (ELF NEEDED against the current provider set). Counting the
+# pkgrel fired on every routine repository rebuild of any dependency: ffmpeg-full
+# tracks about 120 rolling CachyOS/chaotic-aur packages, so almost every 2-hour
+# window had some dependency with a new pkgrel, and the package was rebuilt 3-5
+# times a day (31 pkgrel bumps in 8 days) while FFmpeg itself never moved. A
+# pkgver change still triggers: that is the case where the provider's content
+# really moved and no SONAME-only check can promise header/ABI compatibility.
 recorded_version() { # <buildinfo> <name>; prints the recorded <version>-<pkgrel>
     local buildinfo="$1" name="$2"
     awk -F ' = ' -v p="$name-" '
@@ -69,9 +77,9 @@ current_version() { # <name>; prints the repository's <version>-<pkgrel>
 }
 
 # Compare one dependency against what the published build recorded.
-#   0 = the versions disagree (stale), 1 = in sync, 2 = not resolvable here.
+#   0 = the versions disagree (stale), 1 = in sync or pkgrel-only, 2 = not resolvable here.
 check_dep() { # <buildinfo> <package-name> <dependency> <label>
-    local buildinfo="$1" name="$2" dep="$3" label="$4" old new
+    local buildinfo="$1" name="$2" dep="$3" label="$4" old new old_ver new_ver
     old="$(recorded_version "$buildinfo" "$dep")"
     new="$(current_version "$dep")"
     # Nothing was recorded for this dependency, so there is nothing to compare;
@@ -79,6 +87,17 @@ check_dep() { # <buildinfo> <package-name> <dependency> <label>
     [[ -n "$old" ]] || return 1
     compared=$((compared + 1))
     if [[ -n "$new" && "$old" != "$new" ]]; then
+        # pkgver never contains a dash, so the last dash separates pkgver from
+        # pkgrel. A provider rebuilt in place is reported, not dispatched: the
+        # SONAME detector owns the "does it still resolve" question.
+        old_ver="${old%-*}"
+        new_ver="${new%-*}"
+        if [[ "$old_ver" == "$new_ver" ]]; then
+            pkgrel_only=$((pkgrel_only + 1))
+            printf 'NOTE %s: %s %s rebuilt %s -> %s (pkgrel only; not a rebuild trigger)\n' \
+                "$name" "$label" "$dep" "$old" "$new"
+            return 1
+        fi
         stale=$((stale + 1))
         printf 'STALE %s: %s %s changed %s -> %s\n' "$name" "$label" "$dep" "$old" "$new"
         [[ -n "$stale_file" ]] && printf '%s\n' "$name" >> "$stale_file"
@@ -103,6 +122,7 @@ list_triggers="${root}/scripts/list-rebuild-triggers.sh"
 packages=0
 compared=0
 stale=0
+pkgrel_only=0
 unresolved_count=0
 
 packages=0
@@ -160,8 +180,8 @@ done
 # nothing to report, because "the detector crashed" and "there really is no
 # drift" are otherwise indistinguishable in the log -- which is exactly how the
 # openvino SONAME drift stayed invisible.
-printf 'SUMMARY packages=%d compared=%d stale=%d unresolved=%d\n' \
-    "$packages" "$compared" "$stale" "$unresolved_count"
+printf 'SUMMARY packages=%d compared=%d stale=%d pkgrel_only=%d unresolved=%d\n' \
+    "$packages" "$compared" "$stale" "$pkgrel_only" "$unresolved_count"
 
 if (( compared == 0 )); then
     printf 'Nothing could be compared: the pacman databases are probably not synced (run pacman -Syu first) or no published package records dependency versions.\n' >&2
