@@ -202,11 +202,20 @@ def build_plan(
         reasons.setdefault(base, []).extend(why)
 
     drift_reasons: dict[str, list[str]] = {}
+    drift_applied = False
     if manifest_path is not None and manifest_path.is_file():
         drift_reasons = repository_drift(packages, parse_manifest(manifest_path))
-        affected |= set(drift_reasons)
-        for base, why in drift_reasons.items():
-            reasons.setdefault(base, []).extend(why)
+        # A targeted build must build what was asked for, nothing else. Merging
+        # the drift set into *every* selection is how one unrelated package
+        # turned each 2-hourly dispatch (filee, rule-sets, sing-box) into an
+        # extra ffmpeg-full rebuild: 31 pkgrel bumps in 8 days with no upstream
+        # change (2026-11-10). Drift is a repository-repair step, so only a full
+        # rebuild applies it; targeted runs still report it in the plan.
+        drift_applied = (selection or "all") == "all"
+        if drift_applied:
+            affected |= set(drift_reasons)
+            for base, why in drift_reasons.items():
+                reasons.setdefault(base, []).extend(why)
 
     rebuild = sorted(affected, key=lambda name: (available.index(name), name))
     order = topological_order(rebuild, packages)
@@ -237,6 +246,7 @@ def build_plan(
         "repository": {
             "manifest_checked": bool(manifest_path and manifest_path.is_file()),
             "drift": sorted(drift_reasons),
+            "drift_applied": drift_applied,
         },
         "counts": {
             "available": len(available),
@@ -313,7 +323,12 @@ def render_text(plan: dict) -> str:
         lines.append("")
         lines.append("Repository drift")
         for name in plan["repository"]["drift"]:
-            lines.append(f"  {name}")
+            suffix = (
+                ""
+                if plan["repository"].get("drift_applied", True)
+                else " (reported only: a targeted build does not repair drift)"
+            )
+            lines.append(f"  {name}{suffix}")
 
     lines.append("")
     lines.append("Infrastructure impact")

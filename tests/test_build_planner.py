@@ -131,17 +131,45 @@ class BuildPlannerTests(unittest.TestCase):
         after = self.commit("base")
         manifest = self.root / "manifest.txt"
         manifest.write_text("alpha\t1.0-1\tlibc.so.6\nbeta\t1.0-1\t\n", encoding="utf-8")
-        plan = self.plan("changed", after, after, manifest_path=manifest)
-        self.assertEqual(plan["rebuild"], ["alpha"])
+        plan = self.plan("all", after, after, manifest_path=manifest)
+        # 全量重建本来就包含两个包；断言的是 drift 被识别、被应用，并且理由
+        # 写进了计划（reason 里 selection 理由排在前，所以按内容找）。
+        self.assertEqual(plan["rebuild"], ["alpha", "beta"])
         self.assertEqual(plan["repository"]["drift"], ["alpha"])
-        self.assertIn("published 1.0-1 != source 2.5-3", plan["reason"]["alpha"][0])
+        self.assertTrue(plan["repository"]["drift_applied"])
+        self.assertTrue(
+            any(
+                "published 1.0-1 != source 2.5-3" in reason
+                for reason in plan["reason"]["alpha"]
+            ),
+            plan["reason"]["alpha"],
+        )
+
+    def test_targeted_selection_reports_drift_without_rebuilding_it(self):
+        # 2026-11-10: 定向 dispatch 曾无条件并入 drift 集合，于是 filee /
+        # rule-sets / sing-box 每 2 小时的 dispatch 都会顺手重建 ffmpeg-full
+        # （8 天 31 次 pkgrel bump，上游没动）。漂移是仓库修复步骤，只属于
+        # 全量重建；定向构建仍然把发现写进计划，但不重建。
+        self.add_package("alpha", pkgver="2.5", pkgrel="3")
+        self.add_package("beta", pkgver="1.0", pkgrel="1")
+        self.add_package("gamma", pkgver="1.0", pkgrel="1")
+        after = self.commit("base")
+        manifest = self.root / "manifest.txt"
+        manifest.write_text("alpha\t1.0-1\t\n", encoding="utf-8")
+        plan = self.plan("gamma", after, after, manifest_path=manifest)
+        self.assertEqual(plan["repository"]["drift"], ["alpha"])
+        self.assertFalse(plan["repository"]["drift_applied"])
+        self.assertEqual(plan["rebuild"], ["gamma"])
+        self.assertNotIn("alpha", plan["reason"])
+        text = MODULE.render_text(plan)
+        self.assertIn("reported only", text)
 
     def test_manifest_epoch_is_normalised(self):
         self.add_package("alpha", pkgver="4.7.0", pkgrel="1")
         after = self.commit("base")
         manifest = self.root / "manifest.txt"
         manifest.write_text("alpha\t1:4.7.0-1\t\n", encoding="utf-8")
-        plan = self.plan("changed", after, after, manifest_path=manifest)
+        plan = self.plan("all", after, after, manifest_path=manifest)
         self.assertEqual(plan["repository"]["drift"], [])
 
     def test_estimated_duration_comes_from_the_timing_history(self):
