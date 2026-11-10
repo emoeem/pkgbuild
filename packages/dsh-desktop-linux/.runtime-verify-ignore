@@ -7,3 +7,9 @@ unresolved-library: .*koffi-linux-x64/musl_x64/koffi\.node: libc\.musl
 # 2. 内嵌 CPython 的 _tkinter 扩展通过解释器自己的 lib 目录(dependencies/python/lib)
 #    找到 libtcl9.0/libtcl9tk9.0,这两个库就在同一 payload 里,不走系统 ldconfig。
 unresolved-library: .*python/lib/python3\.12/lib-dynload/_tkinter\.cpython-312-x86_64-linux-gnu\.so: libtcl9tk9\.0\.so,libtcl9\.0\.so
+# 3. chrome-sandbox 的装机时权限由 .install 决定:user namespace 可用时保持包内
+#    的 0755,不可用时回退 4755 setuid(照抄上游 deb/rpm postinst 的判断)。构建
+#    容器的 seccomp 禁 unshare,永远走 4755 回退,pacman -Qkk 便报 Permissions
+#    mismatch;这是 .install 的既定行为,不是包损坏。userns 默认开启的真实机器
+#    不会出现该差异,其他文件的其他属性不在此豁免范围内。
+file-properties: .*chrome-sandbox \(Permissions mismatch\)
