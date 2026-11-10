@@ -193,6 +193,10 @@ jobs:
         id: dispatch
         env:
           GH_TOKEN: ${{ github.token }}
+          # This list comes from the soname checker, so every entry is a real
+          # "installs but cannot run" break: bypass the dispatcher's success
+          # cooldown instead of waiting out a repair that finished hours ago.
+          STALE_URGENT_FILE: maintenance-out/stale.txt
         run: |
           set -Eeuo pipefail
           cat maintenance-out/report.txt >> "$GITHUB_STEP_SUMMARY" || true

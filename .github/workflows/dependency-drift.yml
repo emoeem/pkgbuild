@@ -3,10 +3,15 @@ name: ABI watch (dependency version and soname drift)
 # 已发布的私有包不在 Arch / CachyOS 的 rebuild 范围内，依赖或 SONAME 一变就会
 # 变成「装得上、跑不起来」。这里负责在尽可能短的窗口内自己发现并自动重建：
 #
-#   * version drift：已发布包 .BUILDINFO 记录的依赖版本与当前仓库不一致
+#   * version drift：已发布包 .BUILDINFO 记录的依赖 pkgver 与当前仓库不一致
+#                    （pkgrel-only 差异只报 NOTE，不触发重建，见 2026-11-10）
 #   * soname drift ：已发布包的 ELF NEEDED 在当前仓库里已经没有提供者
 #                    （openvino 这类换了 SONAME、又不声明 provides 的提供者
 #                     只有它抓得住，所以它必须和版本检测同样频繁地跑）
+#
+# 2026-11-10：版本检测曾把 pkgrel 也算进比较，ffmpeg-full（约 120 个滚动依赖）
+# 因此 8 天被 bump 重建 31 次、每天 3-5 次，而 FFmpeg 上游一次都没动。现在
+# pkgrel-only 只报 NOTE；dispatch 端另有 24h 成功冷却（SONAME 破坏豁免）。
 #
 # 硬性要求：两个检测器都必须「跑不动就报错」。崩溃、被跳过或比较数为 0 的
 # 检测器绝不允许被当成「没有漂移」—— openvino 的 SONAME 漂移就是这么被拖到
@@ -148,13 +153,23 @@ jobs:
           sed -i '/^[[:space:]]*$/d' maintenance-out/stale.txt
           sort -u -o maintenance-out/stale.txt maintenance-out/stale.txt
 
+          # SONAME breaks bypass the dispatcher's success cooldown: those
+          # packages link a library that no longer exists, so they cannot wait.
+          : > maintenance-out/stale-urgent.txt
+          if [[ -f drift/soname/stale.txt ]]; then
+            sed -i '/^[[:space:]]*$/d' drift/soname/stale.txt
+            sort -u drift/soname/stale.txt > maintenance-out/stale-urgent.txt
+          fi
+
           version_stale="$(grep -c '^STALE ' drift/version/report.txt || true)"
           soname_stale="$(grep -c '^STALE ' drift/soname/report.txt || true)"
           orphans="$(grep -c '^ORPHAN ' drift/soname/report.txt || true)"
+          pkgrel_only="$(grep -o 'pkgrel_only=[0-9]*' drift/version/report.txt | head -1 | cut -d= -f2 || true)"
           {
             printf '### ABI watch\n\n'
             printf '| check | findings |\n| --- | --- |\n'
             printf '| dependency version drift | %s |\n' "$version_stale"
+            printf '| dependency pkgrel-only (reported, no rebuild) | %s |\n' "${pkgrel_only:-0}"
             printf '| soname drift | %s |\n' "$soname_stale"
             printf '| orphan published packages | %s |\n' "$orphans"
             printf '\nPackages needing a rebuild: %s\n' \
@@ -166,6 +181,7 @@ jobs:
         id: dispatch
         env:
           GH_TOKEN: ${{ github.token }}
+          STALE_URGENT_FILE: maintenance-out/stale-urgent.txt
         run: |
           set -Eeuo pipefail
           bash scripts/dispatch-stale-rebuilds.sh maintenance-out/stale.txt
@@ -178,6 +194,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           STALE: ${{ steps.dispatch.outputs.stale }}
+          DEFERRED: ${{ steps.dispatch.outputs.deferred }}
         run: |
           set -Eeuo pipefail
           title='ABI watch: published packages need a rebuild'
@@ -190,12 +207,20 @@ jobs:
             body="$(
               printf '已发布包与当前仓库的依赖 / SONAME 不再匹配。\n\n已自动 dispatch 重建（bump_pkgrel=true）：\n\n'
               printf '%s\n' "$STALE" | tr ',' '\n' | sed 's/^/- /'
+              if [[ -n "${DEFERRED:-}" ]]; then
+                printf '\n仍在成功冷却期内、暂未重建：\n\n'
+                printf '%s\n' "$DEFERRED" | tr ',' '\n' | sed 's/^/- /'
+              fi
             )"
             if [[ -n "$number" ]]; then
               gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
             else
               gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
             fi
+          elif [[ -n "${DEFERRED:-}" ]]; then
+            # 漂移仍然存在，只是被成功冷却挡住了：不能关成「已一致」。
+            printf 'Drift still reported for %s; rebuild deferred by the success cooldown.\n' \
+              "$DEFERRED" >> "$GITHUB_STEP_SUMMARY"
           elif [[ -n "$number" ]]; then
             gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
               --comment '所有已发布包与当前仓库的依赖 / SONAME 一致。'

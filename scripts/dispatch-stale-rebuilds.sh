@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# 把 stale 列表里的包 dispatch 给 build.yml 重建，跳过正在构建或近期刚失败
-# 的包。运行列表与各 run 的 job 列表只拉一次；旧实现是在 per-package 循环
-# 里反复请求（最多 20×N 次 API 调用）。
+# 把 stale 列表里的包 dispatch 给 build.yml 重建，跳过正在构建、近期刚失败、
+# 以及刚成功重建过的包。运行列表与各 run 的 job 列表只拉一次；旧实现是在
+# per-package 循环里反复请求（最多 20×N 次 API 调用）。
+#
+# 成功冷却（2026-11-10）：原先只挡「正在构建」和「24h 内失败」，没有成功冷却，
+# 于是每个 2 小时窗口只要再看到同一漂移就再 dispatch 一次。ffmpeg-full 跟踪约
+# 120 个滚动依赖，几乎每轮都有依赖版本变化，结果 8 天里被 bump 重建 31 次、
+# 每天 3-5 次，而 FFmpeg 上游一次都没动。默认 24h 内成功重建过的包不再重建。
+# SONAME 破坏是例外：STALE_URGENT_FILE 里列出的包（由
+# check-repository-sonames.sh 产出）绕过冷却，因为那是「装上跑不起来」的硬
+# 故障，等一天不可接受。REBUILD_SUCCESS_COOLDOWN_SECONDS=0 可整体关闭冷却。
 #
 # dispatch 本身也必须吸收 GitHub 侧的瞬时 5xx。2026-10-27 的 ABI watch 在
 # `gh workflow run` 上收到 HTTP 502，整轮检测变红，一个 stale 包都没重建。
@@ -21,6 +29,7 @@ output_file="${GITHUB_OUTPUT:-/dev/null}"
   printf 'All packages are up to date with current repository sonames.\n' |
     tee -a "$summary_file"
   printf 'stale=\n' >> "$output_file"
+  printf 'deferred=\n' >> "$output_file"
   exit 0
 }
 
@@ -28,6 +37,11 @@ dispatch_attempts="${DISPATCH_ATTEMPTS:-3}"
 dispatch_delay="${DISPATCH_RETRY_DELAY:-5}"
 verify_attempts="${DISPATCH_VERIFY_ATTEMPTS:-3}"
 verify_delay="${DISPATCH_VERIFY_DELAY:-3}"
+# A package that was just rebuilt successfully does not need the same repair
+# again two hours later. 86400 = at most one routine (version-drift) rebuild per
+# package per day; 0 disables the cooldown entirely.
+success_cooldown="${REBUILD_SUCCESS_COOLDOWN_SECONDS:-86400}"
+urgent_file="${STALE_URGENT_FILE:-}"
 
 runs_tsv="$(mktemp)"
 jobs_tsv="$(mktemp)"
@@ -58,27 +72,56 @@ load_build_state() {
 # "Build <pkg>" 作业，漏掉 push 会把正在重建的包再 dispatch 一遍。
 load_build_state "$runs_tsv" "$jobs_tsv" 50
 
-declare -A active_pkg=() recent_fail_pkg=()
+declare -A active_pkg=() recent_fail_pkg=() last_success_pkg=() run_ok=()
 now="$(date -u +%s)"
+# A "Build <pkg>" job only counts as a completed repair when its whole run
+# succeeded: a build that finished but whose publish job died did not publish
+# anything, so it must not buy the package a cooldown.
+while IFS=$'\t' read -r run_id run_status run_conclusion _created; do
+  [[ -n "$run_id" ]] || continue
+  if [[ "$run_status" == completed && "$run_conclusion" == success ]]; then
+    run_ok["$run_id"]=1
+  fi
+done < "$runs_tsv"
+
 while IFS=$'\t' read -r run_id pkg job_status job_conclusion; do
   [[ -n "$pkg" ]] || continue
   case "$job_status" in
     queued | in_progress) active_pkg["$pkg"]=1 ;;
     completed)
-      if [[ "$job_conclusion" == failure ||
-            "$job_conclusion" == cancelled ||
-            "$job_conclusion" == timed_out ]]; then
-        run_time="$(awk -F '\t' -v id="$run_id" '$1 == id {print $4; exit}' "$runs_tsv")"
-        if [[ -n "$run_time" ]]; then
-          age=$((now - run_time))
-          ((age < 86400)) && recent_fail_pkg["$pkg"]=1
-        fi
-      fi
+      run_time="$(awk -F '\t' -v id="$run_id" '$1 == id {print $4; exit}' "$runs_tsv")"
+      case "$job_conclusion" in
+        failure | cancelled | timed_out)
+          if [[ -n "$run_time" ]]; then
+            age=$((now - run_time))
+            ((age < 86400)) && recent_fail_pkg["$pkg"]=1
+          fi
+          ;;
+        success)
+          if [[ -n "$run_time" && -n "${run_ok[$run_id]:-}" ]]; then
+            previous="${last_success_pkg[$pkg]:-}"
+            if [[ -z "$previous" ]] || ((run_time > previous)); then
+              last_success_pkg["$pkg"]="$run_time"
+            fi
+          fi
+          ;;
+      esac
       ;;
   esac
 done < "$jobs_tsv"
 
+# SONAME breaks bypass the cooldown: the published package links a library that
+# no longer exists, so waiting a day is not acceptable. Everything else is a
+# version-drift repair that a rebuild hours ago already covered.
+declare -A urgent_pkg=()
+if [[ -n "$urgent_file" && -f "$urgent_file" ]]; then
+  while IFS= read -r urgent; do
+    [[ -n "$urgent" ]] && urgent_pkg["$urgent"]=1
+  done < "$urgent_file"
+fi
+
 dispatchable=()
+deferred_pkg=()
 while IFS= read -r pkg; do
   [[ -n "$pkg" ]] || continue
   # Discovering one name that no longer exists in the source tree used to make
@@ -95,6 +138,17 @@ while IFS= read -r pkg; do
   elif [[ -n "${recent_fail_pkg[$pkg]:-}" ]]; then
     printf 'DEFER %s: rebuild failed within the last 24h; retry later.\n' "$pkg" |
       tee -a "$summary_file"
+  elif [[ -n "${last_success_pkg[$pkg]:-}" && -z "${urgent_pkg[$pkg]:-}" ]]; then
+    last_success_at="${last_success_pkg[$pkg]}"
+    age=$((now - last_success_at))
+    if ((success_cooldown > 0 && age < success_cooldown)); then
+      printf 'SKIP %s: rebuilt successfully %dh ago and no soname break is reported; cooling down for %dh.\n' \
+        "$pkg" "$((age / 3600))" "$((success_cooldown / 3600))" |
+        tee -a "$summary_file"
+      deferred_pkg+=("$pkg")
+      continue
+    fi
+    dispatchable+=("$pkg")
   else
     dispatchable+=("$pkg")
   fi
@@ -162,7 +216,12 @@ if (( ${#dispatchable[@]} > 0 )); then
   printf 'Triggered rebuild for: %s\n' "$stale" | tee -a "$summary_file"
   printf 'stale=%s\n' "$stale" >> "$output_file"
 else
-  printf 'No rebuild dispatched: all stale packages are already running or in failure cooldown.\n' |
+  printf 'No rebuild dispatched: all stale packages are already running, in failure cooldown, or cooling down after a successful rebuild.\n' |
     tee -a "$summary_file"
   printf 'stale=\n' >> "$output_file"
 fi
+
+# Packages whose drift is still real but deliberately not dispatched yet. The
+# caller must not read an empty "stale" as "everything is consistent": with a
+# non-empty deferred list the drift was simply left alone on purpose.
+printf 'deferred=%s\n' "$(IFS=,; echo "${deferred_pkg[*]:-}")" >> "$output_file"
