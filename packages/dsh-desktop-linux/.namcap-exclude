@@ -1,0 +1,30 @@
+# This package repackages the prebuilt Arch package published by
+# https://github.com/ffyfox/dsh-desktop-linux/releases (Electron app plus a
+# bundled CPython/pnpm runtime under /opt). Namcap only reasons about system
+# packages, so its payload rules misfire structurally on upstream artifacts
+# that cannot be rebuilt here without rewriting upstream's output:
+#
+#   pydepends        infers Arch python-* dependencies from the bundled
+#                    site-packages, which resolve inside the payload at runtime
+#   shebangdepends   reads the payload's python/node/sh shebangs as Arch deps
+#   sodepends        same, for ELF NEEDED entries satisfied by payload libraries
+#   unusedsodepends  ldd -u against the build host, not the shipping runtime
+#   rpath / runpath  upstream build-host RPATH (/tools/deps/lib) and the
+#                    CI-runner RUNPATH baked into sherpa-onnx.node
+#   elfpaths         namcap only accepts ELF under /usr, /bin, /sbin, /lib;
+#                    upstream and its users expect everything under /opt
+#   elfgnurelro      hardening flags of upstream binaries; repacking cannot
+#                    relink them
+#   fhs-manpages     the bundled CPython ships its own share/man tree
+#
+# Everything else (licenses, symlinks, permissions, pacman metadata, file
+# ownership, hooks, missing vars) still runs and can fail the build.
+pydepends
+shebangdepends
+sodepends
+unusedsodepends
+rpath
+runpath
+elfpaths
+elfgnurelro
+fhs-manpages
