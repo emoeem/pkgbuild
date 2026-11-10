@@ -1,0 +1,78 @@
+# Maintainer: emoeem
+#
+# DeepSeek Harness desktop: an Electron shell around the bundled dsh runtime,
+# packaged by upstream at https://github.com/ffyfox/dsh-desktop-linux.
+#
+# Upstream builds this Arch package in its own CI (patched Electron tree + pnpm
+# 11 + nodejs) and publishes the finished .pkg.tar.zst as a release asset. That
+# source build produces a 1.1 GiB payload and is not something to repeat here,
+# so this package repacks the published x86_64 asset verbatim: same file
+# layout, same install script, same dependency set as upstream's .PKGINFO.
+# What this package owns is the pin: pkgver, the asset name (it embeds pkgver),
+# and sha256sums.
+#
+# Updating: bump pkgver to the upstream release tag, refresh sha256sums and the
+# asset name, regenerate .SRCINFO.
+
+pkgname=dsh-desktop-linux
+pkgver=0.2.2rc1
+pkgrel=1
+pkgdesc='Official DeepSeek Harness desktop application (Electron shell around a bundled dsh runtime)'
+arch=('x86_64')
+url='https://github.com/ffyfox/dsh-desktop-linux'
+license=('MIT')
+# Copied from the released package's .PKGINFO. The payload is Electron plus a
+# bundled CPython/dsh runtime, so dependencies are resolved at runtime by the
+# Electron binaries and the bundled interpreter, not by a link step here.
+depends=(
+    'gtk3'
+    'nss'
+    'libnotify'
+    'libxss'
+    'libxtst'
+    'xdg-utils'
+    'at-spi2-core'
+    'libsecret'
+    'alsa-lib'
+    'dbus'
+    'libxcrypt-compat'
+    'libdbusmenu-glib'
+)
+optdepends=('apparmor: load the bundled AppArmor profile on install')
+# Upstream's package name for the same application; they cannot coexist.
+conflicts=('deepseek-harness-desktop')
+options=('!strip' '!debug' '!emptydirs')
+install="${pkgname}.install"
+
+_upstream='https://github.com/ffyfox/dsh-desktop-linux/releases/download'
+_asset="${pkgname}-${pkgver}-1-${CARCH}.pkg.tar.zst"
+
+source=("${_asset}::${_upstream}/v${pkgver}/${_asset}")
+# The source *is* a built package; without this makepkg would unpack it into
+# $srcdir and leave the 1.1 GiB payload lying around twice.
+noextract=("${_asset}")
+sha256sums=('f3031acaa6507f702e349c7d72d8bc24a9991098813332e1f7478d7dd764ce69')
+
+build() {
+    # Nothing compiles. Check that the downloaded asset really is the package
+    # this PKGBUILD pins before trusting its contents, since the version is only
+    # encoded in the filename. .PKGINFO sits at the head of the archive, so this
+    # costs one partial decompression, not a full 353 MB pass.
+    local pkginfo
+    pkginfo="$(bsdtar -xOf "${srcdir}/${_asset}" .PKGINFO)" || return 1
+    grep -qx "pkgname = ${pkgname}" <<<"$pkginfo" || return 1
+    grep -qx "pkgver = ${pkgver}-${pkgrel}" <<<"$pkginfo" || return 1
+    grep -qx "arch = ${CARCH}" <<<"$pkginfo" || return 1
+}
+
+package() {
+    # Repack: extract the release package into $pkgdir, minus the metadata that
+    # makepkg regenerates (.PKGINFO/.BUILDINFO/.MTREE/.INSTALL). -p keeps the
+    # upstream modes verbatim; chrome-sandbox ships 0755 and the install script
+    # decides 0755 vs 4755 at install time.
+    bsdtar -xpf "${srcdir}/${_asset}" -C "${pkgdir}" \
+        --exclude='.PKGINFO' \
+        --exclude='.BUILDINFO' \
+        --exclude='.MTREE' \
+        --exclude='.INSTALL'
+}

@@ -1,0 +1,9 @@
+# 这个包是上游已构建产物的重打包：payload 是 Electron + 内嵌 CPython/dsh 运行时,
+# 里面同时放着多个 ABI 变体和自带库路径的扩展,ldd 对它们必然报 unresolved-library。
+#
+# 1. koffi 的 FFI 插件按需选择变体:linux_x64/koffi.node 给 glibc,musl_x64/koffi.node
+#    给 musl 发行版。本包只装在 Arch(glibc)上,musl 变体永远不会被加载。
+unresolved-library: .*koffi-linux-x64/musl_x64/koffi\.node: libc\.musl
+# 2. 内嵌 CPython 的 _tkinter 扩展通过解释器自己的 lib 目录(dependencies/python/lib)
+#    找到 libtcl9.0/libtcl9tk9.0,这两个库就在同一 payload 里,不走系统 ldconfig。
+unresolved-library: .*python/lib/python3\.12/lib-dynload/_tkinter\.cpython-312-x86_64-linux-gnu\.so: libtcl9tk9\.0\.so,libtcl9\.0\.so

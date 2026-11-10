@@ -11,6 +11,11 @@ defaults:
   timeout_seconds: 30
 
 packages:
+  dsh-desktop-linux:
+    # Electron GUI: it needs a display, so only the launcher is checked here.
+    # The application itself is exercised by the release gate's install test.
+    binaries:
+      - deepseek-harness
   ffmpeg-full:
     binaries:
       - ffmpeg
