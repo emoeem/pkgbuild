@@ -78,11 +78,14 @@ class BuildPlannerTests(unittest.TestCase):
         after = self.commit("change lib")
         plan = self.plan("changed", before, after)
         self.assertEqual(plan["changed"], ["lib"])
-        self.assertEqual(plan["affected"], ["app"])
-        self.assertEqual(sorted(plan["rebuild"]), ["app", "lib"])
-        self.assertEqual(plan["skipped"], [])
-        self.assertEqual(plan["counts"]["rebuild"], 2)
-        self.assertTrue(any("provided by lib" in reason for reason in plan["reason"]["app"]))
+        # Dependency propagation is gone (2026-11-13): app is not rebuilt just
+        # because its dependency lib moved. Whether app needs a rebuild after
+        # that is the ABI watch's decision, made on the published ELF NEEDED.
+        self.assertEqual(plan["affected"], [])
+        self.assertEqual(plan["rebuild"], ["lib"])
+        self.assertEqual(plan["skipped"], ["app"])
+        self.assertEqual(plan["counts"]["rebuild"], 1)
+        self.assertNotIn("app", plan["reason"])
 
     def test_unrelated_change_skips_everything(self):
         self.add_package("alpha")
@@ -204,7 +207,6 @@ class BuildPlannerTests(unittest.TestCase):
         for section in (
             "Build Plan",
             "Direct changes",
-            "Dependency impact",
             "Infrastructure impact",
             "Skipped packages",
             "Total",
