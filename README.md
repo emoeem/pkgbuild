@@ -112,6 +112,11 @@ lyc8503 `geosite-cn`、`geosite-geolocation-!cn`）的 sha256，**有变化才**
 全部通过才提交到 `main` 并 dispatch `build.yml` 重建发布。上游 tarball 的结构
 或版本号不合规时更新器失败退出，不会写入半更新的包元数据。
 
+**构建不沿依赖图传播**：构建计划只包含被点名的包。依赖更新后是否需要重建
+依赖者由 ABI watch 裁决——它比对已发布包的 ELF `NEEDED` 与当前库清单，只有
+真实 SONAME 断裂才会 dispatch 定点重建；不存在"邻居更新了就把 pkgrel 抬一档"
+的联动更新。
+
 ## sing-box 运维脚本
 
 > **单一事实来源**：本仓库 `scripts/` 下的版本是唯一权威副本。`~/code/toolbox-hub/scripts/sing-box/`
@@ -306,7 +311,7 @@ AUR + 私人仓库包（本机实测约 2 秒），也能发现由传递依赖�
 仓库侧的自动化：
 
 - 推送 `packages/**` 或 `scripts/overlays/**` 时，`build.yml` 只重建变化的
-  包及其依赖者。
+  包，不把依赖者拖进构建；依赖 ABI 断裂由 ABI watch 定点修复。
 - `dependency-drift.yml`（ABI watch）每 2 小时同时跑两件事：比对 `.BUILDINFO`
   里记录的依赖版本，以及扫描已发布包的 ELF `NEEDED`（后者才抓得住 openvino
   这类换了 SONAME 的提供者）。两个检测器都必须打印 `SUMMARY` 行；任一没跑起来

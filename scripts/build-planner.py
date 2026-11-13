@@ -5,7 +5,6 @@ Inputs
 ------
 * the Git diff (files changed between --before and --after),
 * package metadata (packages/*/.SRCINFO),
-* the provider -> consumer dependency graph,
 * overlay changes (scripts/overlays/<package>.sh),
 * optional repository state (the published ABI manifest),
 * optional timing history (to estimate the cost of the plan).
@@ -19,6 +18,12 @@ Outputs
 
 The plan is the single place that decides "what will CI build and why", so the
 log of a run can always answer "why was package X rebuilt / skipped".
+
+A build rebuilds exactly the packages it was asked for -- never the consumers
+of what changed.  ABI repair is delegated to the ABI watch
+(.github/workflows/dependency-drift.yml), which dispatches targeted rebuilds
+when a published package's ELF NEEDED actually breaks against the new
+dependency.
 """
 
 from __future__ import annotations
@@ -38,7 +43,6 @@ from pkgbuild_lib import (  # noqa: E402
     changed_files,
     classify_changes,
     dumps,
-    graph_consumers,
     load_packages,
     topological_order,
 )
@@ -48,34 +52,6 @@ RULE = "\u2500" * 28
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def propagate(
-    packages: dict[str, PackageMetadata], direct: set[str]
-) -> tuple[set[str], dict[str, list[str]]]:
-    """Broadest first: return every affected base plus the edge that caused it."""
-    graph = graph_consumers(packages)
-    reasons: dict[str, list[str]] = {name: [] for name in direct}
-    seen = set(direct)
-    frontier = set(direct)
-    while frontier:
-        nxt: set[str] = set()
-        for base in sorted(frontier):
-            metadata = packages.get(base)
-            names = {base}
-            if metadata is not None:
-                names |= set(metadata.providers)
-            for name in sorted(names):
-                for consumer in sorted(graph.get(name, ())):
-                    if consumer not in packages or consumer in seen:
-                        continue
-                    seen.add(consumer)
-                    nxt.add(consumer)
-                    reasons.setdefault(consumer, []).append(
-                        f"dependency: {name} (provided by {base})"
-                    )
-        frontier = nxt
-    return seen, reasons
 
 
 def parse_manifest(path: Path) -> dict[str, str]:
@@ -197,29 +173,32 @@ def build_plan(
                 "infrastructure: " + ", ".join(sorted(impact.infrastructure)[:3])
             )
 
-    affected, dependency_reasons = propagate(packages, direct)
-    for base, why in dependency_reasons.items():
-        reasons.setdefault(base, []).extend(why)
+    # Dependency propagation is gone (2026-11-13): a build rebuilds exactly the
+    # packages it was asked for, never the consumers of what changed.  Propagating
+    # along the dependency graph is how one quirc AUR sync dragged ffmpeg-full
+    # into a rebuild and bumped its pkgrel 3.37 -> 3.38 with no FFmpeg release
+    # (write-back commit 76df76c) -- and it did the same to every targeted
+    # dispatch (filee, rule-sets, sing-box).  Real ABI breakage is repaired by
+    # the ABI watch (dependency-drift.yml), which detects the broken ELF NEEDED
+    # on the published package and dispatches a targeted rebuild on its own.
+    rebuild_set = set(direct)
 
     drift_reasons: dict[str, list[str]] = {}
     drift_applied = False
     if manifest_path is not None and manifest_path.is_file():
         drift_reasons = repository_drift(packages, parse_manifest(manifest_path))
-        # A targeted build must build what was asked for, nothing else. Merging
-        # the drift set into *every* selection is how one unrelated package
-        # turned each 2-hourly dispatch (filee, rule-sets, sing-box) into an
-        # extra ffmpeg-full rebuild: 31 pkgrel bumps in 8 days with no upstream
-        # change (2026-11-10). Drift is a repository-repair step, so only a full
-        # rebuild applies it; targeted runs still report it in the plan.
+        # A full rebuild is the repository-repair step: apply drift.  A targeted
+        # build must build what was asked for, nothing else; targeted runs still
+        # report drift in the plan.
         drift_applied = (selection or "all") == "all"
         if drift_applied:
-            affected |= set(drift_reasons)
+            rebuild_set |= set(drift_reasons)
             for base, why in drift_reasons.items():
                 reasons.setdefault(base, []).extend(why)
 
-    rebuild = sorted(affected, key=lambda name: (available.index(name), name))
+    rebuild = sorted(rebuild_set, key=lambda name: (available.index(name), name))
     order = topological_order(rebuild, packages)
-    skipped = sorted(available_set - affected)
+    skipped = sorted(available_set - rebuild_set)
 
     durations = load_timing_db(timing_db)
     estimates = {name: durations.get(name, 0.0) for name in rebuild}
@@ -238,7 +217,9 @@ def build_plan(
         "direct": sorted(direct),
         "changed": sorted(direct),
         "overlay": sorted(overlay),
-        "affected": sorted(affected - direct),
+        # Kept for plan-schema compatibility; dependency propagation was
+        # removed on 2026-11-13, so this is always empty now.
+        "affected": [],
         "rebuild": rebuild,
         "build_order": order,
         "skipped": skipped,
@@ -251,7 +232,7 @@ def build_plan(
         "counts": {
             "available": len(available),
             "direct": len(direct),
-            "affected": len(affected - direct),
+            "affected": 0,
             "rebuild": len(rebuild),
             "skipped": len(skipped),
             "diff_files": len(diff_lines),
@@ -276,7 +257,7 @@ def _fmt_seconds(seconds: float) -> str:
 
 
 def _column(plan: dict) -> int:
-    names = list(plan["changed"]) + list(plan["affected"])
+    names = list(plan["changed"])
     width = max((len(name) for name in names), default=0)
     return min(max(width + 3, 24), 40)
 
@@ -309,15 +290,6 @@ def render_text(plan: dict) -> str:
     lines.append("")
     lines.append("Overlay changes")
     lines.append("  " + (", ".join(plan["overlay"]) if plan["overlay"] else "none"))
-
-    lines.append("")
-    lines.append("Dependency impact")
-    if plan["affected"]:
-        for name in plan["affected"]:
-            why = plan["reason"].get(name, [""])[0] if plan["reason"].get(name) else ""
-            lines.append(f"  {name:<{width}}{why}")
-    else:
-        lines.append("  none")
 
     if plan["repository"]["drift"]:
         lines.append("")
