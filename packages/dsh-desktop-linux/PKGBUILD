@@ -62,7 +62,9 @@ build() {
     local pkginfo
     pkginfo="$(bsdtar -xOf "${srcdir}/${_asset}" .PKGINFO)" || return 1
     grep -qx "pkgname = ${pkgname}" <<<"$pkginfo" || return 1
-    grep -qx "pkgver = ${pkgver}-${pkgrel}" <<<"$pkginfo" || return 1
+    # The asset embeds upstream's own pkgrel (-1, matching the "-1" in _asset),
+    # decoupled from this repository's pkgrel; verify that, not ${pkgrel}.
+    grep -qx "pkgver = ${pkgver}-1" <<<"$pkginfo" || return 1
     grep -qx "arch = ${CARCH}" <<<"$pkginfo" || return 1
 }
 

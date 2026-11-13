@@ -39,6 +39,16 @@ pkgbuild="$package_dir/PKGBUILD"
 [[ -f "$pkgbuild" ]] || { printf 'pkgrel floor: no PKGBUILD in %s\n' "$package_dir" >&2; exit 2; }
 package_name="$(basename "$package_dir")"
 
+# Repack 包（payload 是上游预构建产物，本仓库不做编译链接）可以放一个
+# .pkgrel-floor-skip 显式退出抬档：payload 里没有任何一个字节由本仓库重链，
+# 抬高 pkgrel 只会制造一次「上游没动、版本号自己变了」的发布，包内容与已发布
+# 版本逐字节相同（dsh-desktop-linux 是当前的例子，其上游资产内嵌 -1 的
+# pkgrel）。退出后同版本重建走发布闸门的 already_published WARNING，不静默。
+if [[ -f "$package_dir/.pkgrel-floor-skip" ]]; then
+    printf 'pkgrel floor: %s opts out via .pkgrel-floor-skip; nothing to align.\n' "$package_name"
+    exit 0
+fi
+
 field() { # <file> <key>; 行尾注释与空白一并去掉（quirc: `pkgrel=5  # comment`）
     awk -v key="$2" '
         index($0, key "=") == 1 {

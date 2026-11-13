@@ -164,7 +164,19 @@ grep -q '^pkgrel=6  # emoeem overlay: quirc pkgrel bump$' "$dir/PKGBUILD" \
     && ok 'the trailing comment on the pkgrel line survives the rewrite' \
     || fail "pkgrel line is now: $(grep '^pkgrel=' "$dir/PKGBUILD")"
 
-# 13. 参数与入口的失败路径。
+# 13. Repack 包显式退出抬档：payload 是上游预构建产物，抬高 pkgrel 只会制造
+#     「上游没动、版本号自己变了」的假更新（2026-11-13 push 构建里 dsh 的
+#     pkgrel 被抬到 2，而上游资产内嵌 -1）。
+dir="$(make_package repack-demo 1.0 1)"
+touch "$dir/.pkgrel-floor-skip"
+repo="$(make_repository repack-demo 1.0-1)"
+bash "$script" "$dir" --against-repository "$repo" > "$tmp/log" 2>&1
+[[ "$(pkgrel_of "$dir")" == 1 ]] && [[ "$(srcinfo_rel_of "$dir")" == 1 ]] \
+    && grep -q 'opts out via .pkgrel-floor-skip' "$tmp/log" \
+    && ok 'a .pkgrel-floor-skip package keeps its pkgrel and logs the opt-out' \
+    || fail "expected pkgrel 1 kept with an opt-out note, got $(pkgrel_of "$dir") / $(srcinfo_rel_of "$dir") / $(cat "$tmp/log")"
+
+# 14. 参数与入口的失败路径。
 if bash "$script" "$tmp/packages/quirc" --against-repository > /dev/null 2>&1; then
     fail 'expected a missing reference argument to fail'
 else

@@ -1,0 +1,4 @@
+# Repack of upstream's prebuilt Arch asset: nothing here is compiled or
+# linked locally, so raising pkgrel would only publish an identical payload
+# under a newer version. build() verifies the asset embeds ${pkgver}-1,
+# matching the "-1" hardcoded in _asset.
