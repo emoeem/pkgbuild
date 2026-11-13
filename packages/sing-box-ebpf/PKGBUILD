@@ -35,7 +35,7 @@ _commit=732618a5989cd2566f072c374fe2f619200f33f9   # verified against v1.14.4-re
 
 pkgname=sing-box-ebpf
 pkgver=1.14.4.ref1nd
-pkgrel=2
+pkgrel=3
 pkgdesc='The universal proxy platform with the experimental eBPF inbound (reF1nd fork, x86-64-v3 static build)'
 arch=('x86_64')
 url='https://github.com/reF1nd/sing-box'
