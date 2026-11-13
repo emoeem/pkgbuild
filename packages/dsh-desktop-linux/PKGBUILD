@@ -11,8 +11,9 @@
 # What this package owns is the pin: pkgver, the asset name (it embeds pkgver),
 # and sha256sums.
 #
-# Updating: bump pkgver to the upstream release tag, refresh sha256sums and the
-# asset name, regenerate .SRCINFO.
+# Updating: handled automatically by dsh-desktop-linux-update.yml every 2
+# hours (scripts/update-dsh-desktop-linux.py pins pkgver, the checksum and
+# .SRCINFO from the newest release that ships the x86_64 asset).
 
 pkgname=dsh-desktop-linux
 pkgver=0.2.2rc1

@@ -30,7 +30,7 @@ dracpanel manual static UI built from the fork source tarball; bump the tarball,
 # sha256sums, and .SRCINFO together.
 trae-cn-appimage manual upstream CDN tarball repacked into an AppImage; bump pkgver, sha256sums and .SRCINFO by hand
 # DeepSeek Harness desktop is built (patched Electron tree + pnpm) and packaged
-# by upstream's own CI; this repository repacks the published x86_64 Arch asset,
-# so a bump re-pins pkgver (it is embedded in the asset name), sha256sums and
-# .SRCINFO against a new ffyfox/dsh-desktop-linux release.
-dsh-desktop-linux manual upstream publishes the finished x86_64 Arch package as a release asset; bump pkgver, asset name, sha256sums and .SRCINFO by hand
+# by upstream's own CI; this repository repacks the published x86_64 Arch asset.
+# dsh-desktop-linux-update.yml re-pins pkgver (it is embedded in the asset
+# name), sha256sums and .SRCINFO from the newest release that ships that asset.
+dsh-desktop-linux workflow .github/workflows/dsh-desktop-linux-update.yml
