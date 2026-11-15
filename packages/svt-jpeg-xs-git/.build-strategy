@@ -1,0 +1,2 @@
+vcs
+# VCS package: makepkg pkgver() resolves the version; publish gate has the resolved-pkgver exception.

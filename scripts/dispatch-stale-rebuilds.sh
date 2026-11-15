@@ -21,6 +21,8 @@ set -Eeuo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/timing.sh
 source "${script_dir}/lib/timing.sh"
+# shellcheck source=lib/build-strategy.sh
+source "${script_dir}/lib/build-strategy.sh"
 
 stale_file="${1:-maintenance-out/stale.txt}"
 summary_file="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
@@ -41,6 +43,9 @@ verify_delay="${DISPATCH_VERIFY_DELAY:-3}"
 # again two hours later. 86400 = at most one routine (version-drift) rebuild per
 # package per day; 0 disables the cooldown entirely.
 success_cooldown="${REBUILD_SUCCESS_COOLDOWN_SECONDS:-86400}"
+
+# 判定窗口（见 load_build_state）：默认 24h 冷却 -> 25h 查询窗口。
+state_window=$(( success_cooldown > 86400 ? success_cooldown + 3600 : 90000 ))
 urgent_file="${STALE_URGENT_FILE:-}"
 
 runs_tsv="$(mktemp)"
@@ -51,9 +56,12 @@ trap 'rm -f -- "$runs_tsv" "$jobs_tsv"' EXIT
 # run_id / status / conclusion / created_epoch 写入 runs_out；
 # run_id / 包名 / job 状态 / job 结论 写入 jobs_out。
 load_build_state() {
-  local runs_out="$1" jobs_out="$2" per_page="${3:-50}"
+  # 数量上限仍在（防御分页失控）；时间过滤保证窗口完整性，两个约束取交集。
+  local runs_out="$1" jobs_out="$2" per_page="${3:-100}"
   gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?per_page=${per_page}" \
-    --jq '.workflow_runs[] | [.id, .status, (.conclusion // ""), ((.created_at | fromdateiso8601))] | @tsv' \
+    --jq '.workflow_runs[]
+          | select((.created_at | fromdateiso8601) >= (now - '"${state_window}"'))
+          | [.id, .status, (.conclusion // ""), ((.created_at | fromdateiso8601))] | @tsv' \
     > "$runs_out"
 
   : > "$jobs_out"
@@ -70,7 +78,7 @@ load_build_state() {
 
 # 只看 build.yml 且不限触发方式：push 与 workflow_dispatch 都会排队
 # "Build <pkg>" 作业，漏掉 push 会把正在重建的包再 dispatch 一遍。
-load_build_state "$runs_tsv" "$jobs_tsv" 50
+load_build_state "$runs_tsv" "$jobs_tsv" 100
 
 declare -A active_pkg=() recent_fail_pkg=() last_success_pkg=() run_ok=()
 now="$(date -u +%s)"
@@ -129,6 +137,16 @@ while IFS= read -r pkg; do
   # failed in ten seconds and nothing was ever rebuilt.
   if [[ ! -f "packages/${pkg}/PKGBUILD" ]]; then
     printf 'IGNORE %s: no such package directory; not dispatching.\n' "$pkg" |
+      tee -a "$summary_file"
+    continue
+  fi
+  # Defensive second gate (Phase 3): the detectors already refuse to enqueue
+  # binary-repack/data drift, but a stale list built by any other path must
+  # not send those packages into a rebuild that cannot change their payload.
+  strategy="$(build_strategy_of "packages/${pkg}")" || strategy=""
+  if build_strategy_defers_to_upstream "$strategy"; then
+    printf 'IGNORE %s: build strategy %s cannot be repaired by a local rebuild; the payload moves upstream.\n' \
+      "$pkg" "$strategy" |
       tee -a "$summary_file"
     continue
   fi

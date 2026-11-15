@@ -1,0 +1,2 @@
+source
+# Compiled from source (AUR mirror); rebuilds on dependency drift and soname breaks.

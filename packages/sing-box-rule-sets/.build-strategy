@@ -1,0 +1,2 @@
+data
+# Pure .srs rule-set data (arch any); checksums are owned by refresh-rule-sets.yml, not by ABI watching.

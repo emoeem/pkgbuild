@@ -1,0 +1,2 @@
+binary-repack
+# Repacks the official Electron tar.gz into an AppImage; drift waits for a new upstream release.

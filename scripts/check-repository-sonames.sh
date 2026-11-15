@@ -52,6 +52,8 @@ if [[ -z "$packages_dir" || ! -d "$packages_dir" ]]; then
 fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/build-strategy.sh
+source "${script_dir}/lib/build-strategy.sh"
 check_elf="${script_dir}/check-elf-needed.sh"
 [[ -f "$check_elf" ]] || { printf 'missing helper: %s\n' "$check_elf" >&2; exit 2; }
 
@@ -242,8 +244,17 @@ for package_file in "$published"/*.pkg.tar.zst; do
     fi
 
     if [[ -n "$missing_elf" ]]; then
-        printf '%s\n' "$directory" >> "$out_dir/stale.txt"
-        report "STALE $pkgname -> $directory: ELF NEEDED no longer provided: $missing_elf"
+        # Build strategy (Phase 3): a binary-repack/data package ships
+        # upstream's prebuilt payload, so no local rebuild can re-link it.
+        # Those become UPSTREAM notes (reported, never dispatched, never
+        # urgent); source/vcs keep the STALE path and the cooldown bypass.
+        strategy="$(build_strategy_of "${packages_dir}/${directory}")" || strategy=""
+        if ! build_strategy_defers_to_upstream "$strategy"; then
+            printf '%s\n' "$directory" >> "$out_dir/stale.txt"
+            report "STALE $pkgname -> $directory: ELF NEEDED no longer provided: $missing_elf"
+        else
+            report "UPSTREAM $pkgname -> $directory: ELF NEEDED no longer provided: $missing_elf (build strategy ${strategy:-unknown}: the payload ships upstream binaries; wait for a new upstream asset, no rebuild dispatched)"
+        fi
     else
         report "OK    $pkgname ($directory; declared soname deps: ${declared:-none}; .rebuild-on: ${declared_for_package:-none})"
     fi

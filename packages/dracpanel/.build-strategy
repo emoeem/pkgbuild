@@ -1,0 +1,2 @@
+data
+# Static web UI (arch any, prebuilt Vite dist traced by check()); not affected by system ABI changes.

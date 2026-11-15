@@ -77,6 +77,8 @@ REGISTRY_KINDS = ("manual", "workflow")
 REGISTRY_PATH = Path("config/package-updates.txt")
 REBUILD_ON_KINDS = ("soname", "package")
 SONAME = re.compile(r"^[A-Za-z0-9+._-]+\.so(\.[0-9]+)*$")
+BUILD_STRATEGIES = ("source", "binary-repack", "vcs", "data")
+PKGVER_FUNCTION = re.compile(r"^pkgver\(\)\s*\{", re.MULTILINE)
 VERSION_CONSTRAINT = re.compile(r"[<>=].*$")
 
 
@@ -251,6 +253,56 @@ def parse_rebuild_on(path, where):
     if triggers == 0:
         errors.append(f"{where}: declares no triggers")
     return sonames, packages, errors
+
+
+def check_build_strategy(package_dir, errors):
+    """Validate packages/<name>/.build-strategy: present, legal, consistent.
+
+    The strategy drives the drift dispatchers (check-dependency-drift.sh,
+    check-repository-sonames.sh, dispatch-stale-rebuilds.sh), so a missing or
+    contradictory file is an error, not a note: the fail-safe default for an
+    unknown strategy is "rebuild", which is exactly the meaningless repack
+    rebuild this classification exists to prevent.
+    """
+    rel = f"packages/{package_dir.name}"
+    path = package_dir / ".build-strategy"
+    if not path.is_file():
+        errors.append(
+            f"{rel}: .build-strategy is missing "
+            f"(one of: {', '.join(BUILD_STRATEGIES)})"
+        )
+        return None
+    value = ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            value = stripped
+            break
+    if value not in BUILD_STRATEGIES:
+        errors.append(
+            f"{rel}: .build-strategy declares '{value or '<empty>'}', "
+            f"expected one of: {', '.join(BUILD_STRATEGIES)}"
+        )
+        return None
+
+    pkgver_function = None
+    try:
+        pkgver_function = PKGVER_FUNCTION.search(
+            (package_dir / "PKGBUILD").read_text(encoding="utf-8")
+        ) is not None
+    except OSError:
+        # check_package already reports a missing PKGBUILD.
+        return value
+    if value == "vcs" and not pkgver_function:
+        errors.append(
+            f"{rel}: strategy 'vcs' requires a pkgver() function in the PKGBUILD"
+        )
+    if value == "binary-repack" and pkgver_function:
+        errors.append(
+            f"{rel}: strategy 'binary-repack' must not use pkgver() "
+            "(VCS semantics belong to the 'vcs' strategy)"
+        )
+    return value
 
 
 def check_rebuild_on(package_dir, sections, errors, notes):
@@ -519,6 +571,7 @@ def run(root):
 
     for package_dir in manifests:
         sections = check_package(root, package_dir, errors, notes)
+        check_build_strategy(package_dir, errors)
         check_update_source(root, package_dir, registry, tracked, errors, notes)
         check_rebuild_on(package_dir, sections, errors, notes)
 

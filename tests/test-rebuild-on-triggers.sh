@@ -140,6 +140,9 @@ drift_root="$tmp/drift/root"
 mkdir -p "$drift_root/scripts" "$drift_root/packages/demo" "$tmp/drift/repo/x86_64" "$tmp/drift/bin"
 cp "$root/scripts/check-dependency-drift.sh" "$drift_root/scripts/"
 cp "$lister" "$drift_root/scripts/"
+# check-dependency-drift.sh source 的共享库（Phase 1/3）也要进夹具仓。
+mkdir -p "$drift_root/scripts/lib"
+cp "$root/scripts/lib/pkgrel-policy.sh" "$root/scripts/lib/build-strategy.sh" "$drift_root/scripts/lib/"
 printf 'pkgbase = demo\n\tpkgdesc = demo\npkgname = demo\n\tdepends = tool\n' \
     > "$drift_root/packages/demo/.SRCINFO"
 cat > "$drift_root/packages/demo/.rebuild-on" <<'DECLARATIONS'

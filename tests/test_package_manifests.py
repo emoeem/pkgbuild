@@ -83,6 +83,10 @@ class ManifestLintTest(unittest.TestCase):
             SRCINFO % {"name": name} if srcinfo is None else srcinfo,
             encoding="utf-8",
         )
+        # Every package must declare a build strategy; the fixture default is
+        # "source" (the template PKGBUILD has no pkgver(), which "source"
+        # accepts). Strategy-specific tests override it below.
+        (directory / ".build-strategy").write_text("source\n", encoding="utf-8")
         if aur:
             (directory / ".aur-url").write_text(
                 f"https://aur.archlinux.org/{name}.git\n", encoding="utf-8"
@@ -110,6 +114,52 @@ class ManifestLintTest(unittest.TestCase):
         self.assertIn("ERROR", output)
         self.assertIn(fragment, output)
         self.assertRegex(output, r"SUMMARY packages=\d+ errors=[1-9]")
+
+    # -- build-strategy contract -----------------------------------------
+
+    def test_missing_build_strategy_fails(self):
+        directory = self.add_package("strategyless")
+        (directory / ".build-strategy").unlink()
+        code, output = self.lint()
+        self.assert_error(code, output, ".build-strategy is missing")
+
+    def test_unknown_build_strategy_fails(self):
+        directory = self.add_package("weird")
+        (directory / ".build-strategy").write_text("sometimes\n", encoding="utf-8")
+        code, output = self.lint()
+        self.assert_error(
+            code, output, "declares 'sometimes', expected one of"
+        )
+
+    def test_vcs_strategy_requires_pkgver_function(self):
+        directory = self.add_package("fakevcs")
+        (directory / ".build-strategy").write_text("vcs\n", encoding="utf-8")
+        code, output = self.lint()
+        self.assert_error(
+            code, output, "strategy 'vcs' requires a pkgver() function"
+        )
+
+    def test_binary_repack_rejects_pkgver_function(self):
+        directory = self.add_package(
+            "badvcs",
+            pkgbuild=PKGBUILD % {"name": "badvcs"}
+            + "\npkgver() {\n  printf '1.2.3.r1.gdeadbeef\\n'\n}\n",
+        )
+        (directory / ".build-strategy").write_text("binary-repack\n", encoding="utf-8")
+        code, output = self.lint()
+        self.assert_error(
+            code, output, "strategy 'binary-repack' must not use pkgver()"
+        )
+
+    def test_vcs_strategy_with_pkgver_function_passes(self):
+        directory = self.add_package(
+            "realvcs",
+            pkgbuild=PKGBUILD % {"name": "realvcs"}
+            + "\npkgver() {\n  printf '1.2.3.r1.gdeadbeef\\n'\n}\n",
+        )
+        (directory / ".build-strategy").write_text("vcs\n", encoding="utf-8")
+        code, output = self.lint()
+        self.assertEqual(code, 0, output)
 
     # -- update-source contract ------------------------------------------
 

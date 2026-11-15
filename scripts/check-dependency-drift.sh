@@ -6,6 +6,10 @@ set -Eeuo pipefail
 # turns the check into a no-op instead of failing loudly.
 export LC_ALL=C
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/build-strategy.sh
+source "${script_dir}/lib/build-strategy.sh"
+
 repo_dir="${1:-}"
 root="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 [[ -d "$repo_dir" ]] || { echo "usage: $0 <published-repo-dir> [repo-root] [stale-file]" >&2; exit 2; }
@@ -78,6 +82,10 @@ current_version() { # <name>; prints the repository's <version>-<pkgrel>
 
 # Compare one dependency against what the published build recorded.
 #   0 = the versions disagree (stale), 1 = in sync or pkgrel-only, 2 = not resolvable here.
+# A binary-repack/data package suppresses the STALE outcome: its payload is
+# upstream's prebuilt artifact, so a local rebuild cannot re-link anything and
+# the drift is downgraded to a NOTE (the soname detector reports the same
+# class as UPSTREAM). The caller sets suppress_stale/strategy per package.
 check_dep() { # <buildinfo> <package-name> <dependency> <label>
     local buildinfo="$1" name="$2" dep="$3" label="$4" old new old_ver new_ver
     old="$(recorded_version "$buildinfo" "$dep")"
@@ -96,6 +104,12 @@ check_dep() { # <buildinfo> <package-name> <dependency> <label>
             pkgrel_only=$((pkgrel_only + 1))
             printf 'NOTE %s: %s %s rebuilt %s -> %s (pkgrel only; not a rebuild trigger)\n' \
                 "$name" "$label" "$dep" "$old" "$new"
+            return 1
+        fi
+        if (( suppress_stale )); then
+            repack_only=$((repack_only + 1))
+            printf 'NOTE %s: %s %s changed %s -> %s (build strategy %s; the payload moves upstream, a local rebuild cannot repair it)\n' \
+                "$name" "$label" "$dep" "$old" "$new" "$strategy"
             return 1
         fi
         stale=$((stale + 1))
@@ -123,12 +137,11 @@ packages=0
 compared=0
 stale=0
 pkgrel_only=0
+repack_only=0
 unresolved_count=0
-
-packages=0
-compared=0
-unresolved=0
-stale=0
+# Per-package loop state consumed by check_dep().
+suppress_stale=0
+strategy=""
 
 for pkg in "$repo_dir"/*.pkg.tar.zst; do
     [[ -e "$pkg" ]] || continue
@@ -137,6 +150,15 @@ for pkg in "$repo_dir"/*.pkg.tar.zst; do
     src="${root}/packages/${name}/.SRCINFO"
     [[ -f "$src" ]] || { rm -f "$buildinfo"; continue; }
     packages=$((packages + 1))
+
+    # Build strategy (Phase 3): binary-repack/data packages cannot be repaired
+    # by a local rebuild, so their version drift becomes a NOTE below. An
+    # unreadable or unknown strategy keeps the fail-safe STALE behaviour.
+    suppress_stale=0
+    strategy=""
+    if strategy="$(build_strategy_of "${root}/packages/${name}")"; then
+        build_strategy_defers_to_upstream "$strategy" && suppress_stale=1
+    fi
 
     declared=()
     if [[ -f "$list_triggers" ]]; then
@@ -180,8 +202,8 @@ done
 # nothing to report, because "the detector crashed" and "there really is no
 # drift" are otherwise indistinguishable in the log -- which is exactly how the
 # openvino SONAME drift stayed invisible.
-printf 'SUMMARY packages=%d compared=%d stale=%d pkgrel_only=%d unresolved=%d\n' \
-    "$packages" "$compared" "$stale" "$pkgrel_only" "$unresolved_count"
+printf 'SUMMARY packages=%d compared=%d stale=%d pkgrel_only=%d repack_only=%d unresolved=%d\n' \
+    "$packages" "$compared" "$stale" "$pkgrel_only" "$repack_only" "$unresolved_count"
 
 if (( compared == 0 )); then
     printf 'Nothing could be compared: the pacman databases are probably not synced (run pacman -Syu first) or no published package records dependency versions.\n' >&2

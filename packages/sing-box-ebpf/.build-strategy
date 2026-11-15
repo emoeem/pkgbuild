@@ -1,0 +1,2 @@
+source
+# Go source build from the pinned reF1nd tag (CGO_ENABLED=0); rebuilds on drift like any source package.
