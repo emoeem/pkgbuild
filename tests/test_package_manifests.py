@@ -161,6 +161,26 @@ class ManifestLintTest(unittest.TestCase):
         code, output = self.lint()
         self.assertEqual(code, 0, output)
 
+    def test_untracked_build_strategy_fails(self):
+        # The real-world failure mode (2026-11-15): quirc's "*" gitignore
+        # whitelist swallowed .build-strategy, so it existed locally, the
+        # linter was green, and every CI checkout was missing the file.
+        self.add_package("ghoststrategy")
+        for command in (
+            ["git", "init", "-q"],
+            ["git", "config", "user.email", "fixture@example.com"],
+            ["git", "config", "user.name", "fixture"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-qm", "fixture"],
+            ["git", "rm", "-q", "--cached", "packages/ghoststrategy/.build-strategy"],
+        ):
+            subprocess.run(
+                command, cwd=self.tmp, check=True, capture_output=True,
+                env=git_environment(),
+            )
+        code, output = self.lint()
+        self.assert_error(code, output, "not tracked by git")
+
     # -- update-source contract ------------------------------------------
 
     def test_clean_tree_passes(self):

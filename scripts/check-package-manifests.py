@@ -255,7 +255,7 @@ def parse_rebuild_on(path, where):
     return sonames, packages, errors
 
 
-def check_build_strategy(package_dir, errors):
+def check_build_strategy(package_dir, tracked, errors):
     """Validate packages/<name>/.build-strategy: present, legal, consistent.
 
     The strategy drives the drift dispatchers (check-dependency-drift.sh,
@@ -284,6 +284,18 @@ def check_build_strategy(package_dir, errors):
             f"expected one of: {', '.join(BUILD_STRATEGIES)}"
         )
         return None
+
+    # The file existing on disk is not enough: package .gitignore whitelists
+    # ("*" + allowlist) silently swallow new dotfiles -- the same class of gap
+    # that hid .aur-url/.aur-commit from git for two packages in 2026-10. A
+    # locally present but untracked strategy file is invisible to every CI
+    # checkout, where the fail-safe direction then rebuilds a repack package.
+    rel_file = f"{rel}/.build-strategy"
+    if tracked is not None and rel_file not in tracked:
+        errors.append(
+            f"{rel}: .build-strategy is present locally but not tracked by git "
+            "(add it to the package's .gitignore whitelist)"
+        )
 
     pkgver_function = None
     try:
@@ -571,7 +583,7 @@ def run(root):
 
     for package_dir in manifests:
         sections = check_package(root, package_dir, errors, notes)
-        check_build_strategy(package_dir, errors)
+        check_build_strategy(package_dir, tracked, errors)
         check_update_source(root, package_dir, registry, tracked, errors, notes)
         check_rebuild_on(package_dir, sections, errors, notes)
 
