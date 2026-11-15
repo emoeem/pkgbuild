@@ -164,16 +164,27 @@ jobs:
           version_stale="$(grep -c '^STALE ' drift/version/report.txt || true)"
           soname_stale="$(grep -c '^STALE ' drift/soname/report.txt || true)"
           orphans="$(grep -c '^ORPHAN ' drift/soname/report.txt || true)"
+          # Phase 3：repack/data 包的断裂走 UPSTREAM 标签（等上游资产，不
+          # dispatch）。它们不进 stale 列表，但必须出现在汇总里——"没有任何
+          # 发现"与"有断裂但在等上游"在日志上必须可区分。
+          upstream_only="$(grep -c '^UPSTREAM ' drift/soname/report.txt || true)"
           pkgrel_only="$(grep -o 'pkgrel_only=[0-9]*' drift/version/report.txt | head -1 | cut -d= -f2 || true)"
+          repack_only="$(grep -o 'repack_only=[0-9]*' drift/version/report.txt | head -1 | cut -d= -f2 || true)"
           {
             printf '### ABI watch\n\n'
             printf '| check | findings |\n| --- | --- |\n'
             printf '| dependency version drift | %s |\n' "$version_stale"
             printf '| dependency pkgrel-only (reported, no rebuild) | %s |\n' "${pkgrel_only:-0}"
+            printf '| dependency drift on repack/data builds (reported, waits for upstream) | %s |\n' "${repack_only:-0}"
             printf '| soname drift | %s |\n' "$soname_stale"
+            printf '| soname drift on repack/data builds (waits for upstream) | %s |\n' "$upstream_only"
             printf '| orphan published packages | %s |\n' "$orphans"
             printf '\nPackages needing a rebuild: %s\n' \
               "$(paste -sd, maintenance-out/stale.txt || true)"
+            if (( upstream_only > 0 )); then
+              printf '\nWaiting for upstream (no rebuild dispatched):\n\n'
+              grep '^UPSTREAM ' drift/soname/report.txt | sed 's/^/  /'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
           cat maintenance-out/stale.txt
 
@@ -198,6 +209,11 @@ jobs:
         run: |
           set -Eeuo pipefail
           title='ABI watch: published packages need a rebuild'
+          # Phase 5：repack/data 包的断裂走 UPSTREAM（等上游资产，本仓库无法
+          # 重建修复）。它们不是待办，但「有断裂在等上游」与「真的全部一致」
+          # 必须可区分：UPSTREAM 非空时既有 issue 不许被关成「已一致」，
+          # 已 dispatch 的轮次把等待清单附在 issue 里。
+          upstream_list="$(grep '^UPSTREAM ' drift/soname/report.txt 2>/dev/null || true)"
           number="$(
             gh issue list --repo "$GITHUB_REPOSITORY" --state open \
               --search "in:title \"$title\"" \
@@ -211,6 +227,10 @@ jobs:
                 printf '\n仍在成功冷却期内、暂未重建：\n\n'
                 printf '%s\n' "$DEFERRED" | tr ',' '\n' | sed 's/^/- /'
               fi
+              if [[ -n "$upstream_list" ]]; then
+                printf '\n以下为 repack/数据包，断裂等上游资产修复，本仓库无法重建（不 dispatch）：\n\n'
+                printf '%s\n' "$upstream_list" | sed 's/^/- /'
+              fi
             )"
             if [[ -n "$number" ]]; then
               gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
@@ -221,6 +241,11 @@ jobs:
             # 漂移仍然存在，只是被成功冷却挡住了：不能关成「已一致」。
             printf 'Drift still reported for %s; rebuild deferred by the success cooldown.\n' \
               "$DEFERRED" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ -n "$upstream_list" ]]; then
+            # 没有 STALE/DEFERRED 但有 repack/data 包在等上游：不是「已一致」，
+            # issue 保持打开（不打扰、不误关）；summary 已逐行列出等待清单。
+            printf 'No rebuild is dispatchable, but %s repack/data package(s) still wait for upstream assets:\n%s\n' \
+              "$(wc -l <<<"$upstream_list")" "$upstream_list" >> "$GITHUB_STEP_SUMMARY"
           elif [[ -n "$number" ]]; then
             gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
               --comment '所有已发布包与当前仓库的依赖 / SONAME 一致。'
