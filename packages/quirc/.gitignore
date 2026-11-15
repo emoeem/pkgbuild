@@ -6,5 +6,6 @@
 !.aur-commit
 
 !.nvchecker.toml
+!.build-strategy
 
 !.namcap-ignore

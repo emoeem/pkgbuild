@@ -1,0 +1,2 @@
+binary-repack
+# Installs upstream CI prebuilt binaries (no source build possible, see PKGBUILD); drift waits for a new upstream artifact.
