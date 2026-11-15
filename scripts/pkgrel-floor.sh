@@ -25,6 +25,12 @@
 #   LOCAL_REPO_DIR=/localrepo pkgrel-floor.sh packages/foo --against-repository /localrepo
 set -Eeuo pipefail
 
+# pkgrel 的解析 / 比较 / 递增 / 写回统一走共享策略库；本脚本只保留两种对齐
+# 模式（AUR 基线、已发布仓库下限）各自的判据。
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/pkgrel-policy.sh
+source "${script_dir}/lib/pkgrel-policy.sh"
+
 usage() {
     printf 'usage: %s <package-dir> --against-pkgbuild <PKGBUILD> | --against-repository <repo-dir>\n' "$0" >&2
     exit 2
@@ -44,72 +50,15 @@ package_name="$(basename "$package_dir")"
 # 抬高 pkgrel 只会制造一次「上游没动、版本号自己变了」的发布，包内容与已发布
 # 版本逐字节相同（dsh-desktop-linux 是当前的例子，其上游资产内嵌 -1 的
 # pkgrel）。退出后同版本重建走发布闸门的 already_published WARNING，不静默。
-if [[ -f "$package_dir/.pkgrel-floor-skip" ]]; then
+# prepare-build-source.sh（ABI 重建入口）与 auto-repair.sh 识别同一个标记。
+if pkgrel_policy_skip "$package_dir"; then
     printf 'pkgrel floor: %s opts out via .pkgrel-floor-skip; nothing to align.\n' "$package_name"
     exit 0
 fi
 
-field() { # <file> <key>; 行尾注释与空白一并去掉（quirc: `pkgrel=5  # comment`）
-    awk -v key="$2" '
-        index($0, key "=") == 1 {
-            value = substr($0, length(key) + 2)
-            sub(/#.*/, "", value)
-            gsub(/[[:space:]]/, "", value)
-            print value
-            exit
-        }' "$1"
-}
-
-# 点分段按整数比较，不是浮点也不是字典序：2.10 比 2.9 新，2.11 比 2.6 新。
-# 出现非数字段时返回 1（判不了），由调用方决定是放行还是拒绝。
-dotted_cmp() { # <a> <b>; 输出 -1 / 0 / 1
-    local a="$1" b="$2" i max x y
-    local -a av bv
-    IFS='.' read -r -a av <<< "$a"
-    IFS='.' read -r -a bv <<< "$b"
-    max=${#av[@]}
-    (( ${#bv[@]} > max )) && max=${#bv[@]}
-    for ((i = 0; i < max; i++)); do
-        x="${av[i]:-0}"
-        y="${bv[i]:-0}"
-        [[ "$x" =~ ^[0-9]+$ && "$y" =~ ^[0-9]+$ ]] || return 1
-        if (( 10#$x > 10#$y )); then printf '%s\n' 1; return 0; fi
-        if (( 10#$x < 10#$y )); then printf '%s\n' -1; return 0; fi
-    done
-    printf '%s\n' 0
-}
-
-# 抬高一档并保持段数：2.11 → 2.12、3 → 4。
-next_pkgrel() { # <rel>
-    local rel="$1" head="" last
-    if [[ "$rel" == *.* ]]; then
-        head="${rel%.*}."
-        last="${rel##*.}"
-    else
-        last="$rel"
-    fi
-    [[ "$last" =~ ^[0-9]+$ ]] || return 1
-    printf '%s%d' "$head" "$((10#$last + 1))"
-}
-
-apply_pkgrel() { # <new-rel>
-    local new_rel="$1"
-    sed -i -E "s/^pkgrel=[0-9]+(\.[0-9]+)*/pkgrel=${new_rel}/" "$pkgbuild"
-    # .SRCINFO 与 PKGBUILD 必须同源：构建流程后面会 diff 两者，只改一个会在
-    # makepkg 之前就报 "SRCINFO mismatch"。pkgrel 只是一个标量字段（split
-    # package 的 .SRCINFO 也只在 pkgbase 段写一次），按行替换与 makepkg
-    # --printsrcinfo 的结果等价，而且不依赖 makepkg 是否在 PATH 里（测试与
-    # 没有 pacman 的同步 runner 都能跑）。
-    if [[ -f "$package_dir/.SRCINFO" ]]; then
-        sed -i -E "s/^([[:space:]]*)pkgrel([[:space:]]*)=.*/\1pkgrel\2= ${new_rel}/" "$package_dir/.SRCINFO"
-    elif command -v makepkg > /dev/null 2>&1; then
-        ( cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO )
-    fi
-}
-
-pkgver="$(field "$pkgbuild" pkgver)"
-pkgrel="$(field "$pkgbuild" pkgrel)"
-epoch="$(field "$pkgbuild" epoch)"
+pkgver="$(pkgrel_policy_field "$pkgbuild" pkgver)"
+pkgrel="$(pkgrel_policy_field "$pkgbuild" pkgrel)"
+epoch="$(pkgrel_policy_field "$pkgbuild" epoch)"
 [[ -n "$pkgver" && -n "$pkgrel" ]] || {
     printf 'pkgrel floor: %s has no parseable pkgver/pkgrel\n' "$package_name" >&2
     exit 2
@@ -129,9 +78,9 @@ fi
 case "$mode" in
     --against-pkgbuild)
         [[ -f "$reference" ]] || { printf 'pkgrel floor: no reference PKGBUILD %s\n' "$reference" >&2; exit 2; }
-        reference_ver="$(field "$reference" pkgver)"
-        reference_rel="$(field "$reference" pkgrel)"
-        reference_epoch="$(field "$reference" epoch)"
+        reference_ver="$(pkgrel_policy_field "$reference" pkgver)"
+        reference_rel="$(pkgrel_policy_field "$reference" pkgrel)"
+        reference_epoch="$(pkgrel_policy_field "$reference" epoch)"
         if [[ -n "$reference_epoch" && "$reference_epoch" != 0 ]]; then
             exit 0
         fi
@@ -139,11 +88,11 @@ case "$mode" in
         # 不保留本地的子版本号。
         [[ "$reference_ver" == "$pkgver" ]] || exit 0
         [[ -n "$reference_rel" ]] || exit 0
-        comparison="$(dotted_cmp "$pkgrel" "$reference_rel")" || exit 0
+        comparison="$(pkgrel_policy_cmp "$pkgrel" "$reference_rel")" || exit 0
         [[ "$comparison" == -1 ]] || exit 0
         # 取高值，不是 +1：同步只是把上游的基线拿回来，本地已经走到 2.12 就
         # 停在 2.12；每同步一次涨一档会让版本号无意义地膨胀。
-        apply_pkgrel "$reference_rel"
+        pkgrel_policy_apply "$package_dir" "$reference_rel"
         printf 'pkgrel floor: %s keeps pkgrel %s instead of the upstream %s.\n' \
             "$package_name" "$reference_rel" "$pkgrel"
         ;;
@@ -170,7 +119,7 @@ case "$mode" in
         published_ver="${published_version%-*}"
         published_rel="${published_version##*-}"
         if [[ "$published_ver" != "$pkgver" ]]; then
-            comparison="$(dotted_cmp "$pkgver" "$published_ver")" || comparison=""
+            comparison="$(pkgrel_policy_cmp "$pkgver" "$published_ver")" || comparison=""
             if [[ "$comparison" == -1 ]]; then
                 printf 'pkgrel floor: repository publishes %s %s, which is newer than the source %s; refusing to build a downgrade\n' \
                     "$package_name" "$published_version" "$pkgver" >&2
@@ -180,7 +129,7 @@ case "$mode" in
                 "$package_name" "$published_ver" "$pkgver"
             exit 0
         fi
-        comparison="$(dotted_cmp "$pkgrel" "$published_rel")" || {
+        comparison="$(pkgrel_policy_cmp "$pkgrel" "$published_rel")" || {
             printf 'pkgrel floor: cannot compare pkgrel %s with published %s for %s; leaving it to vercmp.\n' \
                 "$pkgrel" "$published_rel" "$package_name"
             exit 0
@@ -190,12 +139,12 @@ case "$mode" in
                 "$package_name" "$pkgver" "$pkgrel" "$published_version"
             exit 0
         }
-        new_rel="$(next_pkgrel "$published_rel")" || {
+        new_rel="$(pkgrel_policy_next "$published_rel")" || {
             printf 'pkgrel floor: cannot raise pkgrel %s over the published %s for %s\n' \
                 "$pkgrel" "$published_rel" "$package_name" >&2
             exit 1
         }
-        apply_pkgrel "$new_rel"
+        pkgrel_policy_apply "$package_dir" "$new_rel"
         printf 'pkgrel floor: %s bumps pkgrel %s -> %s so the build is strictly newer than the published %s.\n' \
             "$package_name" "$pkgrel" "$new_rel" "$published_version"
         ;;

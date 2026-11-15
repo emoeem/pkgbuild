@@ -9,31 +9,15 @@
 set -Eeuo pipefail
 export LC_ALL=C
 
+# pkgrel 比较 / 解析统一走共享策略库；回写只允许前进的方向语义在下面保留。
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/pkgrel-policy.sh
+source "${script_dir}/lib/pkgrel-policy.sh"
+
 incoming="${1:?usage: write-back-pkgrel.sh <incoming-packages-dir> <repo-root>}"
 root="${2:?usage: write-back-pkgrel.sh <incoming-packages-dir> <repo-root>}"
 [[ -d "$incoming" ]] || { printf 'missing incoming dir: %s\n' "$incoming" >&2; exit 2; }
 [[ -d "$root/.git" ]] || { printf 'not a git repository: %s\n' "$root" >&2; exit 2; }
-
-# pkgrel 可以是小数（2.6、2.10），按整数逐段比较；非数字段返回 1（不判）。
-# 回写只允许前进：构建产物的 pkgrel 落后或等于源码树时必须原地不动，否则
-# 一次同版本重发会把已经抬高的源码 pkgrel 拉回去（ffmpeg-full 的 2.6/2.7
-# 事故就是回写方向错了）。
-pkgrel_at_most() { # <candidate> <baseline>; 0 = candidate <= baseline
-    local a="$1" b="$2" i max x y
-    local -a av bv
-    IFS='.' read -r -a av <<< "$a"
-    IFS='.' read -r -a bv <<< "$b"
-    max=${#av[@]}
-    (( ${#bv[@]} > max )) && max=${#bv[@]}
-    for ((i = 0; i < max; i++)); do
-        x="${av[i]:-0}"
-        y="${bv[i]:-0}"
-        [[ "$x" =~ ^[0-9]+$ && "$y" =~ ^[0-9]+$ ]] || return 1
-        (( 10#$x < 10#$y )) && return 0
-        (( 10#$x > 10#$y )) && return 1
-    done
-    return 0
-}
 
 declare -A dir_of=()
 for srcinfo in "$root"/packages/*/.SRCINFO; do
@@ -80,9 +64,11 @@ for package_file in "$incoming"/*/*.pkg.tar.zst; do
     srcinfo="$root/packages/$directory/.SRCINFO"
 
     # pkgver 也变了说明源码树已经走到更新的上游，pkgrel 以源码树为准；
-    # 只有"同 pkgver、构建副本里 bump 过 pkgrel"才需要回写。
-    src_ver="$(awk -F= '/^pkgver=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$pkgbuild")"
-    src_rel="$(awk -F= '/^pkgrel=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$pkgbuild")"
+    # 只有"同 pkgver、构建副本里 bump 过 pkgrel"才需要回写。解析统一走共享
+    # 库（含行尾注释剥离：quirc 的 `pkgrel=5  # ...` 在旧实现下会变成带注释
+    # 尾巴的字符串，永远匹配不上构建产物，回写被静默跳过）。
+    src_ver="$(pkgrel_policy_field "$pkgbuild" pkgver)"
+    src_rel="$(pkgrel_policy_field "$pkgbuild" pkgrel)"
     if [[ "$src_ver" != "$built_ver" ]]; then
         printf 'SKIP %s: source pkgver %s already differs from built %s\n' \
             "$directory" "$src_ver" "$built_ver" >&2
@@ -91,12 +77,14 @@ for package_file in "$incoming"/*/*.pkg.tar.zst; do
     if [[ "$src_rel" == "$built_rel" ]]; then
         continue
     fi
-    if pkgrel_at_most "$built_rel" "$src_rel"; then
+    if pkgrel_policy_at_most "$built_rel" "$src_rel"; then
         printf 'SKIP %s: built pkgrel %s is not newer than source %s\n' \
             "$directory" "$built_rel" "$src_rel" >&2
         continue
     fi
-    sed -i -E "s/^pkgrel=.*/pkgrel=${built_rel}/" "$pkgbuild"
+    # 只替换数字、保留行尾注释：与 pkgrel-policy.sh 的 apply 同一政策
+    # （quirc 的 `pkgrel=6  # emoeem overlay: ...` 是本地定制的文档）。
+    sed -i -E "s/^pkgrel=[0-9]+(\.[0-9]+)*/pkgrel=${built_rel}/" "$pkgbuild"
     sed -i -E "s/^(\tpkgrel = ).*/\1${built_rel}/" "$srcinfo"
     bumped_rel["$directory"]="$built_rel"
     printf 'WROTE BACK %s: pkgrel %s -> %s\n' "$directory" "$src_rel" "$built_rel"

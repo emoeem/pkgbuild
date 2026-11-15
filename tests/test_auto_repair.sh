@@ -129,6 +129,27 @@ bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname.json"
 grep -q '"status": "blocked-by-level"' "$work/record.json" ||
     fail 'level 3 SONAME repair was not blocked at AUTO_FIX_LEVEL=2'
 
+printf '%s\n' '6c: a .pkgrel-floor-skip package is never bumped for dependency drift'
+# Repack 包的显式退出标记与 pkgrel-floor.sh / prepare-build-source.sh 是同一
+# 判据（scripts/lib/pkgrel-policy.sh）：payload 是上游预构建产物，bump 只会
+# 发布一次逐字节相同的假升级。策略必须改判 report-only 并保持文件原样，即使
+# AUTO_FIX_LEVEL 足够高、--apply 在场。
+make_fixture "$fixture"
+touch "$fixture/packages/demo/.pkgrel-floor-skip"
+pkgb_before="$(cat "$fixture/packages/demo/PKGBUILD")"
+src_before="$(cat "$fixture/packages/demo/.SRCINFO")"
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/soname.json" \
+    --root "$fixture" --level 3 --apply --json --out "$work/record.json" >/dev/null ||
+    fail 'skip-package soname repair exited non-zero'
+grep -q '"status": "report-only"' "$work/record.json" ||
+    fail 'the skip marker did not divert the soname repair to report-only'
+grep -q 'opts out of pkgrel bumps via .pkgrel-floor-skip' "$work/record.json" ||
+    fail 'the report-only record does not explain the repack semantics'
+[[ "$(cat "$fixture/packages/demo/PKGBUILD")" == "$pkgb_before" ]] ||
+    fail 'a report-only repair modified the PKGBUILD of a skip package'
+[[ "$(cat "$fixture/packages/demo/.SRCINFO")" == "$src_before" ]] ||
+    fail 'a report-only repair modified the .SRCINFO of a skip package'
+
 printf '%s\n' '7/8: a stale repository-managed pin is handed to its update workflow'
 make_fixture "$fixture"
 mkdir -p "$fixture/config"

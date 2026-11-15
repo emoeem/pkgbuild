@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# pkgrel 比较 / 递增统一走共享策略库（pkgrel-floor.sh、prepare-build-source.sh、
+# auto-repair.sh、write-back-pkgrel.sh 同源）；本脚本保留的 base_is_newer 是
+# pkgver 的 base 比较，与 pkgrel 无关，不属于这个库。
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/pkgrel-policy.sh
+source "${script_dir}/lib/pkgrel-policy.sh"
+
 incoming="${1:-/incoming}"
-root="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+root="${2:-$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 # 已发布仓库目录（x86_64 包所在目录）。给了它就会额外检查「这次发布是不是
 # 真的能让已安装的机器升上去」；没给就不检查，保持脚本可单独使用。
 published="${3:-}"
@@ -28,26 +35,6 @@ published_version() { # <pkgname>; 已发布版本（该包还没发布过时为
     done
 }
 
-# pkgrel 可以是小数形式（2.6、2.10），不能当浮点比较：逐段按整数比。出现
-# 非数字段时返回 1（不判），把方向交给 pacman 的 vercmp 语义，宁可漏拦也不能
-# 误拦一次正常的发布。
-pkgrel_at_most() { # <incoming> <published>; 0 = incoming <= published
-    local a="$1" b="$2" i max x y
-    local -a av bv
-    IFS='.' read -r -a av <<< "$a"
-    IFS='.' read -r -a bv <<< "$b"
-    max=${#av[@]}
-    (( ${#bv[@]} > max )) && max=${#bv[@]}
-    for ((i = 0; i < max; i++)); do
-        x="${av[i]:-0}"
-        y="${bv[i]:-0}"
-        [[ "$x" =~ ^[0-9]+$ && "$y" =~ ^[0-9]+$ ]] || return 1
-        (( 10#$x < 10#$y )) && return 0
-        (( 10#$x > 10#$y )) && return 1
-    done
-    return 0
-}
-
 # base 是纯点分数字段时回答「candidate 是否严格大于 baseline」（vercmp 方向）：
 # 逐段按整数比，段数不足补 0；相等不算前进。scx-scheds-git 那类上游跨 base
 # 发布（源码树 1.1.3.r522，构建解析出 1.1.4.r5）用它判方向。
@@ -70,15 +57,8 @@ base_is_newer() { # <candidate> <baseline>; 0 = candidate > baseline
 # BUMP_PKGREL 构建把 pkgrel 的 +1 做在构建副本里（prepare-build-source.sh），
 # 产物比源码树正好高一档：整数 5→6、小数 2.6→2.7。发布校验必须放行这种
 # 「有意的版本前进」，否则 ABI 重建永远过不了闸门；源码树的回写由发布
-# 之后的 write-back 步骤（或提交的 pkgrel 更新）负责。
-next_pkgrel() {
-    local rel="$1"
-    if [[ "$rel" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
-        printf '%s.%d' "${BASH_REMATCH[1]}" "$((BASH_REMATCH[2] + 1))"
-    elif [[ "$rel" =~ ^[0-9]+$ ]]; then
-        printf '%d' "$((rel + 1))"
-    fi
-}
+# 之后的 write-back 步骤（或提交的 pkgrel 更新）负责。递增规则与
+# prepare-build-source.sh 同源：pkgrel_policy_next，形状不支持时输出为空。
 
 for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
     [[ -f "$pkg" ]] || continue
@@ -120,7 +100,7 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
             && "${actual_rest%-*}" == "${published_rest%-*}" ]]; then
             if [[ "$actual_rest" == "$published_rest" ]]; then
                 already_published=yes
-            elif pkgrel_at_most "${actual_rest##*-}" "${published_rest##*-}"; then
+            elif pkgrel_policy_at_most "${actual_rest##*-}" "${published_rest##*-}"; then
                 behind_published=yes
             fi
         fi
@@ -192,7 +172,9 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
             printf 'Accepted resolved git pkgver for %s: %s (template=%s)\n' "$name" "$actual" "$expected"
             continue
         fi
-        bumped_rel="$(next_pkgrel "$pkgrel")"
+        # pkgrel_policy_next 对不支持的形状返回 1 且输出为空；这里沿用旧语义
+        # （空值 → 后面 -n 检查失败），set -e 环境必须显式吞掉非零返回。
+        bumped_rel="$(pkgrel_policy_next "$pkgrel")" || bumped_rel=""
         if [[ -n "$bumped_rel" && "$actual" == "${expected%-*}-${bumped_rel}" ]]; then
             # bump 之后的版本如果撞上（或落后于）已发布版本，这次 bump 根本
             # 没有前进：发布出去客户端也升不上去，只能先让源码树追上仓库。
@@ -228,7 +210,7 @@ for pkg in "$incoming"/*/*.pkg.tar.zst "$incoming"/*.pkg.tar.zst; do
         expected_rel="${expected##*-}"
         if [[ "$actual_ver" == "$expected_ver" \
             && "$already_published" == no && "$behind_published" == no ]] \
-            && pkgrel_at_most "$expected_rel" "$actual_rel"; then
+            && pkgrel_policy_at_most "$expected_rel" "$actual_rel"; then
             printf 'Accepted repository-aligned pkgrel for %s: %s (source=%s)\n' \
                 "$name" "$actual" "$expected"
             continue

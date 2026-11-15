@@ -52,6 +52,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly script_dir
 # shellcheck source=scripts/lib/transaction.sh
 source "${script_dir}/lib/transaction.sh"
+# shellcheck source=scripts/lib/pkgrel-policy.sh
+source "${script_dir}/lib/pkgrel-policy.sh"
 
 package_name=""
 failure_file=""
@@ -322,9 +324,19 @@ case "$category" in
         esac
         ;;
     SONAMEError | RuntimeDependencyError)
-        strategy="bump_pkgrel"
-        strategy_level=3
-        strategy_reason="dependency SONAME/ABI drift: the package must be rebuilt against the new provider"
+        # Repack 包（.pkgrel-floor-skip）的 payload 是上游预构建产物，本仓库
+        # 不做编译链接：bump pkgrel 修复不了任何 ABI 断裂，只会发布一次
+        # 「上游没动、版本号自己变了」的假升级。prepare-build-source.sh 与
+        # pkgrel-floor.sh 认的是同一个标记（scripts/lib/pkgrel-policy.sh 是
+        # 唯一判据），这里保持 report-only，让人决定是等上游资产还是做本地
+        # 兼容修复。
+        if pkgrel_policy_skip "$package_dir"; then
+            strategy_reason="the package opts out of pkgrel bumps via .pkgrel-floor-skip: its payload is upstream's prebuilt artifact, so a local rebuild cannot repair the dependency drift"
+        else
+            strategy="bump_pkgrel"
+            strategy_level=3
+            strategy_reason="dependency SONAME/ABI drift: the package must be rebuilt against the new provider"
+        fi
         ;;
     CacheError)
         strategy="clear_cache"
@@ -617,18 +629,27 @@ PY
             detail="refreshed source checksums and regenerated .SRCINFO"
             ;;
         bump_pkgrel)
-            local current next
-            current="$(awk -F= '/^pkgrel=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "$package_dir/PKGBUILD")"
-            if [[ "$current" =~ ^([0-9]+)$ ]]; then
-                next="$(( BASH_REMATCH[1] + 1 ))"
-            elif [[ "$current" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
-                next="${BASH_REMATCH[1]}.$(( BASH_REMATCH[2] + 1 ))"
-            else
-                printf 'cannot bump unsupported pkgrel: %s\n' "$current" >&2
+            # 双保险：策略选择处已把 skip 包改判 report-only，这条防线不依赖
+            # 调用方记得检查——apply 层是最后一道，直接拒绝。
+            if pkgrel_policy_skip "$package_dir"; then
+                printf '%s opts out via .pkgrel-floor-skip; refusing to bump\n' "$package_name" >&2
                 return 1
             fi
-            sed -i -E "s/^pkgrel=.*/pkgrel=$next/" "$package_dir/PKGBUILD"
-            (cd "$package_dir" && makepkg --printsrcinfo >.SRCINFO) || return 1
+            local current next
+            current="$(pkgrel_policy_parse "$package_dir/PKGBUILD")"
+            next="$(pkgrel_policy_next "$current")" || {
+                printf 'cannot bump unsupported pkgrel: %s\n' "$current" >&2
+                return 1
+            }
+            pkgrel_policy_apply "$package_dir" "$next" || return 1
+            # run_validation 以 makepkg --printsrcinfo 的全量输出为准：上面的
+            # 行替换只保证 pkgrel 一致，.SRCINFO 里其它 stale 字段会把这次修
+            # 复卡死在 validation 上。makepkg 在场就全量重生成一次，让
+            # bump_pkgrel 只承担 pkgrel 的语义；makepkg 缺失时（CI runner）
+            # validation 本来就跳过 .SRCINFO 比对，行替换足够。
+            if command -v makepkg > /dev/null 2>&1; then
+                ( cd "$package_dir" && makepkg --printsrcinfo > .SRCINFO ) || return 1
+            fi
             detail="bumped pkgrel $current -> $next and regenerated .SRCINFO"
             ;;
         clear_cache)

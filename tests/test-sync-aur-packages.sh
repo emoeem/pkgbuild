@@ -42,6 +42,8 @@ repo="$tmp/repo"
 mkdir -p "$repo/scripts/overlays" "$repo/packages"
 cp "$root/scripts/check-package.sh" "$root/scripts/validate-source-cache.sh" \
     "$root/scripts/pkgrel-floor.sh" "$repo/scripts/"
+mkdir -p "$repo/scripts/lib"
+cp "$root/scripts/lib/pkgrel-policy.sh" "$repo/scripts/lib/"
 printf '#!/usr/bin/env bash\necho "intentional overlay failure for tests" >&2\nexit 1\n' \
     > "$repo/scripts/overlays/bad-pkg.sh"
 
@@ -105,6 +107,8 @@ repo="$tmp/repo-all-fail"
 mkdir -p "$repo/scripts/overlays" "$repo/packages"
 cp "$root/scripts/check-package.sh" "$root/scripts/validate-source-cache.sh" \
     "$root/scripts/pkgrel-floor.sh" "$repo/scripts/"
+mkdir -p "$repo/scripts/lib"
+cp "$root/scripts/lib/pkgrel-policy.sh" "$repo/scripts/lib/"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$repo/scripts/overlays/solo-pkg.sh"
 aur_solo="$(make_aur_repo solo-pkg 1.0)"
 mkdir -p "$repo/packages/solo-pkg"
@@ -133,6 +137,8 @@ repo="$tmp/repo-all-good"
 mkdir -p "$repo/scripts/overlays" "$repo/packages"
 cp "$root/scripts/check-package.sh" "$root/scripts/validate-source-cache.sh" \
     "$root/scripts/pkgrel-floor.sh" "$repo/scripts/"
+mkdir -p "$repo/scripts/lib"
+cp "$root/scripts/lib/pkgrel-policy.sh" "$repo/scripts/lib/"
 aur_good2="$(make_aur_repo plain-pkg 1.1)"
 mkdir -p "$repo/packages/plain-pkg"
 fixture_pkgbuild plain-pkg 1.0 > "$repo/packages/plain-pkg/PKGBUILD"
