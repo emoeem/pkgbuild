@@ -1,0 +1,2 @@
+binary-repack
+# Repacks upstream's prebuilt Arch asset verbatim (see .pkgrel-floor-skip); a local rebuild cannot re-link the payload, so drift waits for a new upstream asset.

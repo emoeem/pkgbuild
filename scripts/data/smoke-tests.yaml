@@ -16,6 +16,10 @@ packages:
     # The application itself is exercised by the release gate's install test.
     binaries:
       - deepseek-harness
+    # The .desktop entry is what makes the app launchable from a desktop
+    # environment; upstream ships it and the repack must carry it verbatim.
+    commands:
+      - "test -f /usr/share/applications/deepseek-harness.desktop"
   ffmpeg-full:
     binaries:
       - ffmpeg

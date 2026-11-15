@@ -9,7 +9,6 @@ pkgbase = dsh-desktop-linux
 	depends = gtk3
 	depends = nss
 	depends = libnotify
-	depends = libxss
 	depends = libxtst
 	depends = xdg-utils
 	depends = at-spi2-core

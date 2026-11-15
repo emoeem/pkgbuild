@@ -22,14 +22,17 @@ pkgdesc='Official DeepSeek Harness desktop application (Electron shell around a 
 arch=('x86_64')
 url='https://github.com/ffyfox/dsh-desktop-linux'
 license=('MIT')
-# Copied from the released package's .PKGINFO. The payload is Electron plus a
-# bundled CPython/dsh runtime, so dependencies are resolved at runtime by the
-# Electron binaries and the bundled interpreter, not by a link step here.
+# Copied from the released package's .PKGINFO (verified by build()'s depend
+# reconciliation below, so this array cannot drift from the asset). The payload
+# is Electron plus a bundled CPython/dsh runtime, so dependencies are resolved
+# at runtime by the Electron binaries and the bundled interpreter, not by a
+# link step here. Upstream dropped the redundant XScreenSaver/libxss entry in
+# 0.2.2rc2 (Electron neither links nor loads that library); this array follows
+# upstream as of 0.2.2rc3.
 depends=(
     'gtk3'
     'nss'
     'libnotify'
-    'libxss'
     'libxtst'
     'xdg-utils'
     'at-spi2-core'
@@ -66,6 +69,29 @@ build() {
     # decoupled from this repository's pkgrel; verify that, not ${pkgrel}.
     grep -qx "pkgver = ${pkgver}-1" <<<"$pkginfo" || return 1
     grep -qx "arch = ${CARCH}" <<<"$pkginfo" || return 1
+
+    # Depends reconciliation: the automatic updater pins pkgver/sha256 only and
+    # never touches depends=(), so upstream dependency changes (rc2 dropped the
+    # redundant libxss this way) would otherwise drift forever. Compare as sets,
+    # in both directions, against the asset's own .PKGINFO.
+    local depend_line declared_depend
+    local -A asset_depends=()
+    while IFS= read -r depend_line; do
+        [[ -n "$depend_line" ]] && asset_depends["$depend_line"]=1
+    done < <(awk -F ' = ' '$1 == "depend" {print $2}' <<<"$pkginfo")
+    for declared_depend in "${depends[@]}"; do
+        if [[ -z "${asset_depends[$declared_depend]:-}" ]]; then
+            printf 'Dependency reconciliation failed: this PKGBUILD depends on %s, but the upstream asset does not declare it.\n' \
+                "$declared_depend" >&2
+            return 1
+        fi
+        unset "asset_depends[$declared_depend]"
+    done
+    if (( ${#asset_depends[@]} > 0 )); then
+        printf 'Dependency reconciliation failed: the upstream asset declares dependencies this PKGBUILD does not: %s\n' \
+            "${!asset_depends[*]}" >&2
+        return 1
+    fi
 }
 
 package() {
