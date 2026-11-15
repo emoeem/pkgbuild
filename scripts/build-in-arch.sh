@@ -428,6 +428,19 @@ for package_file in "${package_files[@]}"; do
     bash "${workspace_dir}/scripts/verify-build-dependencies.sh" "${output_dir}/${filename}.BUILDINFO"
 done
 
+# ffmpeg-full 专属：configure 是尽力而为（--enable-lib* 探测失败会静默降级），
+# 只有对真实产物的断言能拦住静默功能丢失。矩阵、功能链路、ELF 检查全部失败
+# 即构建失败；GPU 专项按探测结果标注 passed / failed / not-executed，绝不把
+# "没测"伪装成"通过"（Phase 4.3/4.4/4.5）。
+if [[ "$package_name" == "ffmpeg-full" ]]; then
+    printf 'Running the ffmpeg feature matrix verification...\n'
+    bash "${workspace_dir}/scripts/verify-ffmpeg-features.sh" \
+        --ffmpeg /usr/bin/ffmpeg \
+        --matrix "${workspace_dir}/packages/ffmpeg-full/feature-matrix.txt" \
+        --json-out "${output_dir}/ffmpeg-features.json" \
+        --banned staging,srcdir
+fi
+
 timing_end verify
 timing_begin smoke
 printf 'Running installed-package runtime verification...\n'

@@ -1,3 +1,13 @@
+# 三个追踪源：
+#   ffmpeg-full     FFmpeg 稳定 release（基线 = PKGBUILD pkgver）
+#   lensfun-master  vendored lensfun（基线 = .lensfun-pin，git master 提交）
+#   whisper-cpp     vendored whisper.cpp release（基线 = PKGBUILD _whispercpp_ver）
+# SVT-HEVC 的补丁基线（_svt_hevc_ver）不追踪：上游 OpenVisualCloud/SVT-HEVC
+# 已归档，commit 不会前进；它是冻结的补丁应用点，不是滚动的源。
+[__baselines__]
+lensfun-master = "pin:.lensfun-pin"
+whisper-cpp = "pkgvar:_whispercpp_ver"
+
 [ffmpeg-full]
 source = "github"
 github = "FFmpeg/FFmpeg"
@@ -6,3 +16,18 @@ prefix = "n"
 # Release tags are nX.Y[.Z]; the prefix strip above expects them. Keep n9.1-dev
 # and any rc tags out of the comparison — the package tracks stable releases.
 include_regex = 'n[0-9]+\.[0-9]+(\.[0-9]+)?'
+
+[lensfun-master]
+# ffmpeg requires lensfun git master (see PKGBUILD); the pin lives in
+# .lensfun-pin and is re-applied to the PKGBUILD by scripts/overlays/ffmpeg-full.sh.
+source = "git"
+git = "https://github.com/lensfun/lensfun.git"
+use_commit = true
+from_pattern = '^([0-9a-f]{7})[0-9a-f]*$'
+to_pattern = '\1'
+
+[whisper-cpp]
+source = "github"
+github = "ggml-org/whisper.cpp"
+use_max_tag = true
+prefix = "v"

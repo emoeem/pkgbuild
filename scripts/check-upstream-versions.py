@@ -18,19 +18,68 @@ def load_definitions(root: Path) -> tuple[dict[str, dict], dict[str, str]]:
     baselines: dict[str, str] = {}
     for path in sorted((root / 'packages').glob('*/.nvchecker.toml')):
         data = tomllib.loads(path.read_text(encoding='utf-8'))
-        entries = [(name, value) for name, value in data.items() if name != '__config__']
-        if len(entries) != 1:
-            raise ValueError(f'{path} must define exactly one nvchecker source')
-        name, config = entries[0]
-        pkgbuild = path.parent / 'PKGBUILD'
-        current = pkgver_from_pkgbuild(pkgbuild)
-        if config.get('source') == 'git' and config.get('use_commit'):
-            match = re.search(r'\.g([0-9a-f]{7,})$', current)
-            if not match:
-                raise ValueError(f'git pkgver {current!r} does not contain a .g<sha> suffix')
-            current = match.group(1)[:7]
-        definitions[name] = config
-        baselines[name] = current
+        # __baselines__ is this file's own extension: explicit baselines for
+        # sources whose version is NOT the package's pkgver (vendored
+        # dependencies pinned inside a PKGBUILD, like ffmpeg-full's lensfun
+        # and whisper.cpp). Values are either a literal version, or a
+        # reference resolved against this package directory:
+        #   pkgvar:<VARNAME>  -> the value of VARNAME in the PKGBUILD
+        #   pin:<FILENAME>    -> first line of that file (trimmed)
+        explicit = data.get('__baselines__', {}) or {}
+        if not isinstance(explicit, dict):
+            raise ValueError(f'{path}: __baselines__ must be a table')
+        entries = [
+            (name, value)
+            for name, value in data.items()
+            if name not in ('__config__', '__baselines__')
+        ]
+        if not entries:
+            raise ValueError(f'{path} must define at least one nvchecker source')
+        for name, config in entries:
+            if name in definitions:
+                raise ValueError(
+                    f'{path}: nvchecker source {name!r} is already defined in another package'
+                )
+            pkgbuild = path.parent / 'PKGBUILD'
+            if name in explicit:
+                current = str(explicit[name])
+                if current.startswith('pkgvar:'):
+                    variable = current[len('pkgvar:'):]
+                    match = re.search(
+                        rf'(?m)^{re.escape(variable)}=[\'"]?([^\'"\s#]+)',
+                        pkgbuild.read_text(encoding='utf-8'),
+                    )
+                    if not match:
+                        raise ValueError(
+                            f'{path}: baseline pkgvar:{variable} not found in PKGBUILD'
+                        )
+                    current = match.group(1)
+                elif current.startswith('pin:'):
+                    pinfile = path.parent / current[len('pin:'):]
+                    try:
+                        current = pinfile.read_text(encoding='utf-8').strip().splitlines()[0]
+                    except (OSError, IndexError) as exc:
+                        raise ValueError(
+                            f'{path}: baseline pin:{pinfile.name} is unreadable or empty'
+                        ) from exc
+            else:
+                current = pkgver_from_pkgbuild(pkgbuild)
+                if config.get('source') == 'git' and config.get('use_commit'):
+                    match = re.search(r'\.g([0-9a-f]{7,})$', current)
+                    if not match:
+                        raise ValueError(f'git pkgver {current!r} does not contain a .g<sha> suffix')
+                    current = match.group(1)[:7]
+            # 显式基线同样要跟 nvchecker 的输出形态对齐：git source 经
+            # from/to_pattern 截成 7 位，基线不截的话 nvcmp 会恒报更新。
+            if name in explicit and config.get('source') == 'git' and config.get('use_commit'):
+                match = re.search(r'([0-9a-f]{7,})$', current)
+                if not match:
+                    raise ValueError(
+                        f'{path}: baseline {name!r} ({current!r}) is not a git commit hash'
+                    )
+                current = match.group(1)[:7]
+            definitions[name] = config
+            baselines[name] = current
     return definitions, baselines
 
 

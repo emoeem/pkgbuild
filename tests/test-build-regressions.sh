@@ -254,7 +254,7 @@ printf '%s\n' '14: verify the ffmpeg-full overlay restores the vendored openapv 
 overlay_fixture="$work/ffmpeg-full"
 mkdir -p "$overlay_fixture"
 cp "$root/packages/ffmpeg-full/PKGBUILD" "$root/packages/ffmpeg-full/.SRCINFO" \
-    "$root/packages/ffmpeg-full"/0*.patch "$overlay_fixture/"
+    "$root/packages/ffmpeg-full/.lensfun-pin" "$root/packages/ffmpeg-full"/0*.patch "$overlay_fixture/"
 vendored_sum="$(sha256sum "$overlay_fixture/080-ffmpeg-openapv1.1-fix.patch" | cut -d' ' -f1)"
 python3 - "$overlay_fixture/PKGBUILD" "$overlay_fixture/.SRCINFO" "$vendored_sum" <<'PY'
 from pathlib import Path
@@ -287,6 +287,11 @@ grep -qF "            '$vendored_sum'" "$overlay_fixture/PKGBUILD" \
     || fail 'overlay did not restore the checksum of the vendored openapv patch'
 grep -qF '	source = 080-ffmpeg-openapv1.1-fix.patch' "$overlay_fixture/.SRCINFO" \
     || fail 'overlay did not restore the openapv entry in .SRCINFO'
+lensfun_pin="$(tr -d '[:space:]' < "$overlay_fixture/.lensfun-pin")"
+grep -qF "lensfun.git#commit=${lensfun_pin}" "$overlay_fixture/PKGBUILD" \
+    || fail 'overlay did not (re-)apply the vendored lensfun pin to the AUR-style PKGBUILD'
+bash -n "$overlay_fixture/PKGBUILD" \
+    || fail 'the overlaid ffmpeg PKGBUILD does not parse'
 grep -qF "	sha256sums = $vendored_sum" "$overlay_fixture/.SRCINFO" \
     || fail 'overlay did not restore the openapv checksum in .SRCINFO'
 first_sum="$(sha256sum "$overlay_fixture/PKGBUILD" | cut -d' ' -f1)"

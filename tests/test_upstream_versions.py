@@ -20,7 +20,8 @@ validate_new_versions = _MODULE.validate_new_versions
 class UpstreamVersionTests(unittest.TestCase):
     def test_all_requested_packages_have_sources(self):
         definitions, baselines = load_definitions(ROOT)
-        expected = {'quirc', 'mpeghdec', 'ffmpeg-full', 'svt-jpeg-xs-git', 'vapoursynth-plugin-mlrt-ncnn-runtime'}
+        expected = {'quirc', 'mpeghdec', 'ffmpeg-full', 'svt-jpeg-xs-git', 'vapoursynth-plugin-mlrt-ncnn-runtime',
+                    'lensfun-master', 'whisper-cpp'}
         self.assertEqual(expected, set(definitions))
         self.assertEqual(expected, set(baselines))
 
@@ -31,6 +32,14 @@ class UpstreamVersionTests(unittest.TestCase):
         self.assertEqual('01bc7cc', baselines['svt-jpeg-xs-git'])
         self.assertEqual('git', definitions['svt-jpeg-xs-git']['source'])
         self.assertTrue(definitions['svt-jpeg-xs-git']['use_commit'])
+
+    def test_explicit_baselines_cover_vendored_dependencies(self):
+        definitions, baselines = load_definitions(ROOT)
+        # Phase 4：lensfun/whisper.cpp 是 vendored 依赖，基线不来自 pkgver。
+        self.assertEqual('52cf1a7', baselines['lensfun-master'])
+        self.assertEqual('1.9.5', baselines['whisper-cpp'])
+        self.assertEqual('git', definitions['lensfun-master']['source'])
+        self.assertTrue(definitions['lensfun-master']['use_commit'])
 
     def test_release_sources_are_not_aur_sources(self):
         definitions, _ = load_definitions(ROOT)
@@ -50,10 +59,13 @@ class UpstreamVersionTests(unittest.TestCase):
             ], check=True, capture_output=True, text=True)
             config = tomllib.loads((tmp / 'sources.toml').read_text(encoding='utf-8'))
             oldver = json.loads((tmp / 'oldver.json').read_text(encoding='utf-8'))
-            expected = {'quirc', 'mpeghdec', 'ffmpeg-full', 'svt-jpeg-xs-git', 'vapoursynth-plugin-mlrt-ncnn-runtime'}
+            expected = {'quirc', 'mpeghdec', 'ffmpeg-full', 'svt-jpeg-xs-git', 'vapoursynth-plugin-mlrt-ncnn-runtime',
+                        'lensfun-master', 'whisper-cpp'}
             self.assertIn('__config__', config)
             self.assertEqual(expected, set(oldver))
             self.assertEqual('01bc7cc', oldver['svt-jpeg-xs-git'])
+            self.assertEqual('52cf1a7', oldver['lensfun-master'])
+            self.assertEqual('1.9.5', oldver['whisper-cpp'])
 
     def test_missing_upstream_results_fail_instead_of_looking_clean(self):
         with self.assertRaisesRegex(ValueError, 'refusing to report a clean scan'):

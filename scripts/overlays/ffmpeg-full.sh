@@ -27,6 +27,36 @@ fail() {
 #    package, so the runtime dependency stays optional.
 sed -i 's|^        --disable-libnpp \\$|        --enable-libnpp \\|' "$pkgbuild"
 
+# 1b. Pin the vendored lensfun checkout. AUR ships the PKGBUILD with an
+#     unpinned `git+...lensfun.git` URL, so a rebuild would fetch master
+#     unconditionally: not reproducible, and a master API break fails the
+#     build without any way to say which commit worked last. The pin lives in
+#     .lensfun-pin (single source of truth): this step re-applies it to the
+#     synced PKGBUILD, and the nvchecker entry `lensfun-master` reads the same
+#     file as its baseline so upstream-check opens an issue when the pin lags.
+lensfun_pin="$(tr -d '[:space:]' < "${package_dir}/.lensfun-pin" 2>/dev/null)" ||
+    fail 'the vendored lensfun pin file is missing: .lensfun-pin'
+[[ "$lensfun_pin" =~ ^[0-9a-f]{40}$ ]] ||
+    fail ".lensfun-pin does not contain a 40-character commit: ${lensfun_pin}"
+python3 - "$pkgbuild" "$lensfun_pin" <<'PY1B' || fail 'lensfun pin injection failed'
+import re
+import sys
+from pathlib import Path
+
+path, pin = Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+rewritten, count = re.subn(
+    r"'git\+https://github\.com/lensfun/lensfun\.git(?:#commit=[0-9a-f]{40})?'",
+    f"'git+https://github.com/lensfun/lensfun.git#commit={pin}'",
+    text,
+)
+if count != 1:
+    raise SystemExit(f"lensfun source entry matches {count} time(s), expected exactly 1")
+path.write_text(rewritten)
+PY1B
+grep -qF "'git+https://github.com/lensfun/lensfun.git#commit=${lensfun_pin}'" "$pkgbuild" ||
+    fail 'the lensfun pin is missing after the rewrite'
+
 # 2. Declare the cuda runtime dependency for the NPP filters.
 new_optdepend="    'cuda: for NVIDIA NPP filters (scale_npp, transpose_npp, overlay_npp)'"
 if ! grep -qF 'cuda: for NVIDIA NPP filters' "$pkgbuild"; then

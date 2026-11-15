@@ -156,7 +156,7 @@ pkgbase = ffmpeg-full
 	conflicts = ffmpeg
 	source = https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
 	source = https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz.asc
-	source = git+https://github.com/lensfun/lensfun.git
+	source = git+https://github.com/lensfun/lensfun.git#commit=52cf1a7b0e82e07e0ecaa3391ee5106a6dd1ee54
 	source = https://github.com/ggml-org/whisper.cpp/archive/v1.9.5/whisper.cpp-1.9.5.tar.gz
 	source = 010-ffmpeg-add-svt-hevc.patch
 	source = 020-ffmpeg-add-svt-hevc-docs-g4181c9e.patch::https://raw.githubusercontent.com/OpenVisualCloud/SVT-HEVC/4181c9ee0611baefb40b4c0ed10023cfd837d522/ffmpeg_plugin/0002-doc-Add-libsvt_hevc-encoder-docs.patch

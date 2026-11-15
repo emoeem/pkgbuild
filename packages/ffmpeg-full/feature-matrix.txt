@@ -1,0 +1,97 @@
+# ffmpeg-full 目标功能矩阵（机器可读声明）。
+#
+# scripts/verify-ffmpeg-features.sh 在每次构建后对真实产物逐条断言；缺失即
+# 构建失败（configure 对 --enable-lib* 是尽力而为，依赖探测失败会静默降级，
+# 只有对产物本身的断言能拦住这种静默丢失）。
+#
+# 格式：<class> <token>
+#   flag      ffmpeg -buildconf 的 configuration 里必须出现 --enable-<token>
+#   hwaccel   ffmpeg -hwaccels 列表里的独立一行 <token>
+#   encoder   ffmpeg -encoders 表中的 <token>（第二字段）
+#   decoder   ffmpeg -decoders 表中的 <token>
+#   filter    ffmpeg -filters 表中的 <token>
+#   needed    产物 ELF DT_NEEDED 里以 <token> 开头的库（readelf -d）
+#
+# 增删条目 = 修改本文件；CI 首跑若暴露假红（token 与 9.0.2 实际命名不符），
+# 修正这里而不是放宽脚本。
+
+# --- configure 开关（overlay 注入 + AUR 原生目标功能） ---
+flag libnpp
+flag libplacebo
+flag libsvtav1
+flag libsvthevc
+flag libsvtjpegxs
+flag libsvtvp9
+flag libopenvino
+flag libopencv
+flag vapoursynth
+flag whisper
+flag vulkan
+flag opencl
+flag cuda
+flag cuvid
+flag nvenc
+flag nvdec
+flag ffnvcodec
+flag libdrm
+flag vaapi
+flag vdpau
+flag libvpl
+flag libx264
+flag libx265
+flag libdav1d
+flag libaom
+flag libfdk-aac
+flag gpl
+flag version3
+flag nonfree
+flag shared
+
+# --- 硬件加速方法 ---
+hwaccel cuda
+hwaccel cuvid
+hwaccel drm
+hwaccel vaapi
+hwaccel vdpau
+hwaccel vulkan
+hwaccel qsv
+hwaccel opencl
+
+# --- 编码器 ---
+encoder h264_nvenc
+encoder hevc_nvenc
+encoder libsvtav1
+encoder libsvthevc
+encoder libsvtvp9
+encoder libsvtjpegxs
+encoder libx264
+encoder libx265
+encoder libopenh264
+encoder libfdk_aac
+encoder libmp3lame
+encoder rav1e
+encoder aac
+
+# --- 解码器 ---
+decoder h264
+decoder hevc
+decoder av1
+decoder libdav1d
+decoder h264_cuvid
+decoder hevc_cuvid
+
+# --- 滤镜 ---
+filter libplacebo
+filter scale_vulkan
+filter overlay_vulkan
+filter transpose_vulkan
+filter scale_npp
+filter transpose_npp
+filter overlay_npp
+filter whisper
+filter zscale
+
+# --- 直接链接的库（DT_NEEDED 前缀） ---
+needed libplacebo
+needed libvapoursynth-script
+needed libopenvino
