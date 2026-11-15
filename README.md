@@ -56,6 +56,18 @@ namcap，同时运行 build-graph 与 repository integration tests；`build.yml`
 Artifact 保存。构建成功后发布为滚动 GitHub Release（固定 tag `repo`），
 pacman 直接从 Release 资产下载仓库数据库和软件包。AUR 同步只提交源
 文件，提交本身会触发一次构建，不会重复 dispatch 同一个构建。
+
+### 文档索引
+
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/BUILD-STRATEGY.md`](docs/BUILD-STRATEGY.md) | 四类构建策略（source/vcs/binary-repack/data）、逐包归类与调度分流 |
+| [`docs/PKGREL-POLICY.md`](docs/PKGREL-POLICY.md) | pkgrel 形状、全部递增入口、`.pkgrel-floor-skip` 语义、写回与闸门链 |
+| [`docs/ABI-REBUILD-POLICY.md`](docs/ABI-REBUILD-POLICY.md) | ABI watch 两类检测、STALE/UPSTREAM/NOTE 三态、冷却与豁免 |
+| [`docs/DEPENDENCY-MANAGEMENT.md`](docs/DEPENDENCY-MANAGEMENT.md) | 更新来源三通道、nvchecker（含 vendored 基线）、`.rebuild-on`、依赖对账 |
+| [`docs/FFmpeg-FEATURE-MATRIX.md`](docs/FFmpeg-FEATURE-MATRIX.md) | ffmpeg-full 功能矩阵、构建后验证、GPU 三态、ELF 检查 |
+| [`docs/CI-QUALITY-GATES.md`](docs/CI-QUALITY-GATES.md) | 全部门禁清单、执行原则、并发去重、失败通知 |
+| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | 按症状索引的排障手册（对应真实事故） |
 默认采用原子发布：任一构建失败就不会发布本轮仓库更新；只有手动启用 `allow_partial_publish` 时才允许部分发布。
 
 构建环境按以下优先级使用依赖：
