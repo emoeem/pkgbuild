@@ -223,9 +223,20 @@ build() {
         "${_cmake_opts[@]}" \
         -DBUILD_STATIC:BOOL='ON' \
         -DINSTALL_PYTHON_MODULE:BOOL='OFF' \
-        -DINSTALL_HELPER_SCRIPTS:BOOL='OFF' \
-        -DCMAKE_INSTALL_DATAROOTDIR:PATH=/usr/share
+        -DINSTALL_HELPER_SCRIPTS:BOOL='OFF'
     cmake --build build/lensfun --target install
+    # lensfun bakes SYSTEM_DB_PATH from CMAKE_INSTALL_FULL_DATAROOTDIR, which
+    # resolves against CMAKE_INSTALL_PREFIX (${_stagingdir}) — the statically
+    # linked liblensfun would look for its database inside the build tree and
+    # the lensfun filter would find nothing at runtime. Install into staging
+    # (fakeroot cannot write /usr/share), then patch the generated config.h to
+    # the real runtime location and rebuild + reinstall the static library.
+    sed -i 's|#define SYSTEM_DB_PATH .*|#define SYSTEM_DB_PATH "/usr/share/lensfun"|' \
+        build/lensfun/config.h
+    # CONFIGURE_FILE does not wire config.h into the dependency graph,
+    # so a plain rebuild would be a no-op: clean and rebuild the target.
+    cmake --build build/lensfun --target clean lensfun
+    cmake --install build/lensfun
     
     # using whisper-cpp package from the official repositories will cause a circular dependency with ffmpeg,
     # building it locally as a static library for the time being

@@ -64,13 +64,38 @@ grep -qF "'git+https://github.com/lensfun/lensfun.git#commit=${lensfun_pin}'" "$
 #     /build/ffmpeg-full/src/staging/share/lensfun and found nothing at
 #     runtime — a silent lensfun-filter outage (elf:leak:staging, verified
 #     against the published 9.0.2-3.45 artifact on 2026-11-17). Pointing
-#     DATAROOTDIR at an absolute path stops GNUInstallDirs from prefixing it.
-lensfun_datadir_fix='s|-DINSTALL_HELPER_SCRIPTS:BOOL=.OFF.$|& \\\n        -DCMAKE_INSTALL_DATAROOTDIR:PATH=/usr/share|'
-if ! grep -qF 'CMAKE_INSTALL_DATAROOTDIR' "$pkgbuild"; then
-    sed -i "$lensfun_datadir_fix" "$pkgbuild" ||
-        fail 'lensfun datadir fixup failed'
-    grep -qF "-DCMAKE_INSTALL_DATAROOTDIR:PATH=/usr/share" "$pkgbuild" ||
-        fail 'the lensfun datadir line is missing after the rewrite'
+#     DATAROOTDIR at an absolute path also redirects the install step into
+#     /usr/share, which fakeroot cannot write (run 43932960088), so instead:
+#     install into staging, patch the generated config.h to the runtime
+#     location, rebuild the static library and reinstall it.
+lensfun_patch='s|#define SYSTEM_DB_PATH .*|#define SYSTEM_DB_PATH "/usr/share/lensfun"|'
+if ! grep -qF 'SYSTEM_DB_PATH "/usr/share/lensfun"' "$pkgbuild"; then
+    python3 - "$pkgbuild" <<'PY1C' || fail 'lensfun datadir fixup failed'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text()
+anchor = "    cmake --build build/lensfun --target install\n"
+if anchor not in text:
+    raise SystemExit('lensfun install anchor not found')
+replacement = anchor + """    # lensfun bakes SYSTEM_DB_PATH from CMAKE_INSTALL_FULL_DATAROOTDIR, which
+    # resolves against CMAKE_INSTALL_PREFIX (${_stagingdir}) — the statically
+    # linked liblensfun would look for its database inside the build tree and
+    # the lensfun filter would find nothing at runtime. Install into staging
+    # (fakeroot cannot write /usr/share), then patch the generated config.h to
+    # the real runtime location and rebuild + reinstall the static library.
+    sed -i 's|#define SYSTEM_DB_PATH .*|#define SYSTEM_DB_PATH "/usr/share/lensfun"|' \\
+        build/lensfun/config.h
+    # CONFIGURE_FILE does not wire config.h into the dependency graph,
+    # so a plain rebuild would be a no-op: clean and rebuild the target.
+    cmake --build build/lensfun --target clean lensfun
+    cmake --install build/lensfun
+"""
+path.write_text(text.replace(anchor, replacement, 1))
+PY1C
+    grep -qF 'SYSTEM_DB_PATH "/usr/share/lensfun"' "$pkgbuild" ||
+        fail 'the lensfun SYSTEM_DB_PATH patch is missing after the rewrite'
 fi
 
 # 1d. Declare the lensfun runtime dependency: the library is statically
