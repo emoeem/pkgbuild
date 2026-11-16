@@ -32,16 +32,52 @@ hwdev_exit=$hwdev_exit
 case "\$*" in
   *-version*) echo 'ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers'; exit 0 ;;
   *-buildconf*)
-    echo 'ffmpeg version 9.0.2'
-    echo 'configuration: --prefix=/usr --enable-gpl --enable-version3 --enable-nonfree --enable-shared --enable-libnpp --enable-libplacebo --enable-libsvtav1 --enable-libsvthevc --enable-libsvtjpegxs --enable-libsvtvp9 --enable-libopenvino --enable-libopencv --enable-vapoursynth --enable-whisper --enable-vulkan --enable-opencl --enable-cuda --enable-cuvid --enable-nvenc --enable-nvdec --enable-ffnvcodec --enable-libdrm --enable-vaapi --enable-vdpau --enable-libvpl --enable-libx264 --enable-libx265 --enable-libdav1d --enable-libaom --enable-libfdk-aac'
+    # ffmpeg 9.0.2 起是缩进逐行排列（"  configuration:" 后每 flag 一行,空行
+    # 结束）;旧单行格式的兼容在用例 7 单独覆盖。
+    cat <<'CONF'
+ffmpeg version 9.0.2
+  configuration:
+    --prefix=/usr
+    --enable-gpl
+    --enable-version3
+    --enable-nonfree
+    --enable-shared
+    --enable-libnpp
+    --enable-libplacebo
+    --enable-libsvtav1
+    --enable-libsvthevc
+    --enable-libsvtjpegxs
+    --enable-libsvtvp9
+    --enable-libopenvino
+    --enable-libopencv
+    --enable-vapoursynth
+    --enable-whisper
+    --enable-vulkan
+    --enable-opencl
+    --enable-cuda
+    --enable-cuvid
+    --enable-nvenc
+    --enable-nvdec
+    --enable-ffnvcodec
+    --enable-libdrm
+    --enable-vaapi
+    --enable-vdpau
+    --enable-libvpl
+    --enable-libx264
+    --enable-libx265
+    --enable-libdav1d
+    --enable-libaom
+    --enable-libfdk-aac
+
+CONF
     exit 0 ;;
-  *-hwaccels*) printf 'Hardware acceleration methods:\ncuda\ncuvid\ndrm\nvaapi\nvdpau\nvulkan\nqsv\nopencl\n'; exit 0 ;;
+  *-hwaccels*) printf 'Hardware acceleration methods:\ncuda\ndrm\nvaapi\nvdpau\nvulkan\nqsv\nopencl\n'; exit 0 ;;
   *-encoders*)
     printf 'Encoders:\n A..... aac                 AAC\n V..... libsvtav1           SVT-AV1\n V..... libsvthevc          SVT-HEVC\n V..... libsvtvp9           SVT-VP9\n V..... libsvtjpegxs        SVT-JPEG-XS\n V..... h264_nvenc          NVIDIA NVENC\n V..... hevc_nvenc          NVIDIA NVENC\n V..... libx264             libx264\n V..... libx265             libx265\n V..... libopenh264         OpenH264\n A..... libfdk_aac          FDK AAC\n A..... libmp3lame          mp3\n V..... rav1e               AV1\n'; exit 0 ;;
   *-decoders*)
     printf 'Decoders:\n V..... h264                H.264\n V..... hevc                HEVC\n V..... av1                 AV1\n V..... libdav1d            dav1d\n V..... h264_cuvid          Nvidia CUVID\n V..... hevc_cuvid          Nvidia CUVID\n'; exit 0 ;;
   *-filters*)
-    printf 'Filters:\n  T.. libplacebo            Compute and apply\n  ... scale_vulkan          Scale\n  ... overlay_vulkan        Overlay\n  ... transpose_vulkan      Transpose\n  ... scale_npp             NVIDIA\n  ... transpose_npp         NVIDIA\n  ... overlay_npp           NVIDIA\n  ... whisper               Speech\n  ... zscale                Apply scaling\n'; exit 0 ;;
+    printf 'Filters:\n  T.. = Timeline support\n  .S. = Slice threading\n  ------\n  T.. libplacebo            Compute and apply\n  ... scale_vulkan          Scale\n  ... overlay_vulkan        Overlay\n  ... transpose_vulkan      Transpose\n  ... whisper               Speech\n  ... zscale                Apply scaling\n'; exit 0 ;;
   *-init_hw_device*) exit "\$hwdev_exit" ;;
   # -f lavfi puts "lavfi" after "-f ", so the pattern cannot demand a dash.
   *lavfi*) exit "\$lavfi_exit" ;;
@@ -67,7 +103,7 @@ EOF
 make_matrix() { # <file> [extra-line...]
     local file="$1"
     shift
-    grep -v '^needed ' "$root/packages/ffmpeg-full/feature-matrix.txt" > "$file"
+    grep -vE '^(needed|dlopen) ' "$root/packages/ffmpeg-full/feature-matrix.txt" > "$file"
     [[ $# == 0 ]] || printf '%s\n' "$@" >> "$file"
 }
 
@@ -157,13 +193,69 @@ grep -q "ELF leaks build-tree substring '/ffbuild/staging'" "$tmp/elf-out.txt" |
 echo 'ok: RUNPATH and build-tree substring leaks both fail'
 
 printf '%s\n' '6: the real feature matrix parses and counts 60+ entries'
-entries="$(grep -cE '^(flag|hwaccel|encoder|decoder|filter|needed) ' "$root/packages/ffmpeg-full/feature-matrix.txt")"
+entries="$(grep -cE '^(flag|hwaccel|encoder|decoder|filter|needed|dlopen) ' "$root/packages/ffmpeg-full/feature-matrix.txt")"
 (( entries >= 60 )) || fail "the real feature matrix only has $entries entries"
 while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^(flag|hwaccel|encoder|decoder|filter|needed)[[:space:]][^[:space:]]+$ ]] ||
+    [[ "$line" =~ ^(flag|hwaccel|encoder|decoder|filter|needed|dlopen)[[:space:]][^[:space:]]+$ ]] ||
         fail "malformed matrix line: $line"
 done < <(grep -vE '^\s*(#|$)' "$root/packages/ffmpeg-full/feature-matrix.txt")
 echo "ok: real matrix is well-formed with $entries entries"
+
+printf '%s\n' '7: the legacy single-line buildconf (ffmpeg <=8) still parses'
+make_ffmpeg_stub "$tmp/legacy" 0 0
+make_lib_dir "$tmp/legacy"
+make_matrix "$tmp/legacy-matrix.txt"
+# 把 9.0.2 桩的多行 buildconf 换回旧单行格式，其余桩保持一致。
+mkdir -p "$tmp/legacy/bin"
+cat > "$tmp/legacy/bin/ffmpeg" <<MOCK
+#!/usr/bin/env bash
+case "\$*" in
+  *-version*) echo 'ffmpeg version 8.0 Copyright (c) 2000-2025 the FFmpeg developers'; exit 0 ;;
+  *-buildconf*) echo 'configuration: --prefix=/usr --enable-gpl --enable-version3 --enable-nonfree --enable-shared --enable-libx264 --enable-libx265 --enable-libplacebo --enable-libsvtav1 --enable-libsvthevc --enable-libsvtjpegxs --enable-libsvtvp9 --enable-libopenvino --enable-libopencv --enable-vapoursynth --enable-whisper --enable-vulkan --enable-opencl --enable-cuda --enable-cuvid --enable-nvenc --enable-nvdec --enable-ffnvcodec --enable-libdrm --enable-vaapi --enable-vdpau --enable-libvpl --enable-libdav1d --enable-libaom --enable-libfdk-aac'; exit 0 ;;
+  *-hwaccels*) printf 'Hardware acceleration methods:\ncuda\ncuvid\ndrm\nvaapi\nvdpau\nvulkan\nqsv\nopencl\n'; exit 0 ;;
+  *-encoders*) printf 'Encoders:\n A..... aac                 AAC\n V..... libsvtav1           SVT-AV1\n V..... libsvt_hevc         SVT-HEVC\n V..... libsvt_vp9          SVT-VP9\n V..... libsvtjpegxs        SVT-JPEG-XS\n V..... librav1e            AV1\n V..... h264_nvenc          NVIDIA NVENC\n V..... hevc_nvenc          NVIDIA NVENC\n V..... libx264             libx264\n V..... libx265             libx265\n V..... libopenh264         OpenH264\n A..... libfdk_aac          FDK AAC\n A..... libmp3lame          mp3\n'; exit 0 ;;
+  *-decoders*) printf 'Decoders:\n V..... h264                H.264\n V..... hevc                HEVC\n V..... av1                 AV1\n V..... libdav1d            dav1d\n V..... h264_cuvid          Nvidia CUVID\n V..... hevc_cuvid          Nvidia CUVID\n'; exit 0 ;;
+  *-filters*) printf 'Filters:\n  T.. libplacebo            Compute and apply\n  ... scale_vulkan          Scale\n  ... overlay_vulkan        Overlay\n  ... transpose_vulkan      Transpose\n  ... whisper               Speech\n  ... zscale                Apply scaling\n'; exit 0 ;;
+  *) exit 0 ;;
+esac
+MOCK
+chmod +x "$tmp/legacy/bin/ffmpeg"
+PATH="$tmp/legacy/bin:/usr/bin:/bin" bash "$script" \
+    --ffmpeg "$tmp/legacy/bin/ffmpeg" --matrix "$tmp/legacy-matrix.txt" \
+    --json-out "$tmp/legacy/report.json" --lib-dir "$tmp/legacy/lib" --no-gpu \
+    >"$tmp/legacy/out.txt" 2>&1 ||
+    fail "legacy buildconf run exited non-zero: $(cat "$tmp/legacy/out.txt")"
+grep -q 'MISSING' "$tmp/legacy/out.txt" && fail "legacy buildconf produced false MISSINGs: $(cat "$tmp/legacy/out.txt")"
+echo 'ok: legacy single-line buildconf still parses'
+
+printf '%s\n' '8: the dlopen class asserts runtime-loaded libraries'
+# 正向:产物引用 libvapoursynth-script(ffmpeg 9 的 vapoursynth demuxer dlopen 形态)
+mkdir -p "$tmp/dlpass" "$tmp/dlfail"
+make_matrix "$tmp/dlpass-matrix.txt" 'dlopen libvapoursynth-script'
+mkdir -p "$tmp/dl"
+cat > "$tmp/dl/with-vapoursynth.c" <<'EOF'
+const char *vs_loader = "libvapoursynth-script.so.6";
+int ffmpeg_test_value(void) { return 42; }
+EOF
+gcc -shared -fPIC -o "$tmp/green/lib/libavformat.so.9" "$tmp/dl/with-vapoursynth.c"
+PATH="$tmp/green/bin:/usr/bin:/bin" bash "$script" \
+    --ffmpeg "$tmp/green/bin/ffmpeg" --matrix "$tmp/dlpass-matrix.txt" \
+    --json-out "$tmp/dlpass/report.json" --lib-dir "$tmp/green/lib" --no-gpu \
+    >"$tmp/dlpass/out.txt" 2>&1 ||
+    fail "dlopen pass run exited non-zero: $(cat "$tmp/dlpass/out.txt")"
+python3 -c 'import json; r=json.load(open('"'$tmp/dlpass/report.json'"')); assert r["counts"]["dlopen_missing"] == 0' ||
+    fail 'dlopen_missing is not 0 when the artifact references the library'
+# 反向:产物不引用 → MISSING dlopen 且 exit 1
+make_lib_dir "$tmp/green"
+if PATH="$tmp/green/bin:/usr/bin:/bin" bash "$script" \
+    --ffmpeg "$tmp/green/bin/ffmpeg" --matrix "$tmp/dlpass-matrix.txt" \
+    --json-out "$tmp/dlfail/report.json" --lib-dir "$tmp/green/lib" --no-gpu \
+    >"$tmp/dlfail-out.txt" 2>&1; then
+    fail 'an artifact without the dlopen reference passed the dlopen assertion'
+fi
+grep -q 'MISSING dlopen: libvapoursynth-script' "$tmp/dlfail-out.txt" ||
+    fail "MISSING dlopen was not reported: $(cat "$tmp/dlfail-out.txt")"
+echo 'ok: dlopen references are asserted both ways'
 
 printf 'all ffmpeg-features cases passed\n'

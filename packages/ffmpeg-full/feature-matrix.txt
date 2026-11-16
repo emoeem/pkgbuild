@@ -11,12 +11,15 @@
 #   decoder   ffmpeg -decoders 表中的 <token>
 #   filter    ffmpeg -filters 表中的 <token>
 #   needed    产物 ELF DT_NEEDED 里以 <token> 开头的库（readelf -d）
+#   dlopen    产物 strings 引用的运行时 dlopen 库名（ffmpeg 9 起 vapoursynth
+#             等集成无 DT_NEEDED,DT_NEEDED 断言结构性失败）
 #
 # 增删条目 = 修改本文件；CI 首跑若暴露假红（token 与 9.0.2 实际命名不符），
 # 修正这里而不是放宽脚本。
 
 # --- configure 开关（overlay 注入 + AUR 原生目标功能） ---
-flag libnpp
+# libnpp 已在 ffmpeg 9.0.2 上游移除("libnpp has been removed and enabling
+# it does nothing",CI run 43921345810),不再断言。
 flag libplacebo
 flag libsvtav1
 flag libsvthevc
@@ -49,7 +52,8 @@ flag shared
 
 # --- 硬件加速方法 ---
 hwaccel cuda
-hwaccel cuvid
+# cuvid hwaccel 类型在 ffmpeg 9.0.2 的 -hwaccels 输出已不存在(cuvid 解码器
+# 由 decoder h264_cuvid/hevc_cuvid 断言兜底)。
 hwaccel drm
 hwaccel vaapi
 hwaccel vdpau
@@ -61,15 +65,16 @@ hwaccel opencl
 encoder h264_nvenc
 encoder hevc_nvenc
 encoder libsvtav1
-encoder libsvthevc
-encoder libsvtvp9
+# SVT 补丁与 rav1e 的注册名带下划线/前缀(9.0.2 Enabled encoders 实测)。
+encoder libsvt_hevc
+encoder libsvt_vp9
+encoder librav1e
 encoder libsvtjpegxs
 encoder libx264
 encoder libx265
 encoder libopenh264
 encoder libfdk_aac
 encoder libmp3lame
-encoder rav1e
 encoder aac
 
 # --- 解码器 ---
@@ -85,13 +90,11 @@ filter libplacebo
 filter scale_vulkan
 filter overlay_vulkan
 filter transpose_vulkan
-filter scale_npp
-filter transpose_npp
-filter overlay_npp
+# scale_npp/transpose_npp/overlay_npp 随 libnpp 上游移除,不再断言。
 filter whisper
 filter zscale
 
 # --- 直接链接的库（DT_NEEDED 前缀） ---
 needed libplacebo
-needed libvapoursynth-script
 needed libopenvino
+dlopen libvapoursynth-script

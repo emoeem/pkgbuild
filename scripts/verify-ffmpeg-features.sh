@@ -53,6 +53,7 @@ done
 [[ -r "$matrix" ]] || { printf 'feature matrix not readable: %s\n' "$matrix" >&2; exit 2; }
 command -v readelf > /dev/null || { printf 'readelf is required\n' >&2; exit 2; }
 command -v ldd > /dev/null || { printf 'ldd is required\n' >&2; exit 2; }
+command -v strings > /dev/null || { printf 'strings is required\n' >&2; exit 2; }
 
 workdir="$(mktemp -d)"
 trap 'rm -rf -- "$workdir"' EXIT
@@ -70,8 +71,29 @@ note() { printf '%s\n' "$*" >&2; }
 "$ffmpeg_bin" -hide_banner -filters > "$workdir/filters.txt" 2>/dev/null || true
 version_line="$("$ffmpeg_bin" -hide_banner -version 2>/dev/null | head -1 || true)"
 
-# buildconf 的 configuration 是一整行：按空格拆开逐个比对 token。
-conf_flags="$(awk -F': ' '/^configuration:/{print $2}' "$workdir/buildconf.txt" | tr ' ' '\n')"
+# buildconf 的 configuration 有两种形态：ffmpeg ≤8 是一整行
+# "configuration: --flag --flag ..."；9.0.2 起是缩进逐行排列（"  configuration:"
+# 后每个 flag 单独一行,以空行结束,实测 2026-11-17）。两种都要能拆 token,
+# 旧解析对 9.0.2 得到空集,30 个 flag 断言全部假 MISSING(CI run 43921345810)。
+conf_flags="$(awk '
+    /^[[:space:]]*configuration:/ {
+        rest = substr($0, index($0, ":") + 1)
+        sub(/^[[:space:]]+/, "", rest)
+        if (rest != "") {
+            n = split(rest, a, " ")
+            for (i = 1; i <= n; i++) print a[i]
+            next
+        }
+        inconf = 1
+        next
+    }
+    inconf {
+        if ($0 !~ /^[[:space:]]/) { inconf = 0; next }
+        gsub(/^[[:space:]]+/, "")
+        if ($0 != "") print
+        next
+    }
+' "$workdir/buildconf.txt")"
 hwaccels_body="$(tail -n +2 "$workdir/hwaccels.txt")"
 
 matrix_has_token() { # <class> <token>
@@ -153,6 +175,29 @@ while IFS= read -r token; do
         needed_missing=$((needed_missing + 1))
     fi
 done < <(matrix_tokens needed)
+
+# ---- 2b. dlopen 引用断言 ----------------------------------------------------
+# ffmpeg 9 起 vapoursynth 等集成改为运行时 dlopen（产物无 DT_NEEDED,
+# 2026-11-17 CI run 43921345810 实测:demuxer 编入但 no libav* links it）。
+# 对产物 strings 查引用名,缺失即断言失败——dlopen 的库不在运行时装上,
+# 链路在 functional/gpu 阶段才暴露,这里先拦静默丢失。
+
+dlopen_missing=0
+while IFS= read -r token; do
+    [[ -n "$token" ]] || continue
+    found=0
+    for obj in "${needed_objects[@]}"; do
+        if strings -a "$obj" 2>/dev/null | grep -qF -- "$token"; then
+            found=1
+            break
+        fi
+    done
+    if (( found == 0 )); then
+        note "MISSING dlopen: ${token} (no libav*/ffmpeg object references it)"
+        errors+=("dlopen:${token}")
+        dlopen_missing=$((dlopen_missing + 1))
+    fi
+done < <(matrix_tokens dlopen)
 
 # ---- 3. 无 GPU 功能链路（编码 → 管道 → 解码 → null） ------------------------
 
@@ -285,6 +330,7 @@ report = {
         "decoder_missing": $decoder_missing,
         "filter_missing": $filter_missing,
         "needed_missing": $needed_missing,
+        "dlopen_missing": $dlopen_missing,
         "elf_failures": $elf_fail,
     },
     "functional": {"passed": functional_pass, "failed": functional_fail},
@@ -296,7 +342,7 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
     handle.write("\n")
 PYEOF
 
-total_missing=$((flag_missing + hwaccel_missing + encoder_missing + decoder_missing + filter_missing + needed_missing))
+total_missing=$((flag_missing + hwaccel_missing + encoder_missing + decoder_missing + filter_missing + needed_missing + dlopen_missing))
 printf 'SUMMARY ffmpeg-features matrix_missing=%d functional_failed=%d elf_failures=%d gpu=%s\n' \
     "$total_missing" "${#functional_fail[@]}" "$elf_fail" "$gpu_status"
 
