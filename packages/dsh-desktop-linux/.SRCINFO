@@ -1,7 +1,7 @@
 pkgbase = dsh-desktop-linux
 	pkgdesc = Official DeepSeek Harness desktop application (Electron shell around a bundled dsh runtime)
 	pkgver = 0.2.2rc3
-	pkgrel = 7
+	pkgrel = 8
 	url = https://github.com/ffyfox/dsh-desktop-linux
 	install = dsh-desktop-linux.install
 	arch = x86_64
