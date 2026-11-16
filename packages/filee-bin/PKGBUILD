@@ -17,7 +17,7 @@
 # package, so /usr/lib/filee can stay root-owned and read-only.
 
 pkgname=filee-bin
-pkgver=2.4.1
+pkgver=2.5.0
 pkgrel=1
 pkgdesc='Offline file converter GUI and CLI (prebuilt upstream Linux x64 release)'
 arch=('x86_64')
@@ -64,7 +64,7 @@ provides=('filee')
 conflicts=('filee')
 options=('!strip' '!debug')
 source=("https://github.com/KnifeLemon/Filee/releases/download/v${pkgver}/Filee-${pkgver}-linux-x64.tar.gz")
-sha256sums=('2d4fd69e9227a640befed7fb5b39a00d3bbef2d73d96806d2a37ec47cd4574ea')
+sha256sums=('ada7ee9cbb00452d93e58813543f223e53d362f9f6389ab83ad938d2a5264900')
 
 check() {
     # The CLI is the only part that starts without a display; this proves the

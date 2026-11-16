@@ -1,6 +1,6 @@
 pkgbase = filee-bin
 	pkgdesc = Offline file converter GUI and CLI (prebuilt upstream Linux x64 release)
-	pkgver = 2.4.1
+	pkgver = 2.5.0
 	pkgrel = 1
 	url = https://github.com/KnifeLemon/Filee
 	arch = x86_64
@@ -42,7 +42,7 @@ pkgbase = filee-bin
 	conflicts = filee
 	options = !strip
 	options = !debug
-	source = https://github.com/KnifeLemon/Filee/releases/download/v2.4.1/Filee-2.4.1-linux-x64.tar.gz
-	sha256sums = 2d4fd69e9227a640befed7fb5b39a00d3bbef2d73d96806d2a37ec47cd4574ea
+	source = https://github.com/KnifeLemon/Filee/releases/download/v2.5.0/Filee-2.5.0-linux-x64.tar.gz
+	sha256sums = ada7ee9cbb00452d93e58813543f223e53d362f9f6389ab83ad938d2a5264900
 
 pkgname = filee-bin
