@@ -67,6 +67,7 @@ jobs:
         shell: bash
         env:
           BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           mkdir -p .cache/upstream
@@ -75,6 +76,7 @@ jobs:
             published_args+=(--published-db /workspace/.cache/published/emoeem.db)
           fi
           docker run --rm \
+            --env GITHUB_TOKEN \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             "$BUILDER_IMAGE" \
             python3 /workspace/scripts/check-upstream-versions.py \

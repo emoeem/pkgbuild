@@ -51,21 +51,42 @@ class UpstreamVersionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)
             report = tmp / 'report.json'
+            env = {k: v for k, v in __import__('os').environ.items() if k != 'GITHUB_TOKEN'}
             subprocess.run([
                 sys.executable, str(ROOT / 'scripts/check-upstream-versions.py'),
                 '--root', str(ROOT), '--config', str(tmp / 'sources.toml'),
                 '--oldver', str(tmp / 'oldver.json'), '--newver', str(tmp / 'newver.json'),
                 '--report', str(report),
-            ], check=True, capture_output=True, text=True)
+            ], check=True, capture_output=True, text=True, env=env)
             config = tomllib.loads((tmp / 'sources.toml').read_text(encoding='utf-8'))
             oldver = json.loads((tmp / 'oldver.json').read_text(encoding='utf-8'))
             expected = {'quirc', 'mpeghdec', 'ffmpeg-full', 'svt-jpeg-xs-git', 'vapoursynth-plugin-mlrt-ncnn-runtime',
                         'lensfun-master', 'whisper-cpp'}
             self.assertIn('__config__', config)
+            self.assertNotIn('keyfile', config['__config__'])
             self.assertEqual(expected, set(oldver))
             self.assertEqual('01bc7cc', oldver['svt-jpeg-xs-git'])
             self.assertEqual('52cf1a7', oldver['lensfun-master'])
             self.assertEqual('1.9.5', oldver['whisper-cpp'])
+
+    def test_github_token_env_injects_keyfile_for_nvchecker(self):
+        # runner IP 池打满匿名 60 req/h 配额导致 github source 403;有
+        # GITHUB_TOKEN 时必须落 keyfile(__config__ 不透传 token)。
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            report = tmp / 'report.json'
+            env = dict(os.environ, GITHUB_TOKEN='ghs_test_token')
+            subprocess.run([
+                sys.executable, str(ROOT / 'scripts/check-upstream-versions.py'),
+                '--root', str(ROOT), '--config', str(tmp / 'sources.toml'),
+                '--oldver', str(tmp / 'oldver.json'), '--newver', str(tmp / 'newver.json'),
+                '--report', str(report),
+            ], check=True, capture_output=True, text=True, env=env)
+            config = tomllib.loads((tmp / 'sources.toml').read_text(encoding='utf-8'))
+            self.assertEqual('keys.toml', config['__config__']['keyfile'])
+            keys = tomllib.loads((tmp / 'keys.toml').read_text(encoding='utf-8'))
+            self.assertEqual('ghs_test_token', keys['keys']['github'])
 
     def test_missing_upstream_results_fail_instead_of_looking_clean(self):
         with self.assertRaisesRegex(ValueError, 'refusing to report a clean scan'):

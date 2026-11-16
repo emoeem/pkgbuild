@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run nvchecker using package-local source definitions and PKGBUILD baselines."""
 from __future__ import annotations
-import argparse, io, json, re, subprocess, sys, tarfile, tomllib
+import argparse, io, json, os, re, subprocess, sys, tarfile, tomllib
 from pathlib import Path
 
 
@@ -204,6 +204,16 @@ def main() -> int:
     # 不该让整轮 upstream-check 变红,nvchecker 逐条目自带重试就消化掉。
     config = {'__config__': {'oldver': str(args.oldver), 'newver': str(args.newver), 'max_concurrency': 4, 'http_timeout': 30, 'tries': 3}}
     config.update(definitions)
+    # github source 匿名访问的 60 req/h 配额按出口 IP 共享,GitHub 托管 runner
+    # 的 IP 池常年被打满(2026-11-16 ffmpeg-full/mpeghdec/quirc/mlrt 四源 403)。
+    # nvchecker 的 __config__ 不透传 token,github source 只认 entry token 或
+    # keyfile([keys] github = ...),所以有 GITHUB_TOKEN 时落 keyfile 注入。
+    # 路径相对 config 所在目录解析,落 .cache/(已 gitignore)不进仓库。
+    token = os.environ.get('GITHUB_TOKEN')
+    if token:
+        keys_path = args.config.parent / 'keys.toml'
+        keys_path.write_text(f'[keys]\ngithub = {json.dumps(token)}\n', encoding='utf-8')
+        config['__config__']['keyfile'] = keys_path.name
     try:
         import tomli_w
         args.config.write_text(tomli_w.dumps(config), encoding='utf-8')
