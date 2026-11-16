@@ -187,7 +187,11 @@ while IFS= read -r token; do
     [[ -n "$token" ]] || continue
     found=0
     for obj in "${needed_objects[@]}"; do
-        if strings -a "$obj" 2>/dev/null | grep -qF -- "$token"; then
+        # grep -q 会在首个命中处立刻退出,strings 对几十 MB 的真产物随后
+        # 吃 SIGPIPE,pipefail 把整个管道判假 → 已引用的库被误报 MISSING
+        # (CI run 43928304170:libavformat 明明含 libvapoursynth-script.so
+        # 仍报 MISSING)。用不带 -q 的 grep 消费完整个输入再判。
+        if [[ -n "$(strings -a "$obj" 2>/dev/null | grep -F -- "$token")" ]]; then
             found=1
             break
         fi
@@ -303,7 +307,9 @@ for obj in "${needed_objects[@]}"; do
     IFS=',' read -r -a banned_list <<<"$banned_substrings"
     for banned in "${banned_list[@]}"; do
         [[ -n "$banned" ]] || continue
-        if strings -a "$obj" 2>/dev/null | grep -qF -- "$banned"; then
+        # 同 dlopen 检查:grep -q 早退会让 strings 对大产物吃 SIGPIPE,
+        # pipefail 反转判定 → 构建树泄漏被静默漏报。
+        if [[ -n "$(strings -a "$obj" 2>/dev/null | grep -F -- "$banned")" ]]; then
             note "ELF leaks build-tree substring '$banned': $obj"
             errors+=("elf:leak:${banned}:$(basename "$obj")")
             elf_fail=$((elf_fail + 1))

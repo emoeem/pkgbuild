@@ -20,6 +20,7 @@ pkgbase = ffmpeg-full
 	makedepends = opencl-headers
 	makedepends = spirv-headers
 	makedepends = vulkan-headers
+	depends = lensfun
 	depends = alsa-lib
 	depends = aom
 	depends = aribb24

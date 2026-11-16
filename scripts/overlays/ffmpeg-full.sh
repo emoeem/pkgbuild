@@ -57,6 +57,40 @@ PY1B
 grep -qF "'git+https://github.com/lensfun/lensfun.git#commit=${lensfun_pin}'" "$pkgbuild" ||
     fail 'the lensfun pin is missing after the rewrite'
 
+# 1c. Keep the lensfun system database path out of the build tree. lensfun's
+#     config.h bakes SYSTEM_DB_PATH from CMAKE_INSTALL_FULL_DATAROOTDIR,
+#     which resolves against CMAKE_INSTALL_PREFIX (= ${srcdir}/staging here),
+#     so the statically linked liblensfun looked for its database at
+#     /build/ffmpeg-full/src/staging/share/lensfun and found nothing at
+#     runtime — a silent lensfun-filter outage (elf:leak:staging, verified
+#     against the published 9.0.2-3.45 artifact on 2026-11-17). Pointing
+#     DATAROOTDIR at an absolute path stops GNUInstallDirs from prefixing it.
+lensfun_datadir_fix='s|-DINSTALL_HELPER_SCRIPTS:BOOL=.OFF.$|& \\\n        -DCMAKE_INSTALL_DATAROOTDIR:PATH=/usr/share|'
+if ! grep -qF 'CMAKE_INSTALL_DATAROOTDIR' "$pkgbuild"; then
+    sed -i "$lensfun_datadir_fix" "$pkgbuild" ||
+        fail 'lensfun datadir fixup failed'
+    grep -qF "-DCMAKE_INSTALL_DATAROOTDIR:PATH=/usr/share" "$pkgbuild" ||
+        fail 'the lensfun datadir line is missing after the rewrite'
+fi
+
+# 1d. Declare the lensfun runtime dependency: the library is statically
+#     linked, so the binary needs the system database (usr/share/lensfun)
+#     shipped by the lensfun package, not the lensfun library itself.
+if ! grep -qE "^[[:space:]]*'lensfun'$" "$pkgbuild"; then
+    python3 - "$pkgbuild" <<'PY1D' || fail 'lensfun depend insertion failed'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text()
+anchor = "depends=(\n"
+if anchor not in text:
+    raise SystemExit('depends=() block not found')
+text = text.replace(anchor, anchor + "    'lensfun'\n", 1)
+path.write_text(text)
+PY1D
+fi
+
 # 2. Declare the cuda runtime dependency for the NPP filters.
 new_optdepend="    'cuda: for NVIDIA NPP filters (scale_npp, transpose_npp, overlay_npp)'"
 if ! grep -qF 'cuda: for NVIDIA NPP filters' "$pkgbuild"; then

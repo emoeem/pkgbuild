@@ -11,6 +11,7 @@ arch=('x86_64')
 url='https://ffmpeg.org/'
 license=('LicenseRef-nonfree-and-unredistributable')
 depends=(
+    'lensfun'
     'alsa-lib'
     'aom'
     'aribb24'
@@ -222,7 +223,8 @@ build() {
         "${_cmake_opts[@]}" \
         -DBUILD_STATIC:BOOL='ON' \
         -DINSTALL_PYTHON_MODULE:BOOL='OFF' \
-        -DINSTALL_HELPER_SCRIPTS:BOOL='OFF'
+        -DINSTALL_HELPER_SCRIPTS:BOOL='OFF' \
+        -DCMAKE_INSTALL_DATAROOTDIR:PATH=/usr/share
     cmake --build build/lensfun --target install
     
     # using whisper-cpp package from the official repositories will cause a circular dependency with ffmpeg,

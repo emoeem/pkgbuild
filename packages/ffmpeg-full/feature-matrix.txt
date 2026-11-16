@@ -18,6 +18,8 @@
 # 修正这里而不是放宽脚本。
 
 # --- configure 开关（overlay 注入 + AUR 原生目标功能） ---
+# 裸 flag "cuda" 在 ffmpeg 9.0.2 已不存在(只有 --enable-cuda-nvcc/--enable-cuda-llvm,
+# 官方 9.0.2 buildconf 与本仓库 PKGBUILD 同);cuda 侧由 ffnvcodec/nvenc/nvdec/cuvid 断言兜底。
 # libnpp 已在 ffmpeg 9.0.2 上游移除("libnpp has been removed and enabling
 # it does nothing",CI run 43921345810),不再断言。
 flag libplacebo
@@ -31,7 +33,6 @@ flag vapoursynth
 flag whisper
 flag vulkan
 flag opencl
-flag cuda
 flag cuvid
 flag nvenc
 flag nvdec
