@@ -235,7 +235,11 @@ build() {
         build/lensfun/config.h
     # CONFIGURE_FILE does not wire config.h into the dependency graph,
     # so a plain rebuild would be a no-op: clean and rebuild the target.
-    cmake --build build/lensfun --target clean lensfun
+    # cmake >= 4 rejects mixing 'clean' with other targets in one --target
+    # list ("Building 'clean' and other targets together is not supported"),
+    # so the clean and the rebuild must be separate invocations.
+    cmake --build build/lensfun --target clean
+    cmake --build build/lensfun --target lensfun
     cmake --install build/lensfun
     
     # using whisper-cpp package from the official repositories will cause a circular dependency with ffmpeg,
