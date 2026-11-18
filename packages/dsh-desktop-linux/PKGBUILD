@@ -16,8 +16,8 @@
 # .SRCINFO from the newest release that ships the x86_64 asset).
 
 pkgname=dsh-desktop-linux
-pkgver=0.2.2rc3
-pkgrel=8
+pkgver=0.2.2rc4
+pkgrel=1
 pkgdesc='Official DeepSeek Harness desktop application (Electron shell around a bundled dsh runtime)'
 arch=('x86_64')
 url='https://github.com/ffyfox/dsh-desktop-linux'
@@ -55,7 +55,7 @@ source=("${_asset}::${_upstream}/v${pkgver}/${_asset}")
 # The source *is* a built package; without this makepkg would unpack it into
 # $srcdir and leave the 1.1 GiB payload lying around twice.
 noextract=("${_asset}")
-sha256sums=('e6f46a4018d4f2d124b88245e98d35d096e4d5f76437c9292469ac0383b640bd')
+sha256sums=('2a76bd2e6410859fe29babb76d9f79c666bb060e7a4bd121460b4615b8d39395')
 
 build() {
     # Nothing compiles. Check that the downloaded asset really is the package
