@@ -1,6 +1,6 @@
 pkgbase = dsh-desktop-linux
 	pkgdesc = Official DeepSeek Harness desktop application (Electron shell around a bundled dsh runtime)
-	pkgver = 0.2.2rc4
+	pkgver = 0.2.2rc5
 	pkgrel = 1
 	url = https://github.com/ffyfox/dsh-desktop-linux
 	install = dsh-desktop-linux.install
@@ -19,11 +19,11 @@ pkgbase = dsh-desktop-linux
 	depends = libdbusmenu-glib
 	optdepends = apparmor: load the bundled AppArmor profile on install
 	conflicts = deepseek-harness-desktop
-	noextract = dsh-desktop-linux-0.2.2rc4-1-x86_64.pkg.tar.zst
+	noextract = dsh-desktop-linux-0.2.2rc5-1-x86_64.pkg.tar.zst
 	options = !strip
 	options = !debug
 	options = !emptydirs
-	source = dsh-desktop-linux-0.2.2rc4-1-x86_64.pkg.tar.zst::https://github.com/ffyfox/dsh-desktop-linux/releases/download/v0.2.2rc4/dsh-desktop-linux-0.2.2rc4-1-x86_64.pkg.tar.zst
-	sha256sums = 2a76bd2e6410859fe29babb76d9f79c666bb060e7a4bd121460b4615b8d39395
+	source = dsh-desktop-linux-0.2.2rc5-1-x86_64.pkg.tar.zst::https://github.com/ffyfox/dsh-desktop-linux/releases/download/v0.2.2rc5/dsh-desktop-linux-0.2.2rc5-1-x86_64.pkg.tar.zst
+	sha256sums = 5ee11541f4f19d23b5743a7eb05c918e1e6cb67e19ca0f5cc27e1dff9c18f8af
 
 pkgname = dsh-desktop-linux
