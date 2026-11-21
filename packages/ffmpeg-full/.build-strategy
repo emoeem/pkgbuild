@@ -1,3 +1,5 @@
 source
 # Compiled from source (AUR mirror + overlay); rebuilds on dependency drift and soname breaks.
 # Re-trigger (2026-11-21): install-retry after mid-build conflicts (5b31cc9).
+
+# re-trigger 2 (2026-11-21): mirror-retry e3e5ebf lands with a package-path change.
