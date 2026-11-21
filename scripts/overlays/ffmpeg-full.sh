@@ -89,7 +89,11 @@ replacement = anchor + """    # lensfun bakes SYSTEM_DB_PATH from CMAKE_INSTALL_
         build/lensfun/config.h
     # CONFIGURE_FILE does not wire config.h into the dependency graph,
     # so a plain rebuild would be a no-op: clean and rebuild the target.
-    cmake --build build/lensfun --target clean lensfun
+    # cmake >= 4 rejects mixing 'clean' with other targets in one --target
+    # list ("Building 'clean' and other targets together is not supported",
+    # run 44788431213), so the clean and the rebuild are separate invocations.
+    cmake --build build/lensfun --target clean
+    cmake --build build/lensfun --target lensfun
     cmake --install build/lensfun
 """
 path.write_text(text.replace(anchor, replacement, 1))
