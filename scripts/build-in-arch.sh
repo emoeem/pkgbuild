@@ -374,10 +374,12 @@ if command -v python3 >/dev/null 2>&1; then
     # Stamp every line with a wall clock timestamp so makepkg's phase banners
     # ("==> Starting build()...") become a measured download/compile/package
     # breakdown instead of a guess.
-    run_build 2>&1 | python3 "$stamper" stamp --log "$build_log" ||
-        yay_status="${PIPESTATUS[0]}"
+    retry_transient 3 60 -- bash -c '
+        run_build 2>&1 | python3 "$1" stamp --log "$2"
+        exit "${PIPESTATUS[0]}"
+    ' _ "$stamper" "$build_log" || yay_status=$?
 else
-    run_build || yay_status=$?
+    retry_transient 3 60 -- run_build || yay_status=$?
 fi
 timing_end build "$([[ "$yay_status" == "0" ]] && echo ok || echo failed)"
 
