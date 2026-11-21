@@ -5,3 +5,5 @@ source
 # re-trigger 2 (2026-11-21): mirror-retry e3e5ebf lands with a package-path change.
 
 # re-trigger 3 (2026-11-21): retry wrapper scope fix.
+
+# re-trigger 4 (2026-11-21): staging leak hardening + assertions.

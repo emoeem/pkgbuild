@@ -69,7 +69,7 @@ grep -qF "'git+https://github.com/lensfun/lensfun.git#commit=${lensfun_pin}'" "$
 #     install into staging, patch the generated config.h to the runtime
 #     location, rebuild the static library and reinstall it.
 lensfun_patch='s|#define SYSTEM_DB_PATH .*|#define SYSTEM_DB_PATH "/usr/share/lensfun"|'
-if ! grep -qF 'SYSTEM_DB_PATH "/usr/share/lensfun"' "$pkgbuild"; then
+if ! grep -qF 'liblensfun.a still carries the staging prefix' "$pkgbuild"; then
     python3 - "$pkgbuild" <<'PY1C' || fail 'lensfun datadir fixup failed'
 import sys
 from pathlib import Path
@@ -85,8 +85,20 @@ replacement = anchor + """    # lensfun bakes SYSTEM_DB_PATH from CMAKE_INSTALL_
     # the lensfun filter would find nothing at runtime. Install into staging
     # (fakeroot cannot write /usr/share), then patch the generated config.h to
     # the real runtime location and rebuild + reinstall the static library.
-    sed -i 's|#define SYSTEM_DB_PATH .*|#define SYSTEM_DB_PATH "/usr/share/lensfun"|' \\
+    # Run 44858172826 proved a SYSTEM_DB_PATH-only rewrite is not enough: the
+    # rebuilt liblensfun.a still carried a staging reference and the post-build
+    # feature gate failed on elf:leak. Rewrite every staging path in config.h
+    # (SYSTEM_DB_PATH first for the runtime DB location, then any other baked
+    # prefix), assert the file is clean, and force the second install to
+    # actually replace the previously installed archive.
+    sed -i -e 's|#define SYSTEM_DB_PATH .*|#define SYSTEM_DB_PATH "/usr/share/lensfun"|' \\
+        -e "s|${_stagingdir}|/usr/share|g" \\
         build/lensfun/config.h
+    if grep -qF "${_stagingdir}" build/lensfun/config.h; then
+        printf 'lensfun config.h still references the staging prefix:\\n'
+        grep -nF "${_stagingdir}" build/lensfun/config.h
+        exit 1
+    fi
     # CONFIGURE_FILE does not wire config.h into the dependency graph,
     # so a plain rebuild would be a no-op: clean and rebuild the target.
     # cmake >= 4 rejects mixing 'clean' with other targets in one --target
@@ -94,11 +106,19 @@ replacement = anchor + """    # lensfun bakes SYSTEM_DB_PATH from CMAKE_INSTALL_
     # run 44788431213), so the clean and the rebuild are separate invocations.
     cmake --build build/lensfun --target clean
     cmake --build build/lensfun --target lensfun
+    # cmake's file(INSTALL) skips byte-identical targets ("Up-to-date"); the
+    # archive left by the first install is exactly the staging-flavoured build
+    # being replaced, so remove it to make the reinstall unconditional.
+    rm -f "${_stagingdir}/lib/liblensfun.a"
     cmake --install build/lensfun
+    if strings -a "${_stagingdir}/lib/liblensfun.a" | grep -F "${_stagingdir}"; then
+        printf 'liblensfun.a still carries the staging prefix after the rebuild.\\n'
+        exit 1
+    fi
 """
 path.write_text(text.replace(anchor, replacement, 1))
 PY1C
-    grep -qF 'SYSTEM_DB_PATH "/usr/share/lensfun"' "$pkgbuild" ||
+    grep -qF 'liblensfun.a still carries the staging prefix' "$pkgbuild" ||
         fail 'the lensfun SYSTEM_DB_PATH patch is missing after the rewrite'
 fi
 
