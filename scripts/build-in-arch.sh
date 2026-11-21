@@ -373,11 +373,14 @@ yay_status=0
 if command -v python3 >/dev/null 2>&1; then
     # Stamp every line with a wall clock timestamp so makepkg's phase banners
     # ("==> Starting build()...") become a measured download/compile/package
-    # breakdown instead of a guess.
-    retry_transient 3 60 -- bash -c '
-        run_build 2>&1 | python3 "$1" stamp --log "$2"
-        exit "${PIPESTATUS[0]}"
-    ' _ "$stamper" "$build_log" || yay_status=$?
+    # breakdown instead of a guess. The retry lives in a wrapper function so
+    # retry_transient can re-invoke run_build in this shell (a bash -c body
+    # would not see the function; run 44856541278 died on exactly that).
+    retry_build() {
+        run_build 2>&1 | python3 "$stamper" stamp --log "$build_log"
+        return "${PIPESTATUS[0]}"
+    }
+    retry_transient 3 60 -- retry_build || yay_status=$?
 else
     retry_transient 3 60 -- run_build || yay_status=$?
 fi

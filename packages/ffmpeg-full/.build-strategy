@@ -3,3 +3,5 @@ source
 # Re-trigger (2026-11-21): install-retry after mid-build conflicts (5b31cc9).
 
 # re-trigger 2 (2026-11-21): mirror-retry e3e5ebf lands with a package-path change.
+
+# re-trigger 3 (2026-11-21): retry wrapper scope fix.
