@@ -410,6 +410,30 @@ if (( yay_status != 0 )); then
     printf 'yay exited with status %d after producing package files; verification continues on the produced artifacts.\n' "$yay_status" >&2
 fi
 
+# 预移除循环（conflicts 清理）跑在 yay 之前：构建时 yay 的依赖事务可能把与本
+# 包 conflicts 的仓库包带进来（chaotic opencv4 depends ffmpeg，ffmpeg-full 的
+# 收尾 pacman -U 就撞上 ffmpeg 2:9.1，run 44851491594），预移除时它还不在系统
+# 里。这里在产物已生成后再清一次；运行时校验按「已安装」检查 /usr/bin/<binary>，
+# 收尾没装上会让 verify/smoke 全部报缺失。
+if (( yay_status != 0 )); then
+    for conflict in "${declared_conflicts[@]}"; do
+        if pacman -Qi -- "$conflict" >/dev/null 2>&1; then
+            printf 'Post-build removal of %s (declared in conflicts=): yay exit %d was likely the conflict prompt.\n' \
+                "$conflict" "$yay_status"
+            pacman -Rdd --noconfirm -- "$conflict"
+        fi
+    done
+    printf 'Retrying the install of produced packages...\n'
+    as_builder yay -Bi "$package_dir" \
+        --noconfirm \
+        --needed \
+        --pgpfetch \
+        --noremovemake \
+        --sudoloop \
+        --answerclean None \
+        --answerdiff None || yay_status=$?
+fi
+
 if [[ "$CLEAN_CHROOT_BUILD" == "1" ]]; then
     # chroot 模式的包在 chroot 内构建,外层容器从未安装它;运行时校验按
     # 「已安装」检查 /usr/bin/<binary>,先把产物装进容器(等价于 legacy 里
