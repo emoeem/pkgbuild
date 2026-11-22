@@ -140,6 +140,40 @@ path.write_text(text)
 PY1D
 fi
 
+# 1e. ffmpeg 9.1's libastcenc feature check compiles <astcenc/astcenc.h>, but
+#     the astc-encoder package ships the header flat (/usr/include/astcenc.h;
+#     the CachyOS v3 repositories do not carry the package at all, so yay
+#     builds the flat-layout AUR version at build time). AUR's prepare()
+#     symlinks the flat header to include/astcenc/astcenc.h under $startdir,
+#     but ffmpeg's configure never searches that tree, so the check dies with
+#     "libastcenc not found" (CI run 44995240968). Two halves: retarget the
+#     symlink when it dangles (here), and put the tree on the compiler's
+#     search path in the flag block (step 3b). Skipped for AUR trees that do
+#     not declare the symlink at all (pre-9.1 baselines).
+if grep -qF 'ln -sf /usr/include/astcenc.h include/astcenc/astcenc.h' "$pkgbuild" &&
+   ! grep -qF "configure dies with \"libastcenc not found\"" "$pkgbuild"; then
+    python3 - "$pkgbuild" <<'PY1E' || fail 'astcenc include fixup failed'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text()
+anchor = "    ln -sf /usr/include/astcenc.h include/astcenc/astcenc.h\n"
+if anchor not in text:
+    raise SystemExit('astcenc symlink anchor not found')
+replacement = anchor + """    # The astc-encoder package ships the header flat (/usr/include/astcenc.h,
+    # the AUR build installed by yay here) or in a subdirectory
+    # (/usr/include/astcenc/astcenc.h); when the flat header is absent the
+    # symlink above dangles and configure dies with "libastcenc not found".
+    [[ -e include/astcenc/astcenc.h ]] ||
+        ln -sf /usr/include/astcenc/astcenc.h include/astcenc/astcenc.h
+"""
+path.write_text(text.replace(anchor, replacement, 1))
+PY1E
+    grep -qF "configure dies with \"libastcenc not found\"" "$pkgbuild" ||
+        fail 'the astcenc symlink retarget is missing after the rewrite'
+fi
+
 # 2. Declare the cuda runtime dependency for the NPP filters.
 new_optdepend="    'cuda: for NVIDIA NPP filters (scale_npp, transpose_npp, overlay_npp)'"
 if ! grep -qF 'cuda: for NVIDIA NPP filters' "$pkgbuild"; then
@@ -221,6 +255,14 @@ block = """    # Do not inherit the repository host's -march=native.
 
     # fix build of libavfilter/asrc_flite.c with gcc 14+
     export CFLAGS+=' -Wno-error=incompatible-pointer-types'
+
+    # ffmpeg 9.1's libastcenc feature check compiles <astcenc/astcenc.h> while
+    # the astc-encoder package ships the header flat (/usr/include/astcenc.h):
+    # prepare() builds an include/astcenc tree under $startdir and this flag
+    # puts it on the compiler's search path for the check and the build. The
+    # directory may not exist on pre-9.1 baselines; an absent -I path is
+    # harmless to gcc.
+    export CFLAGS+=" -I${startdir}/include"
 
 """
 p.write_text(s[:start] + block + s[end:])

@@ -442,6 +442,14 @@ grep -qF '080-ffmpeg-openapv1.1-fix.patch' "$overlay_fixture/PKGBUILD" \
     && fail 'overlay re-declared the openapv patch for an ffmpeg that carries the fix upstream'
 grep -qE '^    patch .*openapv.*[.]patch' "$overlay_fixture/PKGBUILD" \
     && fail 'overlay re-applied the openapv patch for an ffmpeg that carries the fix upstream'
+# ffmpeg 9.1's libastcenc check compiles <astcenc/astcenc.h> while the
+# astc-encoder package ships the header flat; the overlay must retarget AUR's
+# dangling symlink and put the include tree on the compiler's search path.
+grep -qF 'ln -sf /usr/include/astcenc/astcenc.h include/astcenc/astcenc.h' \
+    "$overlay_fixture/PKGBUILD" \
+    || fail 'overlay did not add the astcenc symlink retarget'
+grep -qF 'export CFLAGS+=" -I${startdir}/include"' "$overlay_fixture/PKGBUILD" \
+    || fail 'overlay did not put the astcenc include tree on the search path'
 
 # Scenario D: ffmpeg 9.1+ but AUR still declares the patch. Applying it would
 # die in prepare() ("Reversed (or previously applied) patch detected"); the

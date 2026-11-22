@@ -195,6 +195,12 @@ prepare() {
     # ffmpeg includes the astc-encoder header from <astcenc/astcenc.h> instead of using just <astcenc.h>
     mkdir -p include/astcenc
     ln -sf /usr/include/astcenc.h include/astcenc/astcenc.h
+    # The astc-encoder package ships the header flat (/usr/include/astcenc.h,
+    # the AUR build installed by yay here) or in a subdirectory
+    # (/usr/include/astcenc/astcenc.h); when the flat header is absent the
+    # symlink above dangles and configure dies with "libastcenc not found".
+    [[ -e include/astcenc/astcenc.h ]] ||
+        ln -sf /usr/include/astcenc/astcenc.h include/astcenc/astcenc.h
     
     rm -f "ffmpeg-${pkgver}/libavcodec"/libsvt_{hevc,vp9}.c
     patch -d "ffmpeg-${pkgver}" -Np1 -i "${srcdir}/010-ffmpeg-add-svt-hevc.patch"
@@ -286,6 +292,14 @@ build() {
 
     # fix build of libavfilter/asrc_flite.c with gcc 14+
     export CFLAGS+=' -Wno-error=incompatible-pointer-types'
+
+    # ffmpeg 9.1's libastcenc feature check compiles <astcenc/astcenc.h> while
+    # the astc-encoder package ships the header flat (/usr/include/astcenc.h):
+    # prepare() builds an include/astcenc tree under $startdir and this flag
+    # puts it on the compiler's search path for the check and the build. The
+    # directory may not exist on pre-9.1 baselines; an absent -I path is
+    # harmless to gcc.
+    export CFLAGS+=" -I${startdir}/include"
 
     ./configure \
         --prefix='/usr' \
