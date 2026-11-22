@@ -227,14 +227,25 @@ p.write_text(s[:start] + block + s[end:])
 PY2
 
 # 3c. openapv 1.1 (API set 1) changed oapvm_create() to take a descriptor
-#     argument, so the liboapv encoder of ffmpeg 9.0.2 no longer compiles.
+#     argument, so the liboapv encoder of ffmpeg 9.0.x no longer compiles.
 #     Without the upstream fix (FFmpeg commit c54710db) a rebuild against
 #     openapv 1.1.1.0 fails, while the already published ffmpeg-full still
 #     needs the removed liboapv.so.2 -- which breaks every consumer of
 #     libavcodec, mpv included.
 #
-#     This repository vendors that commit as 080-ffmpeg-openapv1.1-fix.patch
-#     instead of fetching it from code.ffmpeg.org: that endpoint re-renders the
+#     FFmpeg absorbed the fix upstream and first shipped it in 9.1; AUR
+#     dropped the patch in the same commit that bumped to 9.1. The vendored
+#     copy is therefore version-gated: while the tracked release predates the
+#     upstream fix the overlay keeps injecting it (an AUR that stops carrying
+#     it must not silently build without the fix), and from 9.1 on it must
+#     stay out -- re-applying the patch to the fixed source fails in prepare()
+#     ("Reversed (or previously applied) patch detected"). A release that
+#     carries the fix while AUR still declares an openapv patch is an
+#     upstream inconsistency and fails the sync loudly instead of being
+#     patched over.
+#
+#     While vendored: this repository carries the commit as a file instead of
+#     fetching it from code.ffmpeg.org: that endpoint re-renders the
 #     patch text, so its `index` abbreviation changes under a constant commit id
 #     and a remote checksum goes stale. AUR meanwhile declares the patch as a
 #     URL source. Both forms must agree: makepkg resolves a file source from
@@ -245,8 +256,24 @@ PY2
 #     checksum is the hash of the committed file.
 oapv_patch='080-ffmpeg-openapv1.1-fix.patch'
 oapv_path="${package_dir}/${oapv_patch}"
-[[ -f "$oapv_path" ]] || fail "vendored openapv patch is missing: ${oapv_patch}"
-oapv_sum="$(sha256sum -- "$oapv_path" | cut -d' ' -f1)"
+
+pkgver="$(sed -nE 's/^pkgver=([0-9.]+)$/\1/p' "$pkgbuild")"
+[[ -n "$pkgver" ]] || fail 'unable to parse a numeric pkgver for the openapv gate'
+oapv_fix_upstream="$(python3 - "$pkgver" <<'PY0'
+import sys
+
+pkgver = tuple(int(part) for part in sys.argv[1].split('.'))
+print('yes' if pkgver >= (9, 1) else 'no')
+PY0
+)"
+[[ "$oapv_fix_upstream" == yes || "$oapv_fix_upstream" == no ]] ||
+    fail "unable to compare the ffmpeg version for the openapv gate: ${pkgver}"
+
+if [[ "$oapv_fix_upstream" == no ]]; then
+    [[ -f "$oapv_path" ]] || fail "vendored openapv patch is missing: ${oapv_patch}"
+    oapv_sum="$(sha256sum -- "$oapv_path" | cut -d' ' -f1)"
+fi
+oapv_sum="${oapv_sum:-}"
 
 # AUR's .SRCINFO supplies the source/checksum ordering used below. Refresh it
 # from the PKGBUILD first when possible so a stale AUR copy cannot shift the
@@ -257,7 +284,7 @@ if command -v makepkg > /dev/null 2>&1 && (( EUID != 0 )); then
         fail 'unable to refresh .SRCINFO before reconciling the openapv patch'
 fi
 
-python3 - "$pkgbuild" "$srcinfo" "$oapv_patch" "$oapv_sum" <<'PY3'
+python3 - "$pkgbuild" "$srcinfo" "$oapv_patch" "$oapv_sum" "$oapv_fix_upstream" <<'PY3'
 from pathlib import Path
 import re
 import sys
@@ -266,6 +293,7 @@ pkgbuild_path = Path(sys.argv[1])
 srcinfo_path = Path(sys.argv[2])
 patch_name = sys.argv[3]
 patch_sum = sys.argv[4]
+upstream = sys.argv[5]
 markers = ('openapv', 'c54710db')
 
 
@@ -308,6 +336,16 @@ matches = [i for i, spec in enumerate(sources) if any(m in spec for m in markers
 if len(matches) > 1:
     fail('more than one openapv source entry in .SRCINFO')
 index = matches[0] if matches else None
+
+if upstream == 'yes':
+    # The tracked ffmpeg release carries the fix (9.1 and later): the source
+    # list must not declare the patch, or prepare() would re-apply hunks that
+    # are already upstream ("Reversed (or previously applied) patch detected").
+    if index is not None:
+        fail('ffmpeg >= 9.1 carries the openapv 1.1 fix upstream, but the '
+             'source list still declares an openapv patch: ' + sources[index])
+    # Nothing to edit in this mode; the caller retires the vendored copy.
+    sys.exit(0)
 
 text = pkgbuild_path.read_text()
 source_decl = re.search(r'^source=\(', text, re.M)
@@ -385,9 +423,14 @@ else:
     position = sums_decl.end() + match.end()
     text = text[:position] + f"\n{match.group(1)}'{patch_sum}'" + text[position:]
 
-    match = re.search(r'^([ \t]*).*050-ffmpeg-fix-cuda-nvcc-with-gcc14[.]patch[^\n]*$', text, re.M)
+    # Anchor on the prepare() line that APPLIES the 050 patch, not on the first
+    # mention of the name: the source array also lists the patch, and matching
+    # that entry would splice the "patch -d ..." command into source=(),
+    # splitting it into bogus array elements (ffmpeg-full 9.1 sync, 2026-11-22,
+    # caught by check-package as "lists a missing local source: patch").
+    match = re.search(r'^([ \t]*)patch [^\n]*050-ffmpeg-fix-cuda-nvcc-with-gcc14[.]patch[^\n]*$', text, re.M)
     if not match:
-        fail('prepare() has no 050-ffmpeg-fix-cuda-nvcc-with-gcc14.patch line')
+        fail('prepare() has no 050-ffmpeg-fix-cuda-nvcc-with-gcc14.patch apply line')
     position = match.end()
     text = (text[:position] +
             f'\n    patch -d "ffmpeg-${{pkgver}}" -Np1 -i "${{srcdir}}/{patch_name}"' +
@@ -413,14 +456,19 @@ if len(applied) != 1:
     fail('the vendored openapv patch is not applied exactly once in prepare()')
 PY3
 
-[[ "$(grep -cF "'${oapv_patch}'" "$pkgbuild")" == 1 ]] ||
-    fail 'the vendored openapv source entry is missing or duplicated in PKGBUILD'
-[[ "$(grep -cF "'${oapv_sum}'" "$pkgbuild")" == 1 ]] ||
-    fail 'the vendored openapv checksum is missing or duplicated in PKGBUILD'
-grep -qF "'${oapv_patch}'::" "$pkgbuild" &&
-    fail 'the openapv source still points at a remote URL'
-[[ "$(grep -cE '^    patch .*openapv.*[.]patch' "$pkgbuild")" == 1 ]] ||
-    fail 'the openapv patch is not applied exactly once in prepare()'
+if [[ "$oapv_fix_upstream" == yes ]]; then
+    rm -f -- "$oapv_path"
+    printf 'ffmpeg-full overlay: openapv 1.1 fix is upstream since 9.1; the vendored patch is retired.\n'
+else
+    [[ "$(grep -cF "'${oapv_patch}'" "$pkgbuild")" == 1 ]] ||
+        fail 'the vendored openapv source entry is missing or duplicated in PKGBUILD'
+    [[ "$(grep -cF "'${oapv_sum}'" "$pkgbuild")" == 1 ]] ||
+        fail 'the vendored openapv checksum is missing or duplicated in PKGBUILD'
+    grep -qF "'${oapv_patch}'::" "$pkgbuild" &&
+        fail 'the openapv source still points at a remote URL'
+    [[ "$(grep -cE '^    patch .*openapv.*[.]patch' "$pkgbuild")" == 1 ]] ||
+        fail 'the openapv patch is not applied exactly once in prepare()'
+fi
 
 # 4. Mirror the changes into .SRCINFO: regenerate with makepkg when available
 #    (local sync runs); patch the two changed entries textually otherwise
@@ -466,5 +514,10 @@ grep -qE "$(printf '\t')pkgrel = ${final_pkgrel}$" "$srcinfo" ||
 [[ "$(grep -cF 'optdepends = cuda: for NVIDIA NPP filters' "$srcinfo")" == 1 ]] ||
     fail 'cuda optdepend duplicated or missing in .SRCINFO'
 
-printf 'ffmpeg-full overlay applied: libnpp enabled, openapv 1.1 fix from the vendored patch, pkgrel %s.\n' \
-    "$final_pkgrel"
+if [[ "$oapv_fix_upstream" == yes ]]; then
+    printf 'ffmpeg-full overlay applied: libnpp enabled, openapv 1.1 fix upstream, pkgrel %s.\n' \
+        "$final_pkgrel"
+else
+    printf 'ffmpeg-full overlay applied: libnpp enabled, openapv 1.1 fix from the vendored patch, pkgrel %s.\n' \
+        "$final_pkgrel"
+fi

@@ -247,16 +247,69 @@ printf '%s' "$out" | grep -Fq 'mine.patch shadows the remote source' \
 printf '%s' "$out" | grep -Fq 'the build would hash' \
     || fail 'validator did not explain that makepkg prefers the package-dir copy'
 
-printf '%s\n' '14: verify the ffmpeg-full overlay restores the vendored openapv patch after an AUR sync'
-# Reproduce the 2026-10-27 sync: AUR declares 080 as a URL with its own
-# checksum while the repository keeps the vendored bytes. The overlay must
-# reconcile the declaration to the committed file on every run.
+printf '%s\n' '14: verify the ffmpeg-full overlay gates the vendored openapv patch by ffmpeg version'
+# Pre-9.1 releases need the vendored openapv 1.1 fix (FFmpeg commit c54710db):
+# the overlay must reconcile AUR's URL declaration to the committed file
+# (2026-10-27 sync) and re-inject the patch when AUR drops it. From 9.1 on the
+# fix is upstream: the vendored copy must retire, and an AUR that still
+# declares the patch for such a release must fail the sync instead of being
+# applied on top of already-fixed code.
 overlay_fixture="$work/ffmpeg-full"
-mkdir -p "$overlay_fixture"
-cp "$root/packages/ffmpeg-full/PKGBUILD" "$root/packages/ffmpeg-full/.SRCINFO" \
-    "$root/packages/ffmpeg-full/.lensfun-pin" "$root/packages/ffmpeg-full"/0*.patch "$overlay_fixture/"
-vendored_sum="$(sha256sum "$overlay_fixture/080-ffmpeg-openapv1.1-fix.patch" | cut -d' ' -f1)"
-python3 - "$overlay_fixture/PKGBUILD" "$overlay_fixture/.SRCINFO" "$vendored_sum" <<'PY'
+make_oapv_fixture() {
+    rm -rf "$overlay_fixture"
+    mkdir -p "$overlay_fixture"
+    cp "$root/packages/ffmpeg-full/PKGBUILD" "$root/packages/ffmpeg-full/.SRCINFO" \
+        "$root/packages/ffmpeg-full/.lensfun-pin" "$root/packages/ffmpeg-full"/0*.patch "$overlay_fixture/"
+    printf 'synthetic openapv 1.1 fix\n' >"$overlay_fixture/080-ffmpeg-openapv1.1-fix.patch"
+}
+oapv_patch_sum() {
+    sha256sum "$overlay_fixture/080-ffmpeg-openapv1.1-fix.patch" | cut -d' ' -f1
+}
+# Adds the plain vendored 080 entry (source, checksum, prepare() apply line)
+# to a PKGBUILD/.SRCINFO pair that does not declare it.
+add_vendored_oapv() {
+    python3 - "$overlay_fixture/PKGBUILD" "$overlay_fixture/.SRCINFO" "$(oapv_patch_sum)" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+pkgbuild, srcinfo, patch_sum = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+patch_name = '080-ffmpeg-openapv1.1-fix.patch'
+
+text = pkgbuild.read_text()
+anchor = re.search(r"^([ \t]*)'070-ffmpeg-whisper[.]cpp-fix-pkgconfig[.]patch'[^\n]*$", text, re.M)
+assert anchor, 'no 070 source entry to anchor the vendored openapv patch'
+text = text[:anchor.end()] + '\n' + anchor.group(1) + f"'{patch_name}'" + text[anchor.end():]
+apply_line = re.search(r'^([ \t]*)patch [^\n]*050-ffmpeg-fix-cuda-nvcc-with-gcc14[.]patch[^\n]*$',
+                       text, re.M)
+assert apply_line, 'no 050 apply line to anchor the openapv prepare() call'
+text = text[:apply_line.end()] + \
+    f'\n{apply_line.group(1)}patch -d "ffmpeg-${{pkgver}}" -Np1 -i "${{srcdir}}/{patch_name}"' + \
+    text[apply_line.end():]
+# The 080 source goes last-but-one (after 070, before LICENSE), so its
+# checksum must land immediately before the LICENSE checksum to keep the
+# source/sum pairing positional.
+license_sum = re.search(r"^([ \t]*)'[0-9a-f]{64}'\)\s*$", text, re.M)
+assert license_sum, 'no LICENSE checksum entry to anchor the openapv checksum'
+text = text[:license_sum.start()] + \
+    f"{license_sum.group(1)}'{patch_sum}'\n" + text[license_sum.start():]
+pkgbuild.write_text(text)
+
+rows = srcinfo.read_text().splitlines(keepends=True)
+source_rows = [i for i, row in enumerate(rows) if row.startswith('\tsource = ')]
+sum_rows = [i for i, row in enumerate(rows) if row.startswith('\tsha256sums = ')]
+anchor_pos = next(i for i, spec in enumerate(source_rows)
+                  if '070-ffmpeg-whisper' in rows[source_rows[i]])
+sum_insert = sum_rows[anchor_pos] + 1
+source_insert = source_rows[anchor_pos] + 1
+rows.insert(sum_insert, f'\tsha256sums = {patch_sum}\n')
+rows.insert(source_insert, f'\tsource = {patch_name}\n')
+srcinfo.write_text(''.join(rows))
+PY
+}
+# Converts the plain vendored 080 entry into AUR's URL declaration form.
+declare_oapv_url() {
+    python3 - "$overlay_fixture/PKGBUILD" "$overlay_fixture/.SRCINFO" "$(oapv_patch_sum)" <<'PY'
 from pathlib import Path
 import sys
 
@@ -277,6 +330,67 @@ text = text.replace(f'\tsha256sums = {vendored_sum}\n',
                     f'\tsha256sums = {remote_sum}\n', 1)
 srcinfo.write_text(text)
 PY
+}
+# Removes every 080 declaration (AUR stopped carrying the patch). Works on
+# both the plain vendored form and AUR's URL form: the checksum to remove is
+# found through the .SRCINFO source/sum pairing, not by value.
+strip_oapv() {
+    python3 - "$overlay_fixture/PKGBUILD" "$overlay_fixture/.SRCINFO" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+pkgbuild, srcinfo = Path(sys.argv[1]), Path(sys.argv[2])
+patch_name = '080-ffmpeg-openapv1.1-fix.patch'
+
+rows = srcinfo.read_text().splitlines(keepends=True)
+source_rows = [i for i, row in enumerate(rows) if row.startswith('\tsource = ')]
+sum_rows = [i for i, row in enumerate(rows) if row.startswith('\tsha256sums = ')]
+index = next((i for i, row in enumerate(source_rows)
+              if patch_name in rows[source_rows[i]]), None)
+patch_sum = None
+if index is not None:
+    patch_sum = rows[sum_rows[index]].split(' = ', 1)[1].strip()
+    del rows[sum_rows[index]]
+    del rows[source_rows[index]]
+    srcinfo.write_text(''.join(rows))
+
+text = pkgbuild.read_text()
+if patch_sum:
+    text = text.replace(f"            '{patch_sum}'\n", '', 1)
+text = re.sub(r"^[ \t]*'" + re.escape(patch_name) + r"'(?:::)?[^\n]*\n", '',
+              text, count=1, flags=re.M)
+text = '\n'.join(line for line in text.splitlines()
+                 if not (line.lstrip().startswith('patch') and 'openapv' in line)) + '\n'
+pkgbuild.write_text(text)
+PY
+}
+# The 2026-11-22 regression: the prepare() re-injection anchor matched the 050
+# entry inside source=() and spliced the "patch -d ..." command into the
+# array. Every fixture that runs the overlay re-asserts the array shape.
+assert_source_block_quoted() {
+    python3 - "$overlay_fixture/PKGBUILD" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+match = re.search(r'^source=\([^\n]*\n(.*?)^[^\n]*\)\s*$', text, re.M | re.S)
+assert match, 'source=() block not found'
+lines = match.group(1).splitlines()
+bad = [line for line in lines if line.strip() and not re.match(r"^\s*['\"]", line)]
+assert not bad, 'unquoted tokens inside source=(): %r' % bad
+PY
+}
+
+# Scenario A: a pre-9.1 ffmpeg where AUR declares 080 as a URL. The overlay
+# must reconcile the declaration to the vendored bytes.
+make_oapv_fixture
+strip_oapv
+sed -i 's/^pkgver=.*/pkgver=9.0.2/' "$overlay_fixture/PKGBUILD"
+add_vendored_oapv
+declare_oapv_url
+vendored_sum="$(oapv_patch_sum)"
 bash "$root/scripts/overlays/ffmpeg-full.sh" "$overlay_fixture" >/dev/null \
     || fail 'ffmpeg-full overlay failed on an AUR-style PKGBUILD'
 grep -qF "        '080-ffmpeg-openapv1.1-fix.patch'" "$overlay_fixture/PKGBUILD" \
@@ -292,6 +406,7 @@ grep -qF "lensfun.git#commit=${lensfun_pin}" "$overlay_fixture/PKGBUILD" \
     || fail 'overlay did not (re-)apply the vendored lensfun pin to the AUR-style PKGBUILD'
 bash -n "$overlay_fixture/PKGBUILD" \
     || fail 'the overlaid ffmpeg PKGBUILD does not parse'
+assert_source_block_quoted
 grep -qF "	sha256sums = $vendored_sum" "$overlay_fixture/.SRCINFO" \
     || fail 'overlay did not restore the openapv checksum in .SRCINFO'
 first_sum="$(sha256sum "$overlay_fixture/PKGBUILD" | cut -d' ' -f1)"
@@ -299,25 +414,10 @@ bash "$root/scripts/overlays/ffmpeg-full.sh" "$overlay_fixture" >/dev/null \
     || fail 'ffmpeg-full overlay is not idempotent'
 [[ "$(sha256sum "$overlay_fixture/PKGBUILD" | cut -d' ' -f1)" == "$first_sum" ]] \
     || fail 're-running the ffmpeg-full overlay rewrote the PKGBUILD'
-# And if AUR drops the patch entirely, the overlay must add the committed copy
-# back instead of building without the openapv 1.1 fix.
-python3 - "$overlay_fixture/PKGBUILD" "$overlay_fixture/.SRCINFO" "$vendored_sum" <<'PY'
-from pathlib import Path
-import sys
 
-pkgbuild, srcinfo, vendored_sum = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-text = pkgbuild.read_text()
-text = text.replace("        '080-ffmpeg-openapv1.1-fix.patch'\n", '', 1)
-text = text.replace(f"            '{vendored_sum}'\n", '', 1)
-text = '\n'.join(line for line in text.splitlines()
-                 if not (line.lstrip().startswith('patch') and 'openapv' in line)) + '\n'
-pkgbuild.write_text(text)
-
-text = srcinfo.read_text()
-text = text.replace('\tsource = 080-ffmpeg-openapv1.1-fix.patch\n', '', 1)
-text = text.replace(f'\tsha256sums = {vendored_sum}\n', '', 1)
-srcinfo.write_text(text)
-PY
+# Scenario B: a pre-9.1 ffmpeg where AUR drops the patch entirely. The overlay
+# must add the committed copy back instead of building without the fix.
+strip_oapv
 bash "$root/scripts/overlays/ffmpeg-full.sh" "$overlay_fixture" >/dev/null \
     || fail 'ffmpeg-full overlay failed to re-inject a missing openapv patch'
 grep -qF "        '080-ffmpeg-openapv1.1-fix.patch'" "$overlay_fixture/PKGBUILD" \
@@ -326,6 +426,36 @@ grep -qF "            '$vendored_sum'" "$overlay_fixture/PKGBUILD" \
     || fail 'overlay did not re-inject the vendored openapv checksum'
 [[ "$(grep -cE '^    patch .*openapv.*[.]patch' "$overlay_fixture/PKGBUILD")" == 1 ]] \
     || fail 'overlay did not re-inject the openapv prepare line exactly once'
+assert_source_block_quoted
+
+# Scenario C: ffmpeg 9.1+ carries the fix, a leftover vendored copy exists
+# (the transition sync). The overlay must retire the file and leave the
+# declaration alone.
+make_oapv_fixture
+sed -i 's/^pkgver=.*/pkgver=9.1/' "$overlay_fixture/PKGBUILD"
+strip_oapv
+bash "$root/scripts/overlays/ffmpeg-full.sh" "$overlay_fixture" >/dev/null \
+    || fail 'ffmpeg-full overlay failed on a release that carries the openapv fix upstream'
+[[ ! -e "$overlay_fixture/080-ffmpeg-openapv1.1-fix.patch" ]] \
+    || fail 'overlay did not retire the vendored openapv patch for an ffmpeg that no longer needs it'
+grep -qF '080-ffmpeg-openapv1.1-fix.patch' "$overlay_fixture/PKGBUILD" \
+    && fail 'overlay re-declared the openapv patch for an ffmpeg that carries the fix upstream'
+grep -qE '^    patch .*openapv.*[.]patch' "$overlay_fixture/PKGBUILD" \
+    && fail 'overlay re-applied the openapv patch for an ffmpeg that carries the fix upstream'
+
+# Scenario D: ffmpeg 9.1+ but AUR still declares the patch. Applying it would
+# die in prepare() ("Reversed (or previously applied) patch detected"); the
+# sync must fail loudly instead.
+make_oapv_fixture
+sed -i 's/^pkgver=.*/pkgver=9.1/' "$overlay_fixture/PKGBUILD"
+strip_oapv
+add_vendored_oapv
+declare_oapv_url
+if oapv_out="$(bash "$root/scripts/overlays/ffmpeg-full.sh" "$overlay_fixture" 2>&1)"; then
+    fail 'overlay accepted an openapv patch declaration for a release that carries the fix upstream'
+fi
+printf '%s' "$oapv_out" | grep -Fq 'carries the openapv 1.1 fix upstream' \
+    || fail 'overlay did not name the upstream openapv inconsistency'
 
 printf '%s\n' '15: verify package checks hash declared sources before a sync commits'
 grep -Fq 'validate-source-cache.sh' "$root/scripts/check-package.sh" \
