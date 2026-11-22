@@ -195,12 +195,18 @@ prepare() {
     # ffmpeg includes the astc-encoder header from <astcenc/astcenc.h> instead of using just <astcenc.h>
     mkdir -p include/astcenc
     ln -sf /usr/include/astcenc.h include/astcenc/astcenc.h
-    # The astc-encoder package ships the header flat (/usr/include/astcenc.h,
-    # the AUR build installed by yay here) or in a subdirectory
-    # (/usr/include/astcenc/astcenc.h); when the flat header is absent the
-    # symlink above dangles and configure dies with "libastcenc not found".
-    [[ -e include/astcenc/astcenc.h ]] ||
-        ln -sf /usr/include/astcenc/astcenc.h include/astcenc/astcenc.h
+    # AUR's relative symlink landed under $srcdir (makepkg runs prepare() with
+    # cwd=$srcdir): configure never searches it and every $srcdir wipe destroys
+    # it. Mirror it to the stable $startdir location that build()'s -I flag
+    # searches, pointing at whichever header layout the astc-encoder package
+    # provides: flat (/usr/include/astcenc.h, the AUR build installed here) or
+    # in a subdirectory (/usr/include/astcenc/astcenc.h).
+    mkdir -p "$startdir/include/astcenc"
+    if [[ -e /usr/include/astcenc.h ]]; then
+        ln -sfn /usr/include/astcenc.h "$startdir/include/astcenc/astcenc.h"
+    elif [[ -e /usr/include/astcenc/astcenc.h ]]; then
+        ln -sfn /usr/include/astcenc/astcenc.h "$startdir/include/astcenc/astcenc.h"
+    fi
     
     rm -f "ffmpeg-${pkgver}/libavcodec"/libsvt_{hevc,vp9}.c
     patch -d "ffmpeg-${pkgver}" -Np1 -i "${srcdir}/010-ffmpeg-add-svt-hevc.patch"

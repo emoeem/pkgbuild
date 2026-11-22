@@ -443,11 +443,12 @@ grep -qF '080-ffmpeg-openapv1.1-fix.patch' "$overlay_fixture/PKGBUILD" \
 grep -qE '^    patch .*openapv.*[.]patch' "$overlay_fixture/PKGBUILD" \
     && fail 'overlay re-applied the openapv patch for an ffmpeg that carries the fix upstream'
 # ffmpeg 9.1's libastcenc check compiles <astcenc/astcenc.h> while the
-# astc-encoder package ships the header flat; the overlay must retarget AUR's
-# dangling symlink and put the include tree on the compiler's search path.
-grep -qF 'ln -sf /usr/include/astcenc/astcenc.h include/astcenc/astcenc.h' \
+# astc-encoder package ships the header flat; the overlay must mirror the
+# include tree to the stable $startdir location (makepkg runs prepare() with
+# cwd=$srcdir) and put it on the compiler's search path.
+grep -qF 'ln -sfn /usr/include/astcenc.h "$startdir/include/astcenc/astcenc.h"' \
     "$overlay_fixture/PKGBUILD" \
-    || fail 'overlay did not add the astcenc symlink retarget'
+    || fail 'overlay did not add the astcenc $startdir mirror'
 grep -qF 'export CFLAGS+=" -I${startdir}/include"' "$overlay_fixture/PKGBUILD" \
     || fail 'overlay did not put the astcenc include tree on the search path'
 

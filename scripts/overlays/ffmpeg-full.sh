@@ -144,14 +144,17 @@ fi
 #     the astc-encoder package ships the header flat (/usr/include/astcenc.h;
 #     the CachyOS v3 repositories do not carry the package at all, so yay
 #     builds the flat-layout AUR version at build time). AUR's prepare()
-#     symlinks the flat header to include/astcenc/astcenc.h under $startdir,
-#     but ffmpeg's configure never searches that tree, so the check dies with
-#     "libastcenc not found" (CI run 44995240968). Two halves: retarget the
-#     symlink when it dangles (here), and put the tree on the compiler's
-#     search path in the flag block (step 3b). Skipped for AUR trees that do
-#     not declare the symlink at all (pre-9.1 baselines).
+#     symlinks the header into a relative include/ tree -- and makepkg runs
+#     prepare() with cwd=$srcdir, so that tree lands under src/ and dies with
+#     the next $srcdir wipe, while ffmpeg's configure never searches it either
+#     way: the check died with "libastcenc not found" (CI run 44995240968,
+#     verified against a makepkg --nobuild probe on 2026-11-22: prepare cwd is
+#     $srcdir). Mirror the tree to the stable absolute $startdir location that
+#     the flag block (step 3b) puts on the compiler's search path, pointing at
+#     whichever header layout the installed package provides. Skipped for AUR
+#     trees that do not declare the symlink at all (pre-9.1 baselines).
 if grep -qF 'ln -sf /usr/include/astcenc.h include/astcenc/astcenc.h' "$pkgbuild" &&
-   ! grep -qF "configure dies with \"libastcenc not found\"" "$pkgbuild"; then
+   ! grep -qF 'stable $startdir location' "$pkgbuild"; then
     python3 - "$pkgbuild" <<'PY1E' || fail 'astcenc include fixup failed'
 import sys
 from pathlib import Path
@@ -161,17 +164,23 @@ text = path.read_text()
 anchor = "    ln -sf /usr/include/astcenc.h include/astcenc/astcenc.h\n"
 if anchor not in text:
     raise SystemExit('astcenc symlink anchor not found')
-replacement = anchor + """    # The astc-encoder package ships the header flat (/usr/include/astcenc.h,
-    # the AUR build installed by yay here) or in a subdirectory
-    # (/usr/include/astcenc/astcenc.h); when the flat header is absent the
-    # symlink above dangles and configure dies with "libastcenc not found".
-    [[ -e include/astcenc/astcenc.h ]] ||
-        ln -sf /usr/include/astcenc/astcenc.h include/astcenc/astcenc.h
+replacement = anchor + """    # AUR's relative symlink landed under $srcdir (makepkg runs prepare() with
+    # cwd=$srcdir): configure never searches it and every $srcdir wipe destroys
+    # it. Mirror it to the stable $startdir location that build()'s -I flag
+    # searches, pointing at whichever header layout the astc-encoder package
+    # provides: flat (/usr/include/astcenc.h, the AUR build installed here) or
+    # in a subdirectory (/usr/include/astcenc/astcenc.h).
+    mkdir -p "$startdir/include/astcenc"
+    if [[ -e /usr/include/astcenc.h ]]; then
+        ln -sfn /usr/include/astcenc.h "$startdir/include/astcenc/astcenc.h"
+    elif [[ -e /usr/include/astcenc/astcenc.h ]]; then
+        ln -sfn /usr/include/astcenc/astcenc.h "$startdir/include/astcenc/astcenc.h"
+    fi
 """
 path.write_text(text.replace(anchor, replacement, 1))
 PY1E
-    grep -qF "configure dies with \"libastcenc not found\"" "$pkgbuild" ||
-        fail 'the astcenc symlink retarget is missing after the rewrite'
+    grep -qF 'stable $startdir location' "$pkgbuild" ||
+        fail 'the astcenc $startdir mirror is missing after the rewrite'
 fi
 
 # 2. Declare the cuda runtime dependency for the NPP filters.
