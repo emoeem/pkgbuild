@@ -21,6 +21,9 @@ jobs:
       contents: read
       packages: read
       issues: write
+      # The stale-update escalation dispatches sync.yml when a reported
+      # upstream version was not consumed by the daily sync.
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,6 +122,18 @@ jobs:
               # 人工调查评论会顶到末尾,只看最后一条会漏判。
               if ! gh issue view "$issue" --json body,comments --jq '.body, (.comments[].body)' | grep -qF -- "- Upstream: $upstream"; then
                 gh issue comment "$issue" --body "$body"
+              else
+                # 同一版本在上一轮已经报告过 = 滞后至少一天还没被消费。
+                # 两种成因:每日 sync 失败被闸住(2026-11-22 的 ffmpeg-full
+                # 事故,overlay 审计失败连红两天),或 AUR 的 PKGBUILD 本身
+                # 还没动(机器无能为力)。对前者重新派发事务性 sync 让修复
+                # 落地后立刻自愈,并在 issue 上留痕;对后者注释会说明真相。
+                # 限流:每报告版本只派发一次 —— 派发注释就是最后一条评论
+                # 时跳过,新版本报告会重置这个条件。
+                if ! gh issue view "$issue" --json comments --jq '.comments[-1].body' 2>/dev/null | grep -qF 'auto-sync dispatched'; then
+                  gh workflow run sync.yml --repo "$GITHUB_REPOSITORY" -f packages="$package"
+                  gh issue comment "$issue" --body "auto-sync dispatched for $package (sync.yml, packages=$package). The sync is transactional and per-package fault-isolated; it publishes only through the build gates. If it fails again the [CI] Sync AUR package sources failed issue carries the reason; if the AUR PKGBUILD has not moved yet, this update stays blocked upstream of this repository."
+                fi
               fi
             else
               gh issue create --title "$title" --body "$body"
