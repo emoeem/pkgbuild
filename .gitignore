@@ -25,3 +25,5 @@ pkg/
 
 # ZCode local tool state
 .zcode/
+localrepo/
+.serena/
