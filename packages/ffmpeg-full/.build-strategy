@@ -7,3 +7,4 @@ source
 # re-trigger 3 (2026-11-21): retry wrapper scope fix.
 
 # re-trigger 4 (2026-11-21): staging leak hardening + assertions.
+# Re-trigger (2026-11-22): astcenc header path fix + nvcc gcc15 pin.

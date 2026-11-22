@@ -295,8 +295,13 @@ chmod 0755 /usr/local/bin/pacman
 if [[ "$package_name" == "ffmpeg-full" ]]; then
     # Resolve virtual/provider dependencies non-interactively and pin them to
     # the same concrete packages selected by this local CachyOS-v3 profile.
+    # gcc15: NVCC_CCBIN below points at /usr/bin/g++-15, and the builder image
+    # is a rolling tag whose base has already moved to GCC 16 — nvcc's
+    # supported-host-compiler list lags behind Arch's gcc, so the pinned
+    # compiler package must be installed explicitly or configure dies at
+    # "failed checking for nvcc" (local run 2026-11-22, image without g++-15).
     retry_transient 3 20 -- pacman -S --needed --noconfirm \
-        sdl2-compat libglvnd l-smash onetbb tevent \
+        gcc15 sdl2-compat libglvnd l-smash onetbb tevent \
         tesseract-data-eng tesseract-data-osd
 fi
 # PKGBUILD 声明的 conflicts 若已被镜像提供(基础镜像随上游滚动更新,例如
