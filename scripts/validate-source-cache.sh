@@ -10,8 +10,18 @@
 #
 # This script runs before the build and settles the question by content:
 #
-#   * Git sources        -- the cached remote must be the declared remote
-#                           (unchanged behaviour).
+#   * Git sources        -- makepkg clones with `git clone --mirror`, so a
+#                           healthy entry is a bare repository and carries no
+#                           .git directory at all. The cached remote must be
+#                           the declared remote.
+#   * Dependency caches  -- the same SRCDEST is exported into the AUR
+#                           dependency builds yay performs for this package,
+#                           so those mirrors land in this directory without
+#                           ever appearing in the package's own source list.
+#                           The directory is therefore swept as a whole: an
+#                           entry that names no readable upstream cannot be a
+#                           clone of anything and is removed, one that does is
+#                           left alone.
 #   * Remote file sources -- a same-named file in the package directory wins
 #                           over both SRCDEST and the network, because makepkg
 #                           resolves $startdir first for every non-VCS source.
@@ -43,6 +53,27 @@ source_cache_dir="$2"
 [[ -f "${package_dir}/.SRCINFO" ]] || {
     printf 'Missing .SRCINFO: %s\n' "${package_dir}" >&2
     exit 2
+}
+
+# A healthy cache entry is a *bare* mirror (makepkg runs `git clone --mirror`),
+# so testing for a .git subdirectory declared every healthy entry a collision
+# and deleted it: the build re-cloned the whole source on every run, and the
+# check could never tell that apart from a genuinely broken directory.
+is_git_cache() {
+    local path="$1"
+    [[ -d "$path" ]] || return 1
+    [[ -d "$path/.git" ]] && return 0
+    local inside
+    inside="$(git -C "$path" -c safe.bareRepository=all rev-parse --is-bare-repository 2>/dev/null || true)"
+    [[ "$inside" == "true" ]]
+}
+
+# -c safe.bareRepository=all: the same escape makepkg uses, so a global
+# safe.bareRepository=explicit cannot make a legitimate bare mirror unreadable
+# and turn it into a false "stale" verdict.
+git_cache_remote() {
+    local path="$1"
+    git -C "$path" -c safe.bareRepository=all config --get remote.origin.url 2>/dev/null || true
 }
 
 canonical_git_url() {
@@ -93,6 +124,9 @@ checked=0
 healed=0
 verified_local=0
 defects=0
+# Names this package declares as git sources; the sweep below must not second
+# guess an entry the loop already verified.
+declare -A declared_git_names=()
 
 for (( i = 0; i < ${#sources[@]}; i++ )); do
     spec="${sources[i]}"
@@ -111,16 +145,17 @@ for (( i = 0; i < ${#sources[@]}; i++ )); do
         fi
 
         cache_path="${source_cache_dir}/${name}"
+        declared_git_names["$name"]=1
         [[ -e "$cache_path" ]] || continue
 
-        if [[ ! -d "$cache_path/.git" ]]; then
+        if ! is_git_cache "$cache_path"; then
             printf 'Removing non-git source cache collision: %s\n' "$cache_path"
             rm -rf "$cache_path"
             healed=$(( healed + 1 ))
             continue
         fi
 
-        remote="$(git -C "$cache_path" remote get-url origin 2>/dev/null || true)"
+        remote="$(git_cache_remote "$cache_path")"
         if [[ "$(canonical_git_url "$remote")" == "$(canonical_git_url "$url")" ]]; then
             continue
         fi
@@ -200,6 +235,48 @@ for (( i = 0; i < ${#sources[@]}; i++ )); do
     fi
 done
 
+# ---------------------------------------------------------------------------
+# Sweep the directory, not just the declaration.
+#
+# $SRCDEST is a single directory per package (build-in-arch.sh:12,
+# build-in-clean-chroot.sh:154) and the AUR dependency builds yay performs for
+# that package export the same $SRCDEST, so their mirrors land here too -- and
+# they appear in no source list at all. The loop above can only check what the
+# package declares, which is exactly how a corrupted dependency mirror survived
+# a full rebuild in the ffmpeg-full incident: makepkg found an existing
+# directory, compared its remote, printed "%s is not a clone of %s" and aborted
+# before anything hashed. Nothing in the declaration could see it.
+#
+# Without the expected URL for an undeclared entry there is no way to judge
+# *which* upstream it should point at, so this only decides what is objectively
+# broken: a directory that is not a git repository, or one whose origin remote
+# cannot be read, can be a clone of nothing. Those are removed and the owning
+# build re-clones. A structurally sound mirror is left alone -- guessing at its
+# intended URL would delete working caches.
+swept=0
+if [[ -d "$source_cache_dir" ]]; then
+    for entry in "$source_cache_dir"/*; do
+        [[ -d "$entry" ]] || continue
+        base="${entry##*/}"
+        [[ -n "${declared_git_names[$base]:-}" ]] && continue
+        if [[ ! -f "$entry/HEAD" && ! -f "$entry/config" ]]; then
+            printf 'Removing non-git source cache collision: %s\n' "$entry"
+            rm -rf "$entry"
+            healed=$(( healed + 1 ))
+            continue
+        fi
+        if ! is_git_cache "$entry" || [[ -z "$(git_cache_remote "$entry")" ]]; then
+            printf 'Removing unreadable dependency source cache: %s\n' "$entry"
+            printf '  makepkg aborts on an existing cache directory whose origin remote it cannot read,\n'
+            printf '  before it fetches or hashes anything; the dependency build re-clones it.\n'
+            rm -rf "$entry"
+            healed=$(( healed + 1 ))
+            continue
+        fi
+        swept=$(( swept + 1 ))
+    done
+fi
+
 if (( defects > 0 )); then
     printf 'Source cache validation failed: %s source(s) do not match their declared checksum.\n' "$defects" >&2
     exit 1
@@ -208,4 +285,8 @@ fi
 if (( healed > 0 || checked > 0 || verified_local > 0 )); then
     printf 'Source cache: %s cached file(s) verified, %s stale entry/entries removed, %s local source(s) verified.\n' \
         "$checked" "$healed" "$verified_local"
+fi
+
+if (( swept > 0 )); then
+    printf 'Source cache: %s dependency mirror(s) present and readable.\n' "$swept"
 fi

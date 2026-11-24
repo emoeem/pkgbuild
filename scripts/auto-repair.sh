@@ -196,6 +196,26 @@ root_cause="${verdict[4]:-unclassified}"
 # failure message -- and only one of those two may be answered with `updpkgsums`.
 # Re-pinning on the strength of a stale cache would bake a hash of the stale
 # bytes into the PKGBUILD, which is strictly worse than leaving the build red.
+# Cache-only repairs are worth running only where the cache actually is. The
+# repair job restores no caches, so CACHE_DIR points at a directory that does
+# not exist there; clearing it would delete nothing and still report a repair,
+# which is the "green run, zero action" failure this script exists to end.
+cache_leaf_present() {
+    local cache="${CACHE_DIR:-}"
+    [[ -n "$cache" ]] || return 1
+    [[ -d "${cache}/sources/$package_name" || -d "${cache}/yay/$package_name" ]]
+}
+
+# Deleting a cache entry is not a change to this workspace: nothing to snapshot,
+# nothing to validate and nothing to commit. It is the next build that re-fetches
+# or re-clones whatever was removed.
+clear_package_caches() {
+    local cache="${CACHE_DIR:-}"
+    [[ -n "$cache" ]] || return 1
+    rm -rf "${cache}/sources/$package_name" "${cache}/yay/$package_name" 2>/dev/null || true
+    detail="cleared the cached sources and the AUR build tree for $package_name; the next build re-fetches them"
+}
+
 source_cache_was_stale() {
     local dir="$1" name="$2" cache="${CACHE_DIR:-}" leaf output status=0
     [[ -n "$cache" ]] || return 1
@@ -204,7 +224,12 @@ source_cache_was_stale() {
     output="$(bash "${script_dir}/validate-source-cache.sh" "$dir" "$leaf" 2>&1)" || status=$?
     printf '%s\n' "$output" >&2
     (( status == 0 )) || return 1
-    grep -q '^Removing ' <<<"$output" || return 1
+    # Only a removal of a *declared* source makes a checksum failure cache-shaped.
+    # The validator's directory sweep also removes unreadable dependency mirrors,
+    # and those say nothing about whether this package's own declared checksum
+    # matched the bytes that were hashed -- treating them as evidence here would
+    # answer a genuine upstream change with a cache clear.
+    grep -qE '^Removing (stale source cache entry|stale git source cache):' <<<"$output" || return 1
 }
 
 # Only strategies whose result the rebuild itself verifies may be reached by an
@@ -249,7 +274,7 @@ for line in open(history, encoding="utf-8", errors="replace"):
         continue
     if record.get("category") != category:
         continue
-    if record.get("status") not in {"applied", "dispatched", "stale-cache-cleared"}:
+    if record.get("status") not in {"applied", "dispatched", "stale-cache-cleared", "cache-cleared"}:
         continue
     stamp = record.get("timestamp") or record.get("generated_at") or ""
     try:
@@ -339,9 +364,30 @@ case "$category" in
         fi
         ;;
     CacheError)
-        strategy="clear_cache"
-        strategy_level=1
-        strategy_reason="the build cache is unusable for this package"
+        # Every cache entry this can reach is either a source the package
+        # declares (a file or a bare Git mirror) or the AUR dependency build
+        # tree, both under CACHE_DIR. Nothing in packages/ is touched, so the
+        # repair is reported as a cache clear rather than as an applied change.
+        if cache_leaf_present; then
+            strategy="clear_cache"
+            strategy_level=1
+            strategy_reason="a cached source or dependency build tree for this package is unusable; deleting it makes the next build re-fetch or re-clone instead of aborting on the same bytes"
+        else
+            strategy_reason="the cache this failure comes from is not present in this job (the repair job restores no caches), so there is nothing here to clear; the build restores the cache and prunes the entry itself before makepkg runs"
+        fi
+        ;;
+    DependencyError)
+        # Nothing in this workspace can rebuild a dependency: the fix lives in
+        # that dependency's own build, and the only lever here would be *when*
+        # it is attempted again. An explicit, named verdict is still worth more
+        # than the generic one -- it is what the blocked table and the failure
+        # issue show, and it says which dependency to look at and what a human
+        # has to do, instead of "no automatic repair is known".
+        #
+        # A dependency that failed because its cached checkout is corrupt is not
+        # this case: that surfaces as the Git "is not a clone of" abort, which
+        # the rule library classifies as CacheError and clear_cache repairs.
+        strategy_reason="a build dependency failed before $package_name could build (root cause: $root_cause); no file in this workspace can rebuild it, so the dependency must be fixed or rebuilt first (dependency-failure rules stay report-only by design)"
         ;;
     EnvironmentError)
         case "$rule_id" in
@@ -525,10 +571,20 @@ if (( strategy_level > max_level )) && (( escalated == 0 )); then
     exit 0
 fi
 
-# The cache-only strategy changes nothing in this workspace, so it must not go
-# through the snapshot/validate/commit transaction that marks a repair applied.
+# Cache-only strategies change nothing in this workspace, so they must not go
+# through the snapshot/validate/commit transaction that marks a repair applied:
+# a commit would claim a change that does not exist, and the diff would be empty.
 if [[ "$strategy" == "clear_stale_source_cache" ]]; then
     emit_record "stale-cache-cleared" "$strategy_reason" "not-needed" "not-run"
+    exit 0
+fi
+
+if [[ "$strategy" == "clear_cache" ]]; then
+    if ! clear_package_caches; then
+        emit_record "blocked-cache-absent" "$strategy_reason" "not-needed" "not-run"
+        exit 0
+    fi
+    emit_record "cache-cleared" "$detail" "not-needed" "not-run"
     exit 0
 fi
 
@@ -653,14 +709,10 @@ PY
             detail="bumped pkgrel $current -> $next and regenerated .SRCINFO"
             ;;
         clear_cache)
-            local cache_dir="${CACHE_DIR:-}"
-            if [[ -n "$cache_dir" ]]; then
-                rm -rf "${cache_dir}/sources/$package_name" \
-                    "${cache_dir}/yay/$package_name" 2>/dev/null || true
-                detail="cleared cached sources for $package_name"
-            else
-                detail="no CACHE_DIR configured; nothing to clear"
-            fi
+            clear_package_caches || {
+                printf 'no cache is present for %s; nothing to clear\n' "$package_name" >&2
+                return 1
+            }
             ;;
         dispatch_refresh_workflow)
             local repo="${GITHUB_REPOSITORY:-}"

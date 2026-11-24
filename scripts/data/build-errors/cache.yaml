@@ -15,6 +15,27 @@ rules:
       kind: clear_cache
       safe_auto_fix: level1
       retry: true
+  # makepkg keeps Git sources as bare mirrors and compares each existing one
+  # against the URL the package declares; a mirror whose remote differs, or that
+  # is not a repository at all, aborts the build with "X is not a clone of Y"
+  # *before* anything is fetched or hashed. The log line names no rule, so this
+  # failure used to be reported as unclassified and the poisoned mirror survived
+  # every rebuild (ffmpeg-full, 2026-11: the astc-encoder AUR dependency's mirror
+  # lived in this package's $SRCDEST and was never looked at by any check).
+  - id: git-cache-not-a-clone
+    category: CacheError
+    stage: fetch
+    summary: A cached Git source is not a clone of the repository the package declares.
+    confidence: high
+    patterns:
+      - "is not a clone of"
+    extract:
+      cache_path: '([^\s:]+) is not a clone of'
+    root_cause: "corrupt cached Git source {cache_path}: the build re-clones it instead of fetching"
+    action:
+      kind: clear_cache
+      safe_auto_fix: level1
+      retry: true
   - id: cache-permission
     category: CacheError
     stage: build

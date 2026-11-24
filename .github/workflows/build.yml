@@ -641,6 +641,15 @@ jobs:
                 # declared source was deleted so the next build re-fetches it.
                 healed+=("$package")
                 ;;
+              cache-cleared)
+                # The package's whole source cache and AUR build tree were
+                # dropped. makepkg refuses to fetch into a mirror that is not a
+                # clone of the declared remote ("X is not a clone of Y") before
+                # it hashes anything, so nothing under packages/ describes the
+                # defect and no workspace edit could have fixed it.
+                detail="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("detail") or "")' "$report/repair-applied.json" | tr '\n|' '  ')"
+                healed+=("$package ($detail)")
+                ;;
               dispatched)
                 # The repair changed nothing locally: it handed the stale pin to
                 # the update workflow that owns this source, which re-pins the
@@ -660,9 +669,11 @@ jobs:
               echo "## Source cache healed"
               printf -- '- %s\n' "${healed[@]}"
               echo
-              echo "A cached source no longer matched the checksum its package declares, so the entry was"
-              echo "removed and nothing was re-pinned. The next build of these packages re-fetches the source"
-              echo "and should pass; if it fails the same way, the cache was not the cause."
+              echo "The cached copy of a source was not what the package declares — a stale entry that no"
+              echo "longer matched its checksum, or a Git mirror that was not a clone of the remote the package"
+              echo "fetches from. The cache was dropped and nothing in the workspace was re-pinned or rewritten,"
+              echo "so the next build of these packages re-fetches from upstream and should pass; if it fails the"
+              echo "same way, the cache was not the cause."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           if (( ${#blocked[@]} > 0 )); then

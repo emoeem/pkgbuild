@@ -36,7 +36,9 @@ class UpstreamVersionTests(unittest.TestCase):
     def test_explicit_baselines_cover_vendored_dependencies(self):
         definitions, baselines = load_definitions(ROOT)
         # Phase 4：lensfun/whisper.cpp 是 vendored 依赖，基线不来自 pkgver。
-        self.assertEqual('52cf1a7', baselines['lensfun-master'])
+        # 与 packages/ffmpeg-full/.lensfun-pin 同 commit 更新
+        # （76a0847：上游 37238fc，前值 52cf1a7 已随 pin 前进）。
+        self.assertEqual('37238fc', baselines['lensfun-master'])
         self.assertEqual('1.9.5', baselines['whisper-cpp'])
         self.assertEqual('git', definitions['lensfun-master']['source'])
         self.assertTrue(definitions['lensfun-master']['use_commit'])
@@ -66,7 +68,7 @@ class UpstreamVersionTests(unittest.TestCase):
             self.assertNotIn('keyfile', config['__config__'])
             self.assertEqual(expected, set(oldver))
             self.assertEqual('01bc7cc', oldver['svt-jpeg-xs-git'])
-            self.assertEqual('52cf1a7', oldver['lensfun-master'])
+            self.assertEqual('37238fc', oldver['lensfun-master'])
             self.assertEqual('1.9.5', oldver['whisper-cpp'])
 
     def test_github_token_env_injects_keyfile_for_nvchecker(self):

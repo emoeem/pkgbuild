@@ -409,4 +409,77 @@ grep -Fq 'Strategy:   ' <<<"$human" || fail 'a human-readable run printed no str
     --failure "$work/soname-failure.json" --root "$fixture" --level 1 --json 2>/dev/null)" ]] \
     || fail '--json still printed the human-readable record'
 
+printf '%s\n' '19: a corrupt Git source cache is cleared without touching the workspace'
+# makepkg aborts on an existing mirror whose remote is not the declared one
+# ("X is not a clone of Y") before it fetches or hashes anything, so every
+# rebuild reproduced the failure while the cache the build then restored still
+# held the bad mirror. Clearing the package's cache is the only repair that
+# works, and it changes no file under packages/.
+cache_repo="$work/cache-repo"
+make_fixture "$cache_repo"
+write_failure "$work/cache-failure.json" CacheError git-cache-not-a-clone level1
+cache_root="$work/cache-root"
+mkdir -p "$cache_root/sources/demo/astc-encoder" "$cache_root/yay/demo"
+printf 'ref: refs/heads/main\n' >"$cache_root/sources/demo/astc-encoder/HEAD"
+pkgbuild_before="$(sha256sum "$cache_repo/packages/demo/PKGBUILD" | awk '{print $1}')"
+srcinfo_before="$(sha256sum "$cache_repo/packages/demo/.SRCINFO" | awk '{print $1}')"
+CACHE_DIR="$cache_root" bash "$root/scripts/auto-repair.sh" --package demo \
+    --failure "$work/cache-failure.json" --root "$cache_repo" --level 1 --apply \
+    --json --out "$work/cache-record.json" >/dev/null || fail 'cache repair exited non-zero'
+grep -q '"strategy": "clear_cache"' "$work/cache-record.json" \
+    || fail 'a corrupt Git cache did not select clear_cache'
+grep -q '"status": "cache-cleared"' "$work/cache-record.json" \
+    || fail 'a cache clear was not reported as cache-cleared'
+[[ ! -e "$cache_root/sources/demo" ]] || fail 'the corrupt source cache survived the repair'
+[[ ! -e "$cache_root/yay/demo" ]] || fail 'the AUR dependency build tree survived the repair'
+[[ "$pkgbuild_before" == "$(sha256sum "$cache_repo/packages/demo/PKGBUILD" | awk '{print $1}')" ]] \
+    || fail 'the cache clear rewrote the PKGBUILD'
+[[ "$srcinfo_before" == "$(sha256sum "$cache_repo/packages/demo/.SRCINFO" | awk '{print $1}')" ]] \
+    || fail 'the cache clear rewrote .SRCINFO'
+
+printf '%s\n' '20: a cache repair reports that the cache was absent instead of claiming success'
+# The repair job restores no caches, so CACHE_DIR names a directory that does not
+# exist there. Deleting nothing and reporting "applied" is precisely the green
+# run with zero action this script was written to end.
+CACHE_DIR="$work/empty-cache" bash "$root/scripts/auto-repair.sh" --package demo \
+    --failure "$work/cache-failure.json" --root "$cache_repo" --level 1 --apply \
+    --json --out "$work/absent-record.json" >/dev/null || fail 'absent-cache repair exited non-zero'
+grep -q '"strategy": "none"' "$work/absent-record.json" \
+    || fail 'a cache clear was chosen with no cache present'
+grep -q '"status": "report-only"' "$work/absent-record.json" \
+    || fail 'an absent cache was not reported as report-only'
+grep -q 'not present in this job' "$work/absent-record.json" \
+    || fail 'the absent-cache reason does not say why nothing was cleared'
+
+printf '%s\n' '21: a dependency failure says which dependency failed instead of "no strategy"'
+# Dependency-failure rules stay report-only: nothing in this workspace can
+# rebuild a dependency, and the honest output is a named verdict a human can act
+# on. The generic "no automatic repair is known for this failure" hides the one
+# fact worth having -- which dependency, at which version, broke the build.
+dep_repo="$work/dep-repo"
+make_fixture "$dep_repo"
+cat >"$work/dep-failure.json" <<'EOF'
+{
+  "schema": 1,
+  "package": "demo",
+  "category": "DependencyError",
+  "confidence": "high",
+  "root_cause": "instance dependency version '1.4.313' does not satisfy '>= 1.4.321'",
+  "auto_fix": {"level": "none", "safe": false, "reason": "unclassified"},
+  "matched_rules": [{"id": "dependency-version-conflict", "category": "DependencyError", "stage": "dependencies", "confidence": "high"}]
+}
+EOF
+dep_before="$(sha256sum "$dep_repo/packages/demo/PKGBUILD" | awk '{print $1}')"
+bash "$root/scripts/auto-repair.sh" --package demo --failure "$work/dep-failure.json" \
+    --root "$dep_repo" --level 3 --apply --json --out "$work/dep-record.json" >/dev/null \
+    || fail 'dependency repair exited non-zero'
+grep -q '"strategy": "none"' "$work/dep-record.json" || fail 'a dependency failure selected a strategy'
+grep -q '"status": "report-only"' "$work/dep-record.json" || fail 'a dependency failure was not report-only'
+grep -q 'does not satisfy' "$work/dep-record.json" \
+    || fail 'the dependency verdict does not name the actual conflict'
+grep -q 'no automatic repair is known' "$work/dep-record.json" \
+    && fail 'a dependency failure fell through to the generic reason'
+[[ "$dep_before" == "$(sha256sum "$dep_repo/packages/demo/PKGBUILD" | awk '{print $1}')" ]] \
+    || fail 'a report-only dependency verdict rewrote the PKGBUILD'
+
 printf '%s\n' 'All auto-repair tests passed.'

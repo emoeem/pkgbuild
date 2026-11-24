@@ -132,6 +132,32 @@ level 1，记录状态是 `dispatched` 而非 `applied`，`build.yml` 不会为�
 方向锁住它——缓存陈旧时 PKGBUILD 与 `.SRCINFO` 的 sha256 必须逐字节不变；缓存干净时
 必须仍然落到 `refresh_checksum`。
 
+### 缓存坏了没有对应文件可改
+
+`<path> is not a clone of <url>` 是 `makepkg` 在抓取和哈希**之前**就 abort 的一类失败：
+`SRCDEST` 里那个镜像的 `origin` 与声明的 URL 不符，于是每一次重建都在同一步停下。
+这个缺陷在任何 `PKGBUILD` / `.SRCINFO` 里都不存在，工作区逐字节回滚也修不好它——
+能被修的只有缓存本身。规则 `git-cache-not-a-clone`（`scripts/data/build-errors/cache.yaml`，
+`CacheError`，level 1）把它映射到 `clear_cache`：删掉 `$CACHE_DIR/sources/<pkg>` 与
+`$CACHE_DIR/yay/<pkg>`（前者是 makepkg 的 per-package `SRCDEST`，后者是 yay 给 AUR 依赖
+用的构建树），下一次构建重新克隆。状态记为 `cache-cleared`，与 `stale-cache-cleared` 一样
+不产生提交。
+
+缓存清理走一条**绕开事务**的出口（`apply_fix` 里的 `clear_cache` → 关卡里的早退），因为
+"删缓存" 在 `packages/` 下没有 diff：走正常的 apply/commit 流程只会提交一个空变更并谎称
+`applied`。同理，若 `CACHE_DIR` 下压根没有该包的缓存（repair job 不恢复 cache），脚本
+报告 `blocked-cache-absent` / `report-only` 并写明"nothing to clear"，而不是把"什么都没删"
+记成一次成功修复。
+
+### 依赖失败只报告，不猜
+
+`DependencyError`（构建依赖或版本冲突在目标包开始构建之前就失败）留在 `report`：
+工作区里没有任何文件能重建一个依赖，给它编一个策略只会掩盖真因。但"没有策略"必须是
+**点名**的——早先这条路径落到通用的 `no automatic repair is known for this failure`，
+把唯一有用的事实（哪个依赖、哪个版本、违反哪个约束）丢掉了。现在该分支输出的原因是
+`root_cause` 本身（例如 `instance dependency version '1.4.313' does not satisfy '>= 1.4.321'`），
+`tests/test_auto_repair.sh` 断言它必须出现在记录里、且通用文案不得出现。
+
 ### 修复没跑也要说
 
 此前「找到策略但跑不了」（level 不够、预算用完、回滚）只把记录打印在一个折叠的

@@ -470,4 +470,56 @@ printf '%s\n' '15: verify package checks hash declared sources before a sync com
 grep -Fq 'validate-source-cache.sh' "$root/scripts/check-package.sh" \
     || fail 'check-package.sh does not validate source checksums at sync time'
 
+printf '%s\n' '16: verify a bare mirror, which is what makepkg actually creates, survives validation'
+# makepkg runs `git clone --origin=origin --mirror`, so every healthy cache entry
+# is a bare repository with no .git subdirectory. Testing for .git declared each
+# of them a collision, deleted it, and re-cloned the whole source on every build
+# -- while still reporting the heal, so the cost was invisible.
+bare_pkg="$work/bare-package"
+bare_cache="$work/bare-cache"
+mkdir -p "$bare_pkg" "$bare_cache"
+printf 'pkgbase = fixture\n\tsource = git+https://github.com/astrand/xclip\n' >"$bare_pkg/.SRCINFO"
+git init -q --bare "$bare_cache/xclip"
+git -C "$bare_cache/xclip" remote add origin https://github.com/astrand/xclip
+bash "$root/scripts/validate-source-cache.sh" "$bare_pkg" "$bare_cache" >"$work/bare-out.txt" 2>&1 \
+    || fail 'validator failed on a healthy bare mirror'
+[[ -d "$bare_cache/xclip" ]] || fail 'validator removed a healthy bare mirror'
+grep -Fq 'Removing' "$work/bare-out.txt" && fail 'validator healed a healthy bare mirror'
+
+# A bare mirror of the wrong repository must still be caught: the declaration is
+# the authority, and a mismatched remote is what makes makepkg abort with
+# "%s is not a clone of %s".
+git -C "$bare_cache/xclip" remote set-url origin https://example.invalid/other
+bash "$root/scripts/validate-source-cache.sh" "$bare_pkg" "$bare_cache" >/dev/null 2>&1 \
+    || fail 'validator failed while removing a stale bare mirror'
+[[ ! -e "$bare_cache/xclip" ]] || fail 'a bare mirror pointing at the wrong remote survived'
+
+printf '%s\n' '17: verify an unreadable dependency mirror is removed and a healthy one is kept'
+# $SRCDEST is one directory per package and the AUR dependency builds yay runs
+# for that package export the same one, so dependency mirrors appear there
+# without ever being declared in .SRCINFO. Nothing in the source list could see
+# the corrupted astc-encoder mirror that made ffmpeg-full fail with
+# "is not a clone of" on every rebuild.
+dep_pkg="$work/dep-package"
+dep_cache="$work/dep-cache"
+mkdir -p "$dep_pkg" "$dep_cache"
+printf 'pkgbase = fixture\n\tsource = git+https://github.com/astrand/xclip\n' >"$dep_pkg/.SRCINFO"
+git init -q --bare "$dep_cache/xclip"
+git -C "$dep_cache/xclip" remote add origin https://github.com/astrand/xclip
+# A dependency mirror that is a real repository: not declared, so its intended
+# URL is unknown and guessing would delete a working cache. It must survive.
+git init -q --bare "$dep_cache/healthydep"
+git -C "$dep_cache/healthydep" remote add origin https://example.invalid/healthydep
+# A dependency mirror with no readable remote: makepkg aborts on it before it
+# fetches anything, so it cannot be a clone of anything and must go.
+mkdir -p "$dep_cache/brokendep/objects"
+printf 'ref: refs/heads/main\n' >"$dep_cache/brokendep/HEAD"
+bash "$root/scripts/validate-source-cache.sh" "$dep_pkg" "$dep_cache" >"$work/dep-out.txt" 2>&1 \
+    || fail 'validator failed on an undeclared dependency mirror'
+[[ ! -e "$dep_cache/brokendep" ]] || fail 'an unreadable dependency mirror survived validation'
+[[ -d "$dep_cache/healthydep" ]] || fail 'an undeclared but healthy dependency mirror was deleted'
+[[ -d "$dep_cache/xclip" ]] || fail 'the declared bare mirror was removed by the sweep'
+grep -Fq 'unreadable dependency source cache' "$work/dep-out.txt" \
+    || fail 'the unreadable mirror was removed without naming why'
+
 printf '%s\n' 'All build regression tests passed.'

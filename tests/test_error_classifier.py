@@ -165,6 +165,9 @@ class ClassifierTests(unittest.TestCase):
             "Hunk #1 FAILED at 10.\ncan't find file to patch": "PatchError",
             "error[E0425]: cannot find value\nSIGABRT\n==> ERROR: A failure occurred in build().": "CompilerError",
             "duplicate SONAME liboapv.so.1: openapv and legacy-openapv": "RepositoryError",
+            # makepkg aborts before fetching when a cached mirror belongs to a
+            # different remote; nothing under packages/ describes this defect.
+            "==> ERROR: /cache/sources/demo/astc-encoder is not a clone of https://example.invalid/astc-encoder.git": "CacheError",
         }
         for log_text, expected in cases.items():
             with self.subTest(expected=expected, log=log_text.splitlines()[0]):

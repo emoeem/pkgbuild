@@ -11,7 +11,7 @@
 | PKGBUILD 语法 / `.SRCINFO` 一致性 | `check-package.sh` + namcap | check.yml per-package + 构建前 | 红 |
 | 全量本地测试套件 | `tests/run-all.sh`（builder 容器内非 root） | check.yml integration | 红 |
 | workflow 引用完整性（引用的脚本必须已提交） | `tests/test_workflow_references.py` | check.yml | 红 |
-| source checksum + GPG | makepkg validity + `validate-source-cache.sh` + ffmpeg key 指纹预验 | 构建期 | 构建失败 |
+| source checksum + GPG | makepkg validity + `validate-source-cache.sh`（含 bare mirror 与依赖镜像可读性）+ ffmpeg key 指纹预验 | 构建期 | 构建失败 |
 | 上游资产校验（tag/asset/digest/.PKGINFO 字段/依赖对账） | 各更新工作流 + dsh `build()` | 更新候选构建 | 更新拒绝 / 构建失败 |
 | .BUILDINFO 依赖对账 + runtime 验证 | `verify-build-dependencies.sh` + `runtime-verify.sh` | 构建后 | 红 |
 | ffmpeg 功能矩阵（69 条 + 功能链 + ELF） | `verify-ffmpeg-features.sh` | ffmpeg-full 构建后 | 构建失败 |
