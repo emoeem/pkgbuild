@@ -51,6 +51,12 @@ jobs:
       - name: Validate stable release and prepare package update
         id: update
         shell: bash
+        env:
+          # Metadata comes from raw.githubusercontent.com (no quota) but the
+          # eBPF source probe hits api.github.com, whose anonymous quota is 60
+          # requests/hour per runner IP. Without a token the 2026-11-24
+          # scheduled run died with "HTTP Error 403: rate limit exceeded".
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           python3 scripts/update-sing-box-ebpf.py --apply

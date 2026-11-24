@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -19,16 +21,75 @@ VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)-reF1nd$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
+# HTTP statuses worth retrying on a scheduled poll; anything else (404 on a
+# vanished tag, 401 on a bad token) is a real problem and must page us.
+TRANSIENT_HTTP_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+FETCH_ATTEMPTS = 3
+FETCH_BACKOFF_SECONDS = (5, 15)
+MAX_RETRY_AFTER_SECONDS = 60
+
+
+def request_headers() -> dict[str, str]:
+    """Build the request headers, authenticating whenever a token is present.
+
+    Anonymous GitHub API calls share a 60-requests-per-hour quota per IP; the
+    scheduled poll exhausted it on 2026-11-24 and the run died with
+    "HTTP Error 403: rate limit exceeded" (run 45295926066). The token is
+    optional so the script still runs locally without one.
+    """
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "emoeem-pkgbuild-updater",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def transient_error(exc: Exception) -> bool:
+    """True for failures a retry can plausibly fix; HTTPError is a URLError."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in TRANSIENT_HTTP_STATUS
+    return isinstance(exc, (urllib.error.URLError, TimeoutError))
+
+
+def retry_delay(exc: Exception, attempt: int) -> int:
+    delay = FETCH_BACKOFF_SECONDS[attempt - 1]
+    headers = getattr(exc, "headers", None)
+    if isinstance(exc, urllib.error.HTTPError) and headers is not None:
+        try:
+            delay = max(delay, int(headers.get("Retry-After", "")))
+        except (TypeError, ValueError):
+            pass
+    return min(delay, MAX_RETRY_AFTER_SECONDS)
+
+
+def _fetch(url: str, read):
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        request = urllib.request.Request(url, headers=request_headers())
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return read(response)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            if attempt == FETCH_ATTEMPTS or not transient_error(exc):
+                raise
+            delay = retry_delay(exc, attempt)
+            print(
+                f"sing-box-ebpf updater: {exc}; retrying in {delay}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")
+
+
 def fetch_json(url: str):
-    request = urllib.request.Request(url, headers={"User-Agent": "emoeem-pkgbuild-updater"})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.load(response)
+    return _fetch(url, json.load)
 
 
 def fetch_text(url: str) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "emoeem-pkgbuild-updater"})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return response.read().decode("utf-8")
+    return _fetch(url, lambda response: response.read().decode("utf-8"))
 
 
 def version_tuple(version: str) -> tuple[int, int, int]:

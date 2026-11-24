@@ -61,6 +61,13 @@ class UnattendedPublishTests(unittest.TestCase):
         self.assertLess(metadata, commit, "the makepkg .SRCINFO check must precede the commit")
         self.assertLess(build, commit, "the candidate build must precede the commit")
 
+    def test_update_step_authenticates_the_api_probe(self):
+        # The eBPF source probe hits api.github.com; the anonymous quota is 60
+        # requests/hour per runner IP and run 45295926066 died at 403 rate limit
+        # exceeded because this step had no token.
+        block = step_block("Validate stable release and prepare package update")
+        self.assertIn("GH_TOKEN: $" + "{{ github.token }}", block)
+
     def test_metadata_gate_runs_makepkg_through_the_builder(self):
         block = step_block("Validate package metadata")
         self.assertIn("scripts/check-package.sh sing-box-ebpf", block)

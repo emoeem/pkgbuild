@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import tempfile
 import unittest
@@ -16,6 +17,38 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC and SPEC.loader
 updater = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(updater)
+
+
+class RequestHeaderTests(unittest.TestCase):
+    def test_bearer_token_is_sent_when_the_environment_has_one(self):
+        with patch.dict(os.environ, {"GH_TOKEN": "token-value"}, clear=True):
+            headers = updater.request_headers()
+        self.assertEqual(headers["Authorization"], "Bearer token-value")
+        self.assertEqual(headers["User-Agent"], "emoeem-pkgbuild-updater")
+
+    def test_request_stays_anonymous_without_a_token(self):
+        with patch.dict(os.environ, {}, clear=True):
+            headers = updater.request_headers()
+        self.assertNotIn("Authorization", headers)
+
+    def test_non_transient_http_errors_are_not_retried(self):
+        import io
+        import urllib.error
+
+        self.assertFalse(
+            updater.transient_error(
+                urllib.error.HTTPError(
+                    "https://api.github.com/x", 403, "rate limit exceeded", {}, io.BytesIO(b"x")
+                )
+            )
+        )
+        self.assertTrue(
+            updater.transient_error(
+                urllib.error.HTTPError(
+                    "https://api.github.com/x", 429, "slow down", {}, io.BytesIO(b"x")
+                )
+            )
+        )
 
 
 class StableVersionTests(unittest.TestCase):
