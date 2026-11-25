@@ -126,9 +126,12 @@ lyc8503 `geosite-cn`、`geosite-geolocation-!cn`）的 sha256，**有变化才**
 
 **Track dsh-desktop-linux releases** 工作流每两小时（`53 */2 * * *`）扫描
 [ffyfox/dsh-desktop-linux](https://github.com/ffyfox/dsh-desktop-linux) 的
-release 列表，锁定最新一个真正发布 x86_64 Arch 资产的版本（alpha 标签没有
-Arch 资产，按资产规则自动跳过）。`scripts/update-dsh-desktop-linux.py` 校验
-tag、资产状态与 GitHub 计算的 sha256 digest，有新版时同时更新 `PKGBUILD` 的
+release 列表，锁定最新一个真正发布 x86_64 Arch 资产的版本（tag 语法认
+`vX.Y.Z` 以及 `vX.Y.Z` + `alpha`/`beta`/`rc` + 序号，预发布版不再被名字挡掉；
+自 `v0.2.3alpha1` 起上游给 alpha 也发 Arch 资产，早期「alpha 没有 Arch 资产、
+按资产规则自动跳过」的假设已失效，正是它让更新器长期停在 `0.2.2rc5`）。
+`scripts/update-dsh-desktop-linux.py` 校验 tag、资产状态与 GitHub 计算的
+sha256 digest，有新版时同时更新 `PKGBUILD` 的
 `pkgver`/`sha256sums` 与 `.SRCINFO` 的 `pkgver`/`noextract`/`source`/`sha256sums`
 （资产名内嵌 `pkgver`，所以这五行联动）；随后同样经过 makepkg 元数据校验、
 候选构建与运行时验证才提交并 dispatch 发布。同一版本换了校验和会报错拒绝，

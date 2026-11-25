@@ -6,10 +6,13 @@ pkgver bump plus a checksum. Both come from the GitHub release itself, never
 typed by hand:
 
   * releases are scanned newest-first and the first one whose tag matches
-    vX.Y.Z or vX.Y.ZrcN AND that publishes
-    `dsh-desktop-linux-<version>-1-x86_64.pkg.tar.zst` (uploaded) wins; alpha
-    tags carry no Arch asset, so they are skipped by the asset rule rather
-    than by name matching;
+    vX.Y.Z, vX.Y.ZalphaN, vX.Y.ZbetaN or vX.Y.ZrcN AND that publishes
+    `dsh-desktop-linux-<version>-1-x86_64.pkg.tar.zst` (uploaded) wins. The
+    tag grammar must name every pre-release level: upstream began shipping
+    Arch assets for alpha tags at v0.2.3alpha1, so the older assumption that
+    `alpha carries no Arch asset` made the scan skip both v0.2.3 alphas
+    and settle on v0.2.2rc5 forever while every run reported already current
+    (reports/pkgbuild-optimization/dsh-audit.md 5.2);
   * the checksum is the asset's GitHub-computed `digest` field — this release
     page publishes no SHA256SUMS file, so that digest is the only
     machine-readable source; a release whose asset lacks it is an error, not
@@ -47,7 +50,14 @@ SRCINFO_PATH = Path(f"packages/{PKGNAME}/.SRCINFO")
 # Only x86_64 is packaged here (PKGBUILD arch=('x86_64')); upstream also
 # publishes an aarch64 asset that this repository never consumes.
 ASSET_NAME = f"{PKGNAME}-{{version}}-1-x86_64.pkg.tar.zst"
-TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:rc(\d+))?$")
+# Upstream now publishes an Arch asset at every pre-release level (from
+# v0.2.3alpha1 onward), so the tag grammar accepts all of them; the rank
+# slot in version_tuple keeps them ordered the way vercmp does.
+TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:(alpha|beta|rc)(\d+))?$")
+# Suffixed tags sort below the plain release, alpha < beta < rc:
+# 0.2.3alpha2 < 0.2.3beta1 < 0.2.3rc1 < 0.2.3.
+PRE_RELEASE_RANK = {"alpha": 0, "beta": 1, "rc": 2}
+FINAL_RELEASE_RANK = 3
 DIGEST_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
 # HTTP statuses worth retrying on a scheduled poll; anything else (404 on a
 # vanished release, 401 on a bad token) is a real problem and must page us.
@@ -108,16 +118,20 @@ def fetch_bytes(url: str) -> bytes:
 
 
 def version_tuple(value: str) -> tuple[int, int, int, int, int]:
-    """0.2.2rc3 -> (0, 2, 2, 0, 3); 0.2.3 -> (0, 2, 3, 1, 0).
+    """0.2.3alpha2 -> (0, 2, 3, 0, 2); 0.2.2rc3 -> (0, 2, 2, 2, 3); 0.2.3 -> (0, 2, 3, 3, 0).
 
-    The final-release flag makes 0.2.2rc9 < 0.2.3 and keeps rc numbers
-    monotonic inside one series.
+    The rank slot keeps 0.2.2rc9 < 0.2.3alpha1 < 0.2.3rc1 < 0.2.3 (pacman's
+    own ordering) and the trailing number monotonic inside one level.
     """
     match = TAG_RE.match(f"v{value}" if not value.startswith("v") else value)
     if not match:
-        raise ValueError(f"unsupported version {value!r}; expected X.Y.Z or X.Y.ZrcN")
-    major, minor, patch, rc = match.groups()
-    return (int(major), int(minor), int(patch), 1 if rc is None else 0, int(rc or 0))
+        raise ValueError(
+            f"unsupported version {value!r}; "
+            "expected X.Y.Z, X.Y.ZalphaN, X.Y.ZbetaN or X.Y.ZrcN"
+        )
+    major, minor, patch, level, number = match.groups()
+    rank = FINAL_RELEASE_RANK if level is None else PRE_RELEASE_RANK[level]
+    return (int(major), int(minor), int(patch), rank, int(number or 0))
 
 
 def asset_digest(asset: dict) -> str:
@@ -148,8 +162,9 @@ def find_release(releases: list) -> tuple[str, str]:
             None,
         )
         if asset is None:
-            # Alpha tags and CI retries that only shipped other formats; keep
-            # scanning for the newest release this repository can repackage.
+            # Releases that shipped only other formats (deb/rpm/AppImage, or an
+            # aarch64-only Arch asset); keep scanning for the newest release this
+            # repository can repackage.
             continue
         if asset.get("state") is not None and asset.get("state") != "uploaded":
             raise ValueError(f"release asset {asset_name} is in state {asset.get('state')!r}")
@@ -157,6 +172,44 @@ def find_release(releases: list) -> tuple[str, str]:
     raise ValueError(
         f"no release of {REPOSITORY} publishes {ASSET_NAME.format(version='<X.Y.Z>')}"
     )
+
+
+TAG_PREFIX_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)")
+
+
+def assert_no_newer_unparsable_tag(releases: list, pinned: str) -> None:
+    """Fail when an ignored tag may be newer than what we pinned.
+
+    A tag the grammar cannot read is invisible to find_release, and that is
+    exactly how this updater sat on v0.2.2rc5 while v0.2.3alpha2 shipped: the
+    scan skipped both alphas, fell back to the newest readable tag, and every
+    scheduled run reported "already current" instead of failing
+    (reports/pkgbuild-optimization/dsh-audit.md 5.2). Comparing only the
+    numeric X.Y.Z prefix keeps a permanently red workflow out of reach for the
+    old suffixed tags (v0.1.7rc2-2 predates the pinned version and stays
+    quiet), while any unreadable tag at or past the pinned series exits 2 and
+    lets the workflow's notify job report it.
+    """
+    pinned_triple = version_tuple(pinned)[:3]
+    suspects = []
+    for release in releases:
+        if release.get("draft"):
+            continue
+        tag = release.get("tag_name")
+        if not isinstance(tag, str) or TAG_RE.match(tag):
+            continue
+        prefix = TAG_PREFIX_RE.match(tag)
+        if prefix and tuple(int(part) for part in prefix.groups()) >= pinned_triple:
+            suspects.append(tag)
+    if suspects:
+        raise ValueError(
+            "release tags "
+            + ", ".join(sorted(suspects))
+            + " use a version level this updater cannot parse, and at least one "
+            "is not older than the pinned "
+            + pinned
+            + "; widen TAG_RE/version_tuple instead of silently skipping them"
+        )
 
 
 def current_values(pkgbuild: str) -> tuple[str, str, str]:
@@ -244,6 +297,8 @@ def main() -> int:
     if not isinstance(releases, list):
         raise ValueError("unexpected GitHub API response: releases is not a list")
     version, checksum = find_release(releases)
+    pinned = current_values((args.root / PKGBUILD_PATH).read_text(encoding="utf-8"))[0]
+    assert_no_newer_unparsable_tag(releases, pinned)
     print(f"validated dsh-desktop-linux release: v{version} sha256:{checksum}")
     if args.apply:
         update_files(args.root, version, checksum)

@@ -60,7 +60,7 @@
 ## 5. 残余风险
 
 1. `.SRCINFO` 的 `noextract`/`source` 行由更新器正则替换（`:218-224`）——格式假设单一，上游若多 asset 会拒绝（`replace_once` 计数保护），安全。
-2. 更新器版本序比较（`version_tuple`，rc9 < 正式版）已处理 rc 语义；tag 正则不匹配 alpha，资产规则兜底（`:150-153`），无缺口发现。
+2. ~~更新器版本序比较已处理 rc 语义；tag 正则不匹配 alpha，资产规则兜底，无缺口发现。~~ **该结论已被推翻（2026-11-25，实测）**：`v0.2.3alpha1` 起上游给 alpha 也发 x86_64 Arch 资产，旧 `TAG_RE`（只认 `vX.Y.Z` 与 `vX.Y.ZrcN`）让 `find_release` 直接跳过两条 alpha release，回落到 `v0.2.2rc5` 并每两小时报一次 already current —— 工作流 38 次全绿，包却停在 0.2.2rc5-1。修复：`TAG_RE` 增加 `alpha|beta|rc` 分级，`version_tuple` 改用 rank 槽（alpha0 < beta1 < rc2 < 正式3，与 `vercmp` 逐对实测一致），并新增 `assert_no_newer_unparsable_tag()`：今后出现语法读不懂且不早于当前 pin 的 tag 会 exit 2 交给 notify，而不是静默跳过；回归测试 `tests/test_dsh_desktop_linux_updater.py`。
 3. 工作流 dispatch 失败重试 3 次（`:175-188`）+ notify-failure 兜底——更新链路的"丢失 dispatch"风险已有防护。
 
 ## 6. 复现命令与预期回显
