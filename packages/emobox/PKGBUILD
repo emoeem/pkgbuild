@@ -53,7 +53,7 @@ build() {
 
 package() {
     install -Dm755 "$srcdir/emobox-bin" "$pkgdir/usr/bin/emobox"
-    install -Dm644 "$srcdir/emobox/emobox.service" \
+    install -Dm644 "$startdir/emobox.service" \
         "$pkgdir/usr/lib/systemd/system/emobox.service"
     install -Dm644 "$srcdir/emobox/README.md" \
         "$pkgdir/usr/share/doc/$pkgname/README.md"

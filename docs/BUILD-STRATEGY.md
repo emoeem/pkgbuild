@@ -25,12 +25,12 @@ binary-repack
 
 | 策略 | 包 |
 |---|---|
-| `source` | ffmpeg-full, mpeghdec, quirc, sing-box-ebpf, sing-box-panel |
+| `source` | emobox, ffmpeg-full, mpeghdec, quirc, sing-box-ebpf |
 | `vcs` | linuxqq-wayland-fix-git, scx-scheds-git, svt-jpeg-xs-git, xclip-git |
 | `binary-repack` | dsh-desktop-linux, filee-bin, trae-cn-appimage, vapoursynth-plugin-mlrt-ncnn-runtime |
-| `data` | dracpanel, sing-box-rule-sets |
+| `data` | sing-box-rule-sets |
 
-`dracpanel` 归 `data` 的依据：`arch=('any')`、tarball 携带预构建 Vite dist、`package()` 只拷静态文件、`check()` 强制 dist 与源码同 commit。
+`emobox` 归 `source` 的依据：pnpm 构建 UI dist、go:embed 进 CGO_ENABLED=0 静态 Go 二进制，pkgver 对齐 emobox 仓库 tag v1.0.0。
 
 ## 消费点（三层）
 

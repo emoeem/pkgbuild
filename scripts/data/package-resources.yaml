@@ -72,7 +72,7 @@ packages:
     ram: 1
     disk: 1
     gpu: 0
-  sing-box-panel:
+  emobox:
     cpu: 1
     ram: 1
     disk: 1

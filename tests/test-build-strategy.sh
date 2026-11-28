@@ -68,12 +68,12 @@ for pkg_dir in "$root"/packages/*/; do
     declared=$((declared + 1))
 done
 shopt -u nullglob
-(( declared == 15 )) || fail "expected 15 packages with a strategy, found $declared"
-echo "ok: $declared/15 packages declare a legal strategy"
+(( declared == 14 )) || fail "expected 14 packages with a strategy, found $declared"
+echo "ok: $declared/14 packages declare a legal strategy"
 
 printf '%s\n' '4: repack/data members match the audit classification'
 expected_repack='dsh-desktop-linux filee-bin trae-cn-appimage vapoursynth-plugin-mlrt-ncnn-runtime'
-expected_data='dracpanel sing-box-rule-sets'
+expected_data='sing-box-rule-sets'
 actual="$(for pkg_dir in "$root"/packages/*/; do
     value="$(build_strategy_of "$pkg_dir")" || continue
     if build_strategy_defers_to_upstream "$value"; then

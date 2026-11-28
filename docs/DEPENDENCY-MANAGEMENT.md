@@ -8,7 +8,7 @@
 |---|---|---|
 | AUR 镜像 | 包目录 `.aur-url` + `.aur-commit`（40 位 pin） | ffmpeg-full, linuxqq-wayland-fix-git, mpeghdec, quirc, scx-scheds-git, svt-jpeg-xs-git, vapoursynth-plugin-mlrt-ncnn-runtime, xclip-git |
 | 专属更新工作流 | `config/package-updates.txt` 的 `workflow <path>` 行 | dsh-desktop-linux, filee-bin, sing-box-ebpf, sing-box-rule-sets |
-| 手动 | `config/package-updates.txt` 的 `manual <reason>` 行（有意的过期声明） | sing-box-panel, dracpanel, trae-cn-appimage |
+| 手动 | `config/package-updates.txt` 的 `manual <reason>` 行（有意的过期声明） | emobox, trae-cn-appimage |
 
 AUR 同步（`sync-aur-packages.sh`）是 per-package 故障隔离的：单包失败不拖累整批；本地定制写进 `scripts/overlays/<pkg>.sh`（sync 每次重放，必须幂等），不要直接改包目录文件——AUR 版本会覆盖它。
 

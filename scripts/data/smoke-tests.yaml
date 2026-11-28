@@ -47,14 +47,12 @@ packages:
       - sing-box
     commands:
       - "sing-box version"
-  dracpanel:
-    commands:
-      - "test -f /usr/share/dracpanel/ui/index.html"
-      - "test -f /usr/share/dracpanel/panel.json.example"
-  sing-box-panel:
-    # 包内安装名是 sing-box-panel（源文件叫 singbox-panel,装到 /usr/bin 时改了名）
+  emobox:
+    # UI dist 经 go:embed 内嵌在二进制里，没有独立静态文件要验
     binaries:
-      - sing-box-panel
+      - emobox
+    commands:
+      - "emobox --version"
   svt-jpeg-xs-git:
     libraries:
       - libSvtJpegxs.so
