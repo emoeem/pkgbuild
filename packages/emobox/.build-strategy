@@ -1,0 +1,4 @@
+source
+# Built from the tagged emobox monorepo: pnpm UI dist go:embed'ed into a
+# CGO_ENABLED=0 static Go binary; depends=('sing-box') is a subprocess
+# dependency (check / tools ebpf status / journalctl).

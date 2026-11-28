@@ -1,0 +1,27 @@
+_migrate_panel_state() {
+    # sing-box-panel → emobox 的状态迁移：panel.json 与 token（存在才迁，幂等）。
+    old_etc=/etc/sing-box-panel
+    new_etc=/etc/emobox
+    old_lib=/var/lib/sing-box-panel
+    new_lib=/var/lib/emobox
+
+    if [[ -f "${old_etc}/panel.json" && ! -e "${new_etc}/panel.json" ]]; then
+        install -Dm600 "${old_etc}/panel.json" "${new_etc}/panel.json"
+        printf 'emobox: 已迁移 /etc/sing-box-panel/panel.json → /etc/emobox/panel.json\n'
+    fi
+    if [[ -f "${old_lib}/token" && ! -e "${new_lib}/token" ]]; then
+        install -Dm600 "${old_lib}/token" "${new_lib}/token"
+        printf 'emobox: 已迁移访问令牌 → %s/token\n' "$new_lib"
+    fi
+    if [[ -d "$new_etc" ]]; then
+        printf 'emobox: 如服务未启用，请执行 systemctl enable --now emobox\n'
+    fi
+}
+
+post_install() {
+    _migrate_panel_state
+}
+
+post_upgrade() {
+    _migrate_panel_state
+}

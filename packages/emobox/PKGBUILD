@@ -1,0 +1,64 @@
+# Maintainer: emoeem
+#
+# EmoBox: sing-box 本机多主题 Web 面板（一仓库一项目一包），替代 sing-box-panel + dracpanel。
+#   - backend/: Go 1.25 后端（订阅、分应用 eBPF 策略 include_uid/exclude_uid、
+#     配置安全管线 check→备份→原子替换→reload/restart→回滚、流量历史、DNS 统计、服务控制）
+#   - ui/: Zephyruso/zashboard（MIT）fork，UI dist 经 go:embed 打进单一二进制
+# 与官方 sing-box 包的关系：depends=('sing-box') 是子进程依赖（sing-box check /
+# tools ebpf status / journalctl），namcap 看不到，属已知说明。
+#
+# 更新：改 pkgver/pkgrel（tag v$pkgver 必须先存在于 emobox 仓库），重新生成 .SRCINFO。
+
+pkgname=emobox
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Multi-theme local web panel for sing-box eBPF: subscriptions, per-app policy, safe config pipeline, traffic history'
+arch=('x86_64')
+url='https://github.com/emoeem/emobox'
+license=('GPL-3.0-or-later')
+depends=('sing-box')
+makedepends=('go' 'nodejs' 'pnpm' 'git')
+options=('!strip')
+install=emobox.install
+provides=('sing-box-panel' 'dracpanel' 'dracula-panel-for-sing-box')
+conflicts=('sing-box-panel' 'dracpanel' 'dracula-panel-for-sing-box')
+replaces=('sing-box-panel' 'dracpanel' 'dracula-panel-for-sing-box')
+source=("git+https://github.com/emoeem/emobox.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/emobox"
+
+    # pnpm 离线缓存收进 srcdir，避免写 $HOME
+    export PNPM_HOME="$srcdir/pnpm-home"
+    export HOME="$srcdir/pnpm-home"
+    mkdir -p "$PNPM_HOME"
+
+    cd ui
+    pnpm install --frozen-lockfile
+    pnpm build
+    cd ..
+
+    rm -rf backend/internal/httpapi/embed_ui/dist
+    mkdir -p backend/internal/httpapi/embed_ui/dist
+    cp -a ui/dist/. backend/internal/httpapi/embed_ui/dist/
+
+    export CGO_ENABLED=0 GOAMD64=v3
+    export GOPATH="$srcdir/gopath" GOMODCACHE="$srcdir/gomodcache" GOFLAGS="-mod=readonly"
+    cd backend
+    go build -trimpath \
+        -ldflags "-s -w -X main.version=${pkgver}" \
+        -o "$srcdir/emobox-bin" ./cmd/emobox
+}
+
+package() {
+    install -Dm755 "$srcdir/emobox-bin" "$pkgdir/usr/bin/emobox"
+    install -Dm644 "$srcdir/emobox/emobox.service" \
+        "$pkgdir/usr/lib/systemd/system/emobox.service"
+    install -Dm644 "$srcdir/emobox/README.md" \
+        "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 "$srcdir/emobox/docs/PLAN.md" \
+        "$pkgdir/usr/share/doc/$pkgname/PLAN.md"
+    install -Dm644 "$srcdir/emobox/LICENSE" \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

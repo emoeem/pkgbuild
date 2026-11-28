@@ -1,0 +1,18 @@
+[Unit]
+Description=emobox local management panel for sing-box
+Documentation=https://github.com/emoeem/emobox
+After=network.target
+
+[Service]
+Type=simple
+# root 运行原因：写 /etc/emobox/panel.json、systemctl 控制 sing-box、
+# sing-box check（eBPF 入站会真实创建 BPF map，非 root 必失败）。
+# 面板只监听 127.0.0.1:9096，所有 /api 请求要求令牌（/var/lib/emobox/token，0600）。
+User=root
+StateDirectory=emobox
+ExecStart=/usr/bin/emobox
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

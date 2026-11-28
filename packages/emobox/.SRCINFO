@@ -1,0 +1,27 @@
+pkgbase = emobox
+	pkgdesc = Multi-theme local web panel for sing-box eBPF: subscriptions, per-app policy, safe config pipeline, traffic history
+	pkgver = 1.0.0
+	pkgrel = 1
+	url = https://github.com/emoeem/emobox
+	install = emobox.install
+	arch = x86_64
+	license = GPL-3.0-or-later
+	makedepends = go
+	makedepends = nodejs
+	makedepends = pnpm
+	makedepends = git
+	depends = sing-box
+	provides = sing-box-panel
+	provides = dracpanel
+	provides = dracula-panel-for-sing-box
+	conflicts = sing-box-panel
+	conflicts = dracpanel
+	conflicts = dracula-panel-for-sing-box
+	replaces = sing-box-panel
+	replaces = dracpanel
+	replaces = dracula-panel-for-sing-box
+	options = !strip
+	source = git+https://github.com/emoeem/emobox.git#tag=v1.0.0
+	sha256sums = SKIP
+
+pkgname = emobox
