@@ -36,6 +36,8 @@ esac
 
 readonly -a urls=(
     "https://anti-ad.net/adguard.txt"
+    "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt"
+    "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs"
     "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs"
     "https://raw.githubusercontent.com/HenryChiao/mihomo_yamls/ruleset/singbox/version4/cncidr.srs"
     "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblocksingbox.srs"
@@ -43,7 +45,7 @@ readonly -a urls=(
     "https://raw.githubusercontent.com/lyc8503/sing-box-rules/rule-set-geosite/geosite-cn.srs"
     "https://raw.githubusercontent.com/lyc8503/sing-box-rules/rule-set-geosite/geosite-geolocation-!cn.srs"
 )
-# .source-hashes 是六份远程源的审计基线；PKGBUILD sha256sums 还包含三份
+# .source-hashes 是八份远程源的审计基线；PKGBUILD sha256sums 还包含三份
 # 仓库内源文件的哈希，数组顺序必须与 source 完全一致。
 readonly hashes_file="${pkg_dir}/.source-hashes"
 
@@ -72,6 +74,12 @@ for i in "${!urls[@]}"; do
             [[ "$(head -c 3 "$out")" == "SRS" ]] ||
                 { printf 'not a sing-box rule-set (bad magic): %s\n' "$url" >&2; exit 1; }
             ;;
+        *AWAvenue-Ads-Rule.txt)
+            if (( $(wc -l < "$out") < 500 )) || ! grep -q '^!Title: AWAvenue Ads Rule$' "$out" || ! grep -q '^!Version:' "$out"; then
+                printf 'invalid AWAvenue filter content: %s\n' "$url" >&2
+                exit 1
+            fi
+            ;;
         *)
             (( $(wc -l < "$out") >= 10000 )) ||
                 { printf 'suspiciously small rule list: %s\n' "$url" >&2; exit 1; }
@@ -94,7 +102,7 @@ done
 # 易变远程源在 PKGBUILD 里写作 SKIP：上游 8h~日更，钉死的哈希必然在 refresh
 # 与构建之间过期，构建会 fail-closed 失败并连带 skip 整轮发布。哈希仍然记录到
 # .source-hashes，但只用于判断"上游有没有变、要不要 bump 版本触发重建"。
-# 数组顺序依旧与 source 一致：前六项 SKIP，后三项是仓库内自制文件，必须钉死。
+# 数组顺序依旧与 source 一致：前八项 SKIP，后三项是仓库内自制文件，必须钉死。
 skip_sums=()
 for _ in "${urls[@]}"; do skip_sums+=('SKIP'); done
 

@@ -16,16 +16,16 @@
 # 放在这里就能跟着本仓库的 CI 一起滚动重建（见 scripts/refresh-rule-sets.sh + 定时工作流）。
 #
 # 数据来源与许可：
-#   MetaCubeX/meta-rules-dat → GPL-3.0-or-later
-#   HenryChiao/mihomo_yamls  → AGPL-3.0-or-later
+#   MetaCubeX/meta-rules-dat → GPL-3.0-only
+#   HenryChiao/mihomo_yamls  → AGPL-3.0-only
 #   anti-AD (prprpi/anti-AD) → 仓库未附许可证文件，个人使用；此处标注 LicenseRef-anti-AD
 #   lyc8503/sing-box-rules   → 仓库未附许可证文件，数据移植自 Loyalsoldier/v2ray-rules-dat（GPL-3.0），
-#                              故归入本包的 GPL-3.0-or-later；用它的理由见下方注释。
+#                              故归入本包的 GPL-3.0-only；用它的理由见下方注释。
 #
 # 升级方式：`pkgver` 用日期；`scripts/refresh-rule-sets.sh` 每天比对上游内容
 # （哈希记录在同目录 .source-hashes）并在有变化时提交 + 触发重建发布。
 #
-# 校验策略（2026-10-20 起）：六份远程源按"易变"处理，sha256sums 写作 SKIP。
+# 校验策略（2026-10-20 起）：八份远程源按"易变"处理，sha256sums 写作 SKIP。
 # 原因：这些源 8 小时到每日更新一次，钉死的哈希必然在 refresh 与构建之间过期，
 # 于是构建 fail-closed 失败；发布又是 all-or-nothing，一个包失败会连带 skip 掉
 # 整轮发布（2026-10-12 当天 7 轮红就是这么来的）。现在改成：
@@ -41,17 +41,19 @@
 
 pkgname=sing-box-rule-sets
 pkgver=20261128
-pkgrel=1
-pkgdesc='Extra sing-box rule-sets: anti-AD + adblockfilters tracker lists, fresh geoip/cn, mihomo CN CIDR, Loyalsoldier enhanced geosite (cn/non-cn), always-direct list, CN ad-SDK extras'
+pkgrel=3
+pkgdesc='Extra sing-box rule-sets: ads, Telegram GeoIP, fresh CN IP/domain data, always-direct list and CN ad-SDK extras'
 arch=('any')
 url='https://github.com/emoeem/pkgbuild'
-license=('GPL-3.0-or-later' 'AGPL-3.0-or-later' 'LicenseRef-anti-AD')
+license=('GPL-3.0-only' 'AGPL-3.0-only' 'LicenseRef-anti-AD')
 # 运行时要 sing-box 来读这些规则集；构建时也要它自带的 rule-set 转换器
 depends=('sing-box')
 makedepends=('sing-box')
 options=('!strip')
 source=(
     'anti-ad.txt::https://anti-ad.net/adguard.txt'
+    'AWAvenue-Ads-Rule.txt::https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt'
+    'geoip-telegram.srs::https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs'
     'geoip-cn.srs::https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs'
     'cncidr.srs::https://raw.githubusercontent.com/HenryChiao/mihomo_yamls/ruleset/singbox/version4/cncidr.srs'
     # adblockfilters（217heidai）：聚合 EasyList / EasyPrivacy / AdGuard 全家桶 / AdRules / OISD /
@@ -67,8 +69,10 @@ source=(
     'ads-extra.json'
     'LICENSE-anti-AD'
 )
-# 顺序与 source 一致：前六项是易变远程源（SKIP），后三项是仓库内自制文件（钉死）。
+# 顺序与 source 一致：前八项是易变远程源（SKIP），后三项是仓库内自制文件（钉死）。
 sha256sums=(
+    'SKIP'
+    'SKIP'
     'SKIP'
     'SKIP'
     'SKIP'
@@ -89,6 +93,8 @@ _rule_sets=(
     lyc-geosite-geolocation-!cn
     must-direct
     ads-extra
+    AWAvenue-Ads-Rule
+    geoip-telegram
 )
 
 # 上游直接下载的成品 .srs（与上面重叠，用于更严格的体量检查）
@@ -98,6 +104,7 @@ _upstream_rule_sets=(
     adblockfilters
     lyc-geosite-cn
     lyc-geosite-geolocation-!cn
+    AWAvenue-Ads-Rule
 )
 
 build() {
@@ -113,16 +120,26 @@ build() {
         return 1
     }
 
+    # AWAvenue 是较小的 AdGuard 过滤表；检查其标识和最低行数，防止错误页入包。
+    local awa_lines
+    awa_lines="$(wc -l < AWAvenue-Ads-Rule.txt)"
+    (( awa_lines >= 500 )) && grep -q '^!Title: AWAvenue Ads Rule$' AWAvenue-Ads-Rule.txt && grep -q '^!Version:' AWAvenue-Ads-Rule.txt || {
+        printf 'sing-box-rule-sets: AWAvenue-Ads-Rule.txt 内容异常（%s 行）\n' "$awa_lines" >&2
+        return 1
+    }
+
     # 把这一版真正用到的上游哈希写进包里（易变源不钉死，但可事后审计）。
     {
         printf '# SHA-256 of the upstream files actually downloaded for this build.\n'
         printf '# Volatile upstreams are not pinned; this file records what shipped.\n'
-        sha256sum anti-ad.txt geoip-cn.srs cncidr.srs adblockfilters.srs \
+        sha256sum anti-ad.txt AWAvenue-Ads-Rule.txt geoip-telegram.srs \
+            geoip-cn.srs cncidr.srs adblockfilters.srs \
             lyc-geosite-cn.srs 'lyc-geosite-geolocation-!cn.srs'
     } > SOURCE-HASHES.txt
 
     # AdGuard 语法 → sing-box 二进制规则集（用的是包依赖里的 sing-box 自带转换器）
     sing-box rule-set convert anti-ad.txt -t adguard -o anti-ad.srs
+    sing-box rule-set convert AWAvenue-Ads-Rule.txt -t adguard -o AWAvenue-Ads-Rule.srs
 
     # 自制清单：源 JSON → .srs
     sing-box rule-set compile must-direct.json -o must-direct.srs
@@ -131,7 +148,7 @@ build() {
     # 上游直接给的 .srs 改个更明确的名字
     install -m 644 geoip-cn.srs   geoip-cn-fresh.srs
     install -m 644 cncidr.srs     cncidr-mihomo.srs
-    # lyc-*.srs 已经是带 SRS magic 的成品，文件名即最终名，无需转换/改名
+    # lyc-*.srs 与 geoip-telegram.srs 已经是带 SRS magic 的成品，无需转换/改名
 
     # 兜底断言：全部产物都必须是合法 rule-set（magic = "SRS"）
     local f
@@ -192,6 +209,8 @@ package() {
 | `lyc-geosite-geolocation-!cn.srs` | 同上仓库的 `geosite/geolocation-!cn`（~26k 后缀，日更） | 境外域名判定补充（与官方 `geolocation-!cn` 并集） |
 | `must-direct.srs` | ① STUN / 游戏主机 / LAN cache / NCSI ② **Steam 国服 CDN** | ① 走代理会坏功能（NAT 类型、Steam 局域网缓存）；② 直连明显更快 —— 只取国内 CDN 端点（`st.dl.eccdnx.com`、`dl.steam.clngaa.com`、`csgo.com.cn`…，来自 lingqiqi5211/sing-box-rules 的 `steam-cn`），**刻意不含** `steamcontent.com` / `steamusercontent.com` / `cm.steampowered.com` 等全球域名（强制直连有风险） |
 | `ads-extra.srs` | `ad.duowan.com` / `sdkmob.com` / `ads.wps.cn` | 补 anti-AD 漏掉的国内广告端点（只用精确域名，不拦 apex） |
+| `AWAvenue-Ads-Rule.srs` | TG-Twilight/AWAvenue-Ads-Rule | AdGuard 广告过滤规则，构建时由 sing-box 转换 |
+| `geoip-telegram.srs` | MetaCubeX/meta-rules-dat 的 Telegram IPv4/IPv6 网段 | Telegram IP 分流补充 |
 
 `SOURCE-HASHES.txt` 记录本版实际打包的上游文件 SHA-256。上游每天（adblockfilters 每 8 小时）
 更新一次，包里不钉死哈希以免构建因"校验和过期"失败；要核实某一版装了什么，看这个文件。
@@ -201,6 +220,8 @@ package() {
 ```jsonc
 // route.rule_set
 { "type": "local", "tag": "anti-AD",     "format": "binary", "path": "/usr/share/sing-box-rule-sets/anti-ad.srs" },
+{ "type": "local", "tag": "Ads_AWAvenue", "format": "binary", "path": "/usr/share/sing-box-rule-sets/AWAvenue-Ads-Rule.srs" },
+{ "type": "local", "tag": "geoip/telegram", "format": "binary", "path": "/usr/share/sing-box-rule-sets/geoip-telegram.srs" },
 { "type": "local", "tag": "geoip/cn-fresh", "format": "binary", "path": "/usr/share/sing-box-rule-sets/geoip-cn-fresh.srs" },
 { "type": "local", "tag": "cncidr-mihomo",  "format": "binary", "path": "/usr/share/sing-box-rule-sets/cncidr-mihomo.srs" },
 { "type": "local", "tag": "must-direct",    "format": "binary", "path": "/usr/share/sing-box-rule-sets/must-direct.srs" },
@@ -227,11 +248,13 @@ package() {
 
 ## 许可证
 
-- `geoip-cn-fresh.srs`：MetaCubeX/meta-rules-dat，GPL-3.0-or-later
-- `cncidr-mihomo.srs`：HenryChiao/mihomo_yamls，AGPL-3.0-or-later
+- `geoip-cn-fresh.srs`：MetaCubeX/meta-rules-dat，GPL-3.0-only
+- `cncidr-mihomo.srs`：HenryChiao/mihomo_yamls，AGPL-3.0-only
 - `anti-ad.srs`：prprpi/anti-AD（仓库未附许可证文件，个人使用）
-- `adblockfilters.srs`：217heidai/adblockfilters，GPL-3.0（聚合上游各表，上游许可见其仓库）
-- `lyc-geosite-*.srs`：lyc8503/sing-box-rules（数据移植自 Loyalsoldier/v2ray-rules-dat，GPL-3.0；该仓未附许可证文件）
+- `adblockfilters.srs`：217heidai/adblockfilters，GPL-3.0-only（聚合上游各表，上游许可见其仓库）
+- `lyc-geosite-*.srs`：lyc8503/sing-box-rules（数据移植自 Loyalsoldier/v2ray-rules-dat，GPL-3.0-only；该仓未附许可证文件）
+- `AWAvenue-Ads-Rule.srs`：TG-Twilight/AWAvenue-Ads-Rule，GPL-3.0-only
+- `geoip-telegram.srs`：MetaCubeX/meta-rules-dat，GPL-3.0-only
 - `must-direct.srs` / `ads-extra.srs`：本仓库自制
 EOF
 }
