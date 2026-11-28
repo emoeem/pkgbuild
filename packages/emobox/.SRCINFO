@@ -21,7 +21,7 @@ pkgbase = emobox
 	replaces = dracpanel
 	replaces = dracula-panel-for-sing-box
 	options = !strip
-	source = git+https://github.com/emoeem/emobox.git#tag=v1.0.0
+	source = emobox-1.0.0.tar.gz::git+https://github.com/emoeem/emobox.git#tag=v1.0.0
 	sha256sums = SKIP
 
 pkgname = emobox

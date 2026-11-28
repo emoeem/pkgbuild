@@ -23,11 +23,13 @@ install=emobox.install
 provides=('sing-box-panel' 'dracpanel' 'dracula-panel-for-sing-box')
 conflicts=('sing-box-panel' 'dracpanel' 'dracula-panel-for-sing-box')
 replaces=('sing-box-panel' 'dracpanel' 'dracula-panel-for-sing-box')
-source=("git+https://github.com/emoeem/emobox.git#tag=v${pkgver}")
+# source 加显式文件名前缀：builder 的共享 SRCDEST 缓存与包名/git basename
+# 同为 "emobox"，无前缀时 makepkg 会撞上缓存里的半成品目录而报 not a clone。
+source=("emobox-${pkgver}.tar.gz::git+https://github.com/emoeem/emobox.git#tag=v${pkgver}")
 sha256sums=('SKIP')
 
 build() {
-    cd "$srcdir/emobox"
+    cd "$srcdir/emobox-${pkgver}.tar.gz"
 
     # pnpm 离线缓存收进 srcdir，避免写 $HOME
     export PNPM_HOME="$srcdir/pnpm-home"
@@ -55,10 +57,10 @@ package() {
     install -Dm755 "$srcdir/emobox-bin" "$pkgdir/usr/bin/emobox"
     install -Dm644 "$startdir/emobox.service" \
         "$pkgdir/usr/lib/systemd/system/emobox.service"
-    install -Dm644 "$srcdir/emobox/README.md" \
+    install -Dm644 "$srcdir/emobox-${pkgver}.tar.gz/README.md" \
         "$pkgdir/usr/share/doc/$pkgname/README.md"
-    install -Dm644 "$srcdir/emobox/docs/PLAN.md" \
+    install -Dm644 "$srcdir/emobox-${pkgver}.tar.gz/docs/PLAN.md" \
         "$pkgdir/usr/share/doc/$pkgname/PLAN.md"
-    install -Dm644 "$srcdir/emobox/LICENSE" \
+    install -Dm644 "$srcdir/emobox-${pkgver}.tar.gz/LICENSE" \
         "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
