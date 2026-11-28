@@ -59,6 +59,7 @@ checks=(
     "rebuild-triggers"
     "workflow-images"
     "aur-dependency-fallback"
+    "update-route"
     "build-regressions"
     "build-policy"
     "version-monotonicity"
@@ -105,6 +106,9 @@ run_check() {
             ;;
         aur-dependency-fallback)
             bash tests/test-aur-dependency-fallback.sh
+            ;;
+        update-route)
+            python3 tests/test_update_route.py
             ;;
         build-regressions)
             # Static grep/assert regressions for past build breaks. It used to

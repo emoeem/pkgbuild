@@ -182,12 +182,29 @@ version="$(awk -v n="$name" '$1 == n {print $2; exit}' "$PACMAN_DB")"
 printf 'Repository      : test\nName            : %s\nVersion         : %s\n' "$name" "$version"
 STUB
 chmod +x "$tmp/drift/bin/bsdtar" "$tmp/drift/bin/pacman"
+cat > "$tmp/drift/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+query=""
+for argument in "$@"; do
+    case "$argument" in
+        arg[]=*) query="${argument#arg[]=}" ;;
+    esac
+done
+case "${AUR_RPC_RESULT:-one}" in
+    one) printf '{"resultcount":1,"results":[{"Name":"%s","Version":"%s"}]}\n' "${AUR_RPC_NAME:-external-lib}" "${AUR_RPC_VERSION:-2.6-3}" ;;
+    none) printf '{"resultcount":0,"results":[]}\n' ;;
+    404) printf 'not found\n' >&2; exit 22 ;;
+    timeout) printf 'timeout\n' >&2; exit 28 ;;
+    limit) printf 'rate limited\n' >&2; exit 429 ;;
+esac
+STUB
+chmod +x "$tmp/drift/bin/curl"
 
 drift_out=""
 drift_status=0
 run_drift() { # <stale-file>
     drift_status=0
-    drift_out="$(PATH="$tmp/drift/bin:$PATH" LOCAL_REPO_DIR='' \
+    drift_out="$(PATH="$tmp/drift/bin:$PATH" LOCAL_REPO_DIR='' AUR_CACHE_DIR="$tmp/drift/aur-cache" \
         bash "$drift_root/scripts/check-dependency-drift.sh" \
         "$tmp/drift/repo/x86_64" "$drift_root" "$1" 2>&1)" || drift_status=$?
 }
@@ -201,6 +218,31 @@ assert_eq "解析不出来的声明不改变退出码" "0" "$drift_status"
 assert_contains "外部声明只留 NOTE" "$drift_out" \
     "NOTE demo: declared dependency not resolvable in this container (external repository?): external-lib"
 
+# AUR RPC is opt-in only for .rebuild-on declarations. Official/direct
+# dependencies never enter this network fallback.
+AUR_RPC_NAME=external-lib AUR_RPC_VERSION=2.6-3 run_drift "$tmp/drift/stale-aur.txt"
+assert_eq "AUR 新版本触发声明依赖漂移" "1" "$(stale_lines)"
+assert_contains "AUR 新版本的 STALE 文本" "$drift_out" \
+    "STALE demo: declared dependency external-lib changed 2.5-3 -> 2.6-3"
+assert_eq "AUR 新版本记下包名" "demo" "$(cat "$tmp/drift/stale-aur.txt")"
+
+rm -rf "$tmp/drift/aur-cache"
+AUR_RPC_NAME=external-lib AUR_RPC_VERSION=2.5-3 run_drift ""
+assert_eq "AUR 版本没变化不触发漂移" "0" "$(stale_lines)"
+
+rm -rf "$tmp/drift/aur-cache"
+AUR_RPC_NAME=external-lib AUR_RPC_VERSION=2.6-3 run_drift ""
+test -s "$tmp/drift/aur-cache/external-lib.version" || fail "AUR 成功响应没有写入缓存"
+AUR_RPC_RESULT=404 run_drift ""
+assert_contains "AUR 缓存命中忽略网络故障" "$drift_out" "2.5-3"
+
+touch -d '20 minutes ago' "$tmp/drift/aur-cache/external-lib.version"
+rm -f "$tmp/drift/aur-cache/external-lib.version"
+for rpc_case in none 404 timeout limit; do
+    AUR_RPC_RESULT="$rpc_case" run_drift ""
+    assert_contains "AUR RPC $rpc_case 标记 unresolved" "$drift_out" "declared dependency not resolvable"
+done
+
 printf 'tool 1.1-1\nextra-tool 3.0-2\n' > "$tmp/drift/pacman-db"
 run_drift "$tmp/drift/stale.txt"
 assert_eq "直接依赖改版本报 STALE" "1" "$(stale_lines)"
@@ -212,6 +254,7 @@ assert_eq "stale 文件记下包名" "demo" "$(cat "$tmp/drift/stale.txt")"
 # 硬破坏由 check-repository-sonames.sh 直接比对 ELF NEEDED。旧规则把 pkgrel
 # 也算进比较，ffmpeg-full（约 120 个滚动依赖）因此每天被重建 3-5 次。
 rm -f "$tmp/drift/stale.txt"
+rm -rf "$tmp/drift/aur-cache"
 printf 'tool 1.0-1\nextra-tool 3.0-4\n' > "$tmp/drift/pacman-db"
 run_drift "$tmp/drift/stale.txt"
 assert_eq "pkgrel-only 不报 STALE" "0" "$(stale_lines)"
@@ -224,6 +267,7 @@ else
 fi
 
 rm -f "$tmp/drift/stale.txt"
+rm -rf "$tmp/drift/aur-cache"
 printf 'tool 1.0-1\nextra-tool 3.1-2\n' > "$tmp/drift/pacman-db"
 run_drift "$tmp/drift/stale.txt"
 assert_eq "声明依赖改 pkgver 同样报 STALE" "1" "$(stale_lines)"

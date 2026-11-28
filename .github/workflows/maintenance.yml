@@ -121,6 +121,54 @@ jobs:
             printf 'Cache usage is below the 80%% alert threshold.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  dsh-freshness:
+    permissions:
+      contents: read
+      issues: write
+    name: Detect stale dsh-desktop-linux updates
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare upstream and repository pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          output="$(python3 scripts/update-dsh-desktop-linux.py --root .)"
+          latest="$(sed -n 's/^validated dsh-desktop-linux release: v\([^ ]*\) sha256:.*/\1/p' <<<"$output")"
+          pinned="$(sed -n 's/^pkgver=//p' packages/dsh-desktop-linux/PKGBUILD)"
+          [[ -n "$latest" && -n "$pinned" ]]
+          comparison="$(
+            DSH_LATEST="$latest" DSH_PINNED="$pinned" python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          path = Path("scripts/update-dsh-desktop-linux.py")
+          spec = importlib.util.spec_from_file_location("dsh_updater", path)
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          import os
+          print(module.compare_versions(os.environ["DSH_LATEST"], os.environ["DSH_PINNED"]))
+          PY
+          )"
+          title="[freshness] dsh-desktop-linux is stale"
+          issue="$(gh issue list --state open --limit 100 --json number,title --search "$title in:title" | python3 -c 'import json,sys; title=sys.argv[1]; print(next((str(x["number"]) for x in json.load(sys.stdin) if x["title"]==title), ""))' "$title")"
+          if (( comparison > 0 )); then
+            body="The independent DSH freshness watchdog found upstream $latest while this repository pins $pinned. The scheduled updater may have missed delivery or failed; inspect .github/workflows/dsh-desktop-linux-update.yml and rerun scripts/update-dsh-desktop-linux.py --apply through the normal validation path."
+            if [[ -n "$issue" ]]; then
+              gh issue comment "$issue" --body "$body"
+            else
+              gh issue create --title "$title" --body "$body"
+            fi
+            printf '::warning::dsh-desktop-linux upstream=%s pinned=%s\n' "$latest" "$pinned"
+          elif [[ -n "$issue" ]]; then
+            gh issue close "$issue" --reason completed --comment "dsh-desktop-linux is current at $pinned."
+          fi
+
   check-sonames:
     permissions:
       actions: write

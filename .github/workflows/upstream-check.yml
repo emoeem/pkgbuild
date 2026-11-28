@@ -111,6 +111,19 @@ jobs:
             current="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["current"])' "$record")"
             upstream="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["upstream"])' "$record")"
             title="[upstream] $package: $upstream available (published: $current)"
+            route="$(python3 scripts/resolve-update-route.py --root . --package "$package")" || {
+              unresolved_title="[upstream] $package: update route unresolved"
+              unresolved_issue="$(gh issue list --state open --limit 100 --json number,title --search "$unresolved_title in:title" | python3 -c 'import json,sys; title=sys.argv[1]; print(next((str(x["number"]) for x in json.load(sys.stdin) if x["title"]==title), ""))' "$unresolved_title")"
+              unresolved_body="nvchecker found upstream $upstream while $package has no AUR, workflow, vendored-owner or manual route. Refuse to guess and inspect scripts/resolve-update-route.py."
+              if [[ -n "$unresolved_issue" ]]; then
+                gh issue comment "$unresolved_issue" --body "$unresolved_body"
+              else
+                gh issue create --title "$unresolved_title" --body "$unresolved_body"
+              fi
+              continue
+            }
+            route_kind="${route%%$'\t'*}"
+            route_detail="${route#*$'\t'}"
             # 按前缀找既有 issue:基线语义改过(PKGBUILD → published),前缀
             # 匹配让旧格式的 issue 继续被评论而不是孤儿化。
             issue="$(gh issue list --state open --limit 100 --json number,title --search "$package in:title" | python3 -c 'import json,sys; p=sys.argv[1]; prefix="[upstream] "+p+":"; rows=json.load(sys.stdin); print(next((str(x["number"]) for x in rows if x["title"].startswith(prefix)), ""))' "$package")"
@@ -131,8 +144,18 @@ jobs:
                 # 限流:每报告版本只派发一次 —— 派发注释就是最后一条评论
                 # 时跳过,新版本报告会重置这个条件。
                 if ! gh issue view "$issue" --json comments --jq '.comments[-1].body' 2>/dev/null | grep -qF 'auto-sync dispatched'; then
-                  gh workflow run sync.yml --repo "$GITHUB_REPOSITORY" -f packages="$package"
-                  gh issue comment "$issue" --body "auto-sync dispatched for $package (sync.yml, packages=$package). The sync is transactional and per-package fault-isolated; it publishes only through the build gates. If it fails again the [CI] Sync AUR package sources failed issue carries the reason; if the AUR PKGBUILD has not moved yet, this update stays blocked upstream of this repository."
+                  if [[ "$route_kind" == "aur" ]]; then
+                    gh workflow run sync.yml --repo "$GITHUB_REPOSITORY" -f packages="$package"
+                    gh issue comment "$issue" --body "auto-sync dispatched for $package (sync.yml, packages=$package). The sync is transactional and per-package fault-isolated; it publishes only through the build gates."
+                  elif [[ "$route_kind" == "vendored" ]]; then
+                    gh issue comment "$issue" --body "This is a vendored dependency of $route_detail, not an AUR package. It must not be dispatched to sync.yml; update the owner package pin through its dedicated vendored-update workflow or manual review."
+                  elif [[ "$route_kind" == "workflow" ]]; then
+                    workflow_name="$(basename "$route_detail" .yml)"
+                    gh workflow run "$workflow_name.yml" --repo "$GITHUB_REPOSITORY"
+                    gh issue comment "$issue" --body "Dedicated workflow $route_detail dispatched for $package. This package update must not be sent to sync.yml."
+                  else
+                    gh issue comment "$issue" --body "Route: manual. nvchecker found this update, but automatic source modification is intentionally disabled."
+                  fi
                 fi
               fi
             else

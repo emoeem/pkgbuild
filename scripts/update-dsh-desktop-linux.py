@@ -134,6 +134,13 @@ def version_tuple(value: str) -> tuple[int, int, int, int, int]:
     return (int(major), int(minor), int(patch), rank, int(number or 0))
 
 
+def compare_versions(left: str, right: str) -> int:
+    """Compare DSH versions with the same rank/shape used by its release grammar."""
+    left_tuple = version_tuple(left)
+    right_tuple = version_tuple(right)
+    return (left_tuple > right_tuple) - (left_tuple < right_tuple)
+
+
 def asset_digest(asset: dict) -> str:
     digest = asset.get("digest")
     if not isinstance(digest, str) or not DIGEST_RE.match(digest):

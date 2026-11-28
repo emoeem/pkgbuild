@@ -76,8 +76,40 @@ recorded_version() { # <buildinfo> <name>; prints the recorded <version>-<pkgrel
 # for every package, which made the whole drift check a silent no-op.  Trim the
 # label before comparing.
 current_version() { # <name>; prints the repository's <version>-<pkgrel>
-    pacman -Si "$1" 2>/dev/null |
-        awk -F ': +' '{key=$1; sub(/[[:space:]]+$/, "", key); if (key == "Version") {print $2; exit}}'
+    local name="$1" version
+    version="$(
+        pacman -Si "$name" 2>/dev/null |
+            awk -F ': +' '{key=$1; sub(/[[:space:]]+$/, "", key); if (key == "Version") {print $2; exit}}'
+    )"
+    [[ -n "$version" ]] && { printf '%s\n' "$version"; return 0; }
+
+    # AUR-only providers have no pacman repository record in the builder.
+    # Only declared external providers opt into this fallback; direct official
+    # dependencies stay on the repository-only path above.
+    (( aur_fallback )) || return 0
+    [[ "$name" =~ ^[A-Za-z0-9@._+-]+$ ]] || return 0
+
+    local cache_dir="${AUR_CACHE_DIR:-/tmp/pkgbuild-aur-cache}"
+    mkdir -p "$cache_dir"
+    local cache="${cache_dir}/${name}.version"
+    if [[ -s "$cache" ]] && (( $(date +%s) - $(stat -c %Y "$cache") < 900 )); then
+        cat "$cache"
+        return 0
+    fi
+
+    version="$(
+        curl --fail --silent --show-error --location --retry 3 --max-time 15 \
+            --get --data-urlencode "arg[]=$name" \
+            'https://aur.archlinux.org/rpc/v5/info' |
+            python3 -c 'import json,sys
+data=json.load(sys.stdin)
+results=data.get("resultcount", 0)
+if results == 1:
+    print(data["results"][0].get("Version", ""))'
+    )" || return 0
+    if [[ -n "$version" ]]; then
+        printf '%s\n' "$version" | tee "$cache" >/dev/null
+    fi
 }
 
 # Compare one dependency against what the published build recorded.
@@ -142,6 +174,7 @@ unresolved_count=0
 # Per-package loop state consumed by check_dep().
 suppress_stale=0
 strategy=""
+aur_fallback=0
 
 for pkg in "$repo_dir"/*.pkg.tar.zst; do
     [[ -e "$pkg" ]] || continue
@@ -175,6 +208,7 @@ for pkg in "$repo_dir"/*.pkg.tar.zst; do
     while IFS= read -r raw; do
         dep="$(strip_dep "$raw")"; [[ -n "$dep" && "$dep" != *.so* ]] || continue
         handled["$dep"]=1
+        aur_fallback=0
         check_dep "$buildinfo" "$name" "$dep" "direct dependency" || true
     done < <(awk -F ' = ' '$1 ~ /^\t(depends|makedepends|checkdepends)$/ {print $2}' "$src")
 
@@ -184,6 +218,7 @@ for pkg in "$repo_dir"/*.pkg.tar.zst; do
         [[ -n "${handled[$dep]:-}" ]] && continue
         handled["$dep"]=1
         status=0
+        aur_fallback=1
         check_dep "$buildinfo" "$name" "$dep" "declared dependency" || status=$?
         (( status == 2 )) && unresolved+=" $dep"
     done

@@ -73,6 +73,11 @@ class VersionOrderTests(unittest.TestCase):
     def test_tag_grammar_rejects_the_unparseable_shape(self):
         self.assertIsNone(updater.TAG_RE.match("v0.1.7rc2-2"))
 
+    def test_compare_versions_distinguishes_equal_older_and_newer(self):
+        self.assertEqual(0, updater.compare_versions("0.2.3alpha2", "0.2.3alpha2"))
+        self.assertEqual(-1, updater.compare_versions("0.2.2rc5", "0.2.3alpha1"))
+        self.assertEqual(1, updater.compare_versions("0.2.3", "0.2.3rc9"))
+
 
 def _vercmp_available():
     return subprocess.run(["sh", "-c", "command -v vercmp"], capture_output=True).returncode == 0

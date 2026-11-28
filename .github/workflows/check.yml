@@ -93,6 +93,11 @@ jobs:
       # job. Add checks to scripts/run-static-checks.sh, not here.
       - name: Run static checks
         run: bash scripts/run-static-checks.sh
+      - name: Run GitHub Actions security scan
+        run: |
+          set -Eeuo pipefail
+          python3 -m pip install --disable-pip-version-check --user zizmor==1.30.1
+          ~/.local/bin/zizmor --no-online-audits .github/workflows/*.yml
       # Guards that equivalence: the check list, failure propagation, and the
       # hook/CI wiring itself.
       - name: Run static check harness tests

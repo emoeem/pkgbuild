@@ -399,6 +399,11 @@ class ManifestLintTest(unittest.TestCase):
         return directory
 
     def test_rebuild_on_soname_declaration_passes(self):
+        self.add_package(
+            "linked-outside",
+            srcinfo=SRCINFO % {"name": "linked-outside"}
+            + "\tdepends = shine\n",
+        )
         self.add_rebuild_on(
             "linked-outside",
             "# a library from archlinuxcn\nsoname libshine.so.3 shine\n",
@@ -462,6 +467,14 @@ class ManifestLintTest(unittest.TestCase):
         code, output = self.lint()
         self.assert_error(code, output, "duplicate soname trigger")
 
+    def test_rebuild_on_soname_provider_must_be_a_dependency(self):
+        self.add_rebuild_on(
+            "provider-mismatch",
+            "soname libshine.so.3 shine\n",
+        )
+        code, output = self.lint()
+        self.assert_error(code, output, "SONAME provider 'shine'")
+
     def test_rebuild_on_without_triggers_fails(self):
         self.add_rebuild_on("empty-triggers", "# nothing but a comment\n")
         code, output = self.lint()
@@ -476,6 +489,16 @@ class ManifestLintTest(unittest.TestCase):
         self.assertIn("errors=0", output)
         expected = len(list((ROOT / "packages").glob("*/PKGBUILD")))
         self.assertIn(f"SUMMARY packages={expected} errors=0", output)
+
+    def test_ffmpeg_declares_astc_encoder_soname_and_provider(self):
+        declaration = (
+            ROOT / "packages" / "ffmpeg-full" / ".rebuild-on"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "soname libastcenc-sse2-shared.so astc-encoder",
+            declaration,
+        )
+        self.assertIn("package astc-encoder", declaration)
 
 
 if __name__ == "__main__":

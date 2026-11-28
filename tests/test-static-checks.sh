@@ -37,6 +37,7 @@ elf-soname
 rebuild-triggers
 workflow-images
 aur-dependency-fallback
+update-route
 build-regressions
 build-policy
 version-monotonicity

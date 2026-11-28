@@ -1,0 +1,2 @@
+soname libastcenc-sse2-shared.so astc-encoder
+package astc-encoder

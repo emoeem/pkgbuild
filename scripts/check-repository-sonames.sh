@@ -87,7 +87,8 @@ providers="$(mktemp)"
 trap 'rm -f "$providers"' EXIT
 
 if ! pacman -Fy > /dev/null 2>&1; then
-    report "WARNING: pacman -Fy reported an error; using the file databases already present"
+    printf 'pacman -Fy failed; refusing to use stale file databases for SONAME decisions\n' >&2
+    exit 3
 fi
 if ! compgen -G '/var/lib/pacman/sync/*.files' > /dev/null; then
     printf 'no pacman files database available; refusing to report false positives\n' >&2

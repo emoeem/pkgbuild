@@ -339,6 +339,12 @@ def check_rebuild_on(package_dir, sections, errors, notes):
                 f"{where}: `package {name}` is not one of this package's "
                 "depends/makedepends/checkdepends"
             )
+    for soname, provider in sorted(sonames.items()):
+        if provider not in declared_dependencies:
+            errors.append(
+                f"{where}: SONAME provider '{provider}' for '{soname}' is not "
+                "one of this package's depends/makedepends/checkdepends"
+            )
     if sonames:
         notes.append(f"{rel}: {len(sonames)} declared external soname(s)")
 

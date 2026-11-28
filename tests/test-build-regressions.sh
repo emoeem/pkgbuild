@@ -20,12 +20,12 @@ mkdir -p "$package_dir" "$cache_dir"
 printf 'pkgbase = fixture\n\tsource = git+https://github.com/astrand/xclip\n' > "$package_dir/.SRCINFO"
 
 git init -q "$cache_dir/xclip"
-git -C "$cache_dir/xclip" remote add origin https://example.invalid/wrong-repository
+git -C "$cache_dir/xclip" -c safe.bareRepository=all remote add origin https://example.invalid/wrong-repository
 bash "$root/scripts/validate-source-cache.sh" "$package_dir" "$cache_dir"
 [[ ! -e "$cache_dir/xclip" ]] || fail 'stale Git cache collision was not removed'
 
 git init -q "$cache_dir/xclip"
-git -C "$cache_dir/xclip" remote add origin https://github.com/astrand/xclip.git
+git -C "$cache_dir/xclip" -c safe.bareRepository=all remote add origin https://github.com/astrand/xclip.git
 bash "$root/scripts/validate-source-cache.sh" "$package_dir" "$cache_dir"
 [[ -d "$cache_dir/xclip/.git" ]] || fail 'matching Git source cache was removed'
 
@@ -480,7 +480,7 @@ bare_cache="$work/bare-cache"
 mkdir -p "$bare_pkg" "$bare_cache"
 printf 'pkgbase = fixture\n\tsource = git+https://github.com/astrand/xclip\n' >"$bare_pkg/.SRCINFO"
 git init -q --bare "$bare_cache/xclip"
-git -C "$bare_cache/xclip" remote add origin https://github.com/astrand/xclip
+git -C "$bare_cache/xclip" -c safe.bareRepository=all remote add origin https://github.com/astrand/xclip
 bash "$root/scripts/validate-source-cache.sh" "$bare_pkg" "$bare_cache" >"$work/bare-out.txt" 2>&1 \
     || fail 'validator failed on a healthy bare mirror'
 [[ -d "$bare_cache/xclip" ]] || fail 'validator removed a healthy bare mirror'
@@ -489,7 +489,7 @@ grep -Fq 'Removing' "$work/bare-out.txt" && fail 'validator healed a healthy bar
 # A bare mirror of the wrong repository must still be caught: the declaration is
 # the authority, and a mismatched remote is what makes makepkg abort with
 # "%s is not a clone of %s".
-git -C "$bare_cache/xclip" remote set-url origin https://example.invalid/other
+git -C "$bare_cache/xclip" -c safe.bareRepository=all remote set-url origin https://example.invalid/other
 bash "$root/scripts/validate-source-cache.sh" "$bare_pkg" "$bare_cache" >/dev/null 2>&1 \
     || fail 'validator failed while removing a stale bare mirror'
 [[ ! -e "$bare_cache/xclip" ]] || fail 'a bare mirror pointing at the wrong remote survived'
@@ -505,11 +505,11 @@ dep_cache="$work/dep-cache"
 mkdir -p "$dep_pkg" "$dep_cache"
 printf 'pkgbase = fixture\n\tsource = git+https://github.com/astrand/xclip\n' >"$dep_pkg/.SRCINFO"
 git init -q --bare "$dep_cache/xclip"
-git -C "$dep_cache/xclip" remote add origin https://github.com/astrand/xclip
+git -C "$dep_cache/xclip" -c safe.bareRepository=all remote add origin https://github.com/astrand/xclip
 # A dependency mirror that is a real repository: not declared, so its intended
 # URL is unknown and guessing would delete a working cache. It must survive.
 git init -q --bare "$dep_cache/healthydep"
-git -C "$dep_cache/healthydep" remote add origin https://example.invalid/healthydep
+git -C "$dep_cache/healthydep" -c safe.bareRepository=all remote add origin https://example.invalid/healthydep
 # A dependency mirror with no readable remote: makepkg aborts on it before it
 # fetches anything, so it cannot be a clone of anything and must go.
 mkdir -p "$dep_cache/brokendep/objects"

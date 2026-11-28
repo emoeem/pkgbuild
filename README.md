@@ -61,6 +61,13 @@ pacman 直接从 Release 资产下载仓库数据库和软件包。AUR 同步只
 
 | 文档 | 内容 |
 | --- | --- |
+| [`PROJECT-GOVERNANCE.md`](PROJECT-GOVERNANCE.md) | 项目治理原则、状态与变更规则 |
+| [`PACKAGE-REGISTRY.md`](PACKAGE-REGISTRY.md) | 软件包更新来源与逐包触发声明 |
+| [`DEPENDENCY-MATRIX.md`](DEPENDENCY-MATRIX.md) | 依赖类别、版本对账与 SONAME 棐测规则 |
+| [`UPDATE-ARCHITECTURE.md`](UPDATE-ARCHITECTURE.md) | 上游监控、路由、构建与发布闭环 |
+| [`SECURITY-POLICY.md`](SECURITY-POLICY.md) | 供应链、权限与自动化安全规范 |
+| [`OPERATIONS.md`](OPERATIONS.md) | 日常维护与发布失败恢复 |
+| [`FINAL-ACCEPTANCE.md`](FINAL-ACCEPTANCE.md) | 全模块验收标准 |
 | [`docs/BUILD-STRATEGY.md`](docs/BUILD-STRATEGY.md) | 四类构建策略（source/vcs/binary-repack/data）、逐包归类与调度分流 |
 | [`docs/PKGREL-POLICY.md`](docs/PKGREL-POLICY.md) | pkgrel 形状、全部递增入口、`.pkgrel-floor-skip` 语义、写回与闸门链 |
 | [`docs/ABI-REBUILD-POLICY.md`](docs/ABI-REBUILD-POLICY.md) | ABI watch 两类检测、STALE/UPSTREAM/NOTE 三态、冷却与豁免 |
