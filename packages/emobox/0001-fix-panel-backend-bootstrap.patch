@@ -1,0 +1,163 @@
+diff -ruN a/ui/src/App.vue b/ui/src/App.vue
+--- a/ui/src/App.vue	2026-11-28 13:38:55.000000000 +0800
++++ b/ui/src/App.vue	2026-11-28 17:29:48.167509403 +0800
+@@ -12,7 +12,7 @@
+ import { useAppearanceVars } from './composables/use-appearance-vars'
+ import { useOverscrollLock } from './composables/use-overscroll-lock'
+ import { useThemeColor } from './composables/use-theme-color'
+-import { bootstrapPanelSession } from './assembly/panel'
++import { bootstrapPanelSession, panelSessionReady } from './assembly/panel'
+ import PanelGate from './components/panel/PanelGate.vue'
+ import {
+   showDaeConfigModal,
+@@ -110,11 +110,11 @@
+   // /api/state on first run and applies the advisory default_theme.
+   await bootstrapPanelSession()
+ 
+-  if (autoImportSettings.value) {
++  if (panelSessionReady.value && autoImportSettings.value) {
+     await importSettingsFromUrl()
+   }
+ 
+-  if (autoSyncSettings.value) {
++  if (panelSessionReady.value && autoSyncSettings.value) {
+     try {
+       await syncSettingsFromCore()
+     } catch (e) {
+@@ -142,7 +142,7 @@
+       aria-hidden="true"
+       class="status-bar-tint"
+     />
+-    <RouterView />
++    <RouterView v-if="panelSessionReady" />
+     <PanelGate />
+     <BackendSwitchToast />
+     <BackendConnectionError />
+diff -ruN a/ui/src/assembly/panel.ts b/ui/src/assembly/panel.ts
+--- a/ui/src/assembly/panel.ts	2026-11-28 13:38:55.000000000 +0800
++++ b/ui/src/assembly/panel.ts	2026-11-28 17:29:48.168406894 +0800
+@@ -5,8 +5,8 @@
+   setPanelToken,
+   type PanelState,
+ } from '@/api/panel'
+-import { addBackend, backendList, setActiveBackend } from '@/store/setup'
+ import { autoTheme, darkTheme, defaultTheme } from '@/store/settings'
++import { activeUuid, addBackend, backendList, setActiveBackend, updateBackend } from '@/store/setup'
+ import type { Backend } from '@/types'
+ import { ref } from 'vue'
+ 
+@@ -15,6 +15,7 @@
+ // token verifies, /api/state doubles as the bootstrap document: it carries the
+ // clash_api endpoint + secret so the clash pages connect without manual setup.
+ export const panelGateVisible = ref(!getPanelToken())
++export const panelSessionReady = ref(false)
+ export const panelState = ref<PanelState | null>(null)
+ 
+ // Dark palettes from the upstream theme list; anything else lands on the
+@@ -34,19 +35,40 @@
+ }
+ 
+ const seedClashBackend = (state: PanelState) => {
+-  if (backendList.value.length > 0) return
+   try {
+     const url = new URL(state.clash_api)
++    if (url.protocol !== 'http:' && url.protocol !== 'https:') return
+     const backend: Omit<Backend, 'uuid'> = {
+       type: 'clash',
+-      protocol: url.protocol.replace(':', ''),
++      protocol: url.protocol.slice(0, -1),
+       host: url.hostname,
+-      port: url.port || '9090',
+-      secondaryPath: '',
++      port: url.port || (url.protocol === 'https:' ? '443' : '80'),
++      secondaryPath: url.pathname === '/' ? '' : url.pathname.replace(/\/$/, ''),
+       password: state.clash_secret || '',
+       label: 'emobox',
+     }
+-    setActiveBackend(addBackend(backend))
++    const normalizeHost = (host: string) => host.replace(/^\[|\]$/g, '').toLowerCase()
++    const existing = backendList.value.find(
++      (item) =>
++        item.type === 'clash' &&
++        item.protocol.toLowerCase() === backend.protocol &&
++        normalizeHost(item.host) === normalizeHost(backend.host) &&
++        String(item.port) === backend.port &&
++        (item.secondaryPath || '').replace(/\/$/, '') === backend.secondaryPath,
++    )
++    if (existing) {
++      updateBackend(existing.uuid, {
++        ...existing,
++        password: backend.password,
++        label: existing.label || 'emobox',
++      })
++      if (!activeUuid.value || activeUuid.value === existing.uuid) setActiveBackend(existing.uuid)
++      return
++    }
++    const previousActive = activeUuid.value
++    const created = addBackend(backend)
++    if (previousActive) setActiveBackend(previousActive)
++    else setActiveBackend(created)
+   } catch {
+     // Malformed clash_api in panel.json: leave backend setup to the user.
+   }
+@@ -57,6 +79,7 @@
+   panelGateVisible.value = false
+   seedClashBackend(state)
+   applyAdvisoryTheme(state.default_theme)
++  panelSessionReady.value = true
+ }
+ 
+ export const verifyPanelToken = async (token: string): Promise<PanelState> => {
+@@ -68,6 +91,7 @@
+   } catch (err) {
+     clearPanelToken()
+     panelGateVisible.value = true
++    panelSessionReady.value = false
+     throw err
+   }
+ }
+@@ -75,6 +99,7 @@
+ export const bootstrapPanelSession = async () => {
+   if (!getPanelToken()) {
+     panelGateVisible.value = true
++    panelSessionReady.value = false
+     return
+   }
+   try {
+@@ -84,5 +109,6 @@
+     // Expired/rotated token or backend down: show the gate again.
+     clearPanelToken()
+     panelGateVisible.value = true
++    panelSessionReady.value = false
+   }
+ }
+diff -ruN a/ui/src/assembly/session.ts b/ui/src/assembly/session.ts
+--- a/ui/src/assembly/session.ts	2026-11-28 13:38:55.000000000 +0800
++++ b/ui/src/assembly/session.ts	2026-11-28 17:29:48.169531062 +0800
+@@ -7,6 +7,7 @@
+ import { driver } from './driver'
+ import { initLogs, stopLogs } from './logs'
+ import { initSatistic, stopSatistic } from './overview'
++import { panelSessionReady } from './panel'
+ import { fetchProxies } from './proxies'
+ import { fetchRules } from './rules'
+ import { probeActiveBackend } from './version'
+@@ -71,4 +72,17 @@
+   }
+ }
+ 
+-watch(activeBackend, startBackendSession, { immediate: true })
++watch(
++  [activeBackend, panelSessionReady],
++  ([, ready]) => {
++    if (ready) startBackendSession()
++    else {
++      stopConnections()
++      stopLogs()
++      stopSatistic()
++      stopEvents()
++      driver().reset?.()
++    }
++  },
++  { immediate: true },
++)

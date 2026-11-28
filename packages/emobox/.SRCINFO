@@ -1,7 +1,7 @@
 pkgbase = emobox
 	pkgdesc = Multi-theme local web panel for sing-box eBPF: subscriptions, per-app policy, safe config pipeline, traffic history
 	pkgver = 1.0.0
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/emoeem/emobox
 	install = emobox.install
 	arch = x86_64
@@ -22,6 +22,8 @@ pkgbase = emobox
 	replaces = dracula-panel-for-sing-box
 	options = !strip
 	source = emobox-1.0.0.tar.gz::git+https://github.com/emoeem/emobox.git#tag=v1.0.0
+	source = 0001-fix-panel-backend-bootstrap.patch
 	sha256sums = SKIP
+	sha256sums = 6c1c2938ebce37a83d7d06e1dd972dbe62343df0e8ebc19e0d26e61385a619d6
 
 pkgname = emobox

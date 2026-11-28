@@ -11,7 +11,7 @@
 
 pkgname=emobox
 pkgver=1.0.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Multi-theme local web panel for sing-box eBPF: subscriptions, per-app policy, safe config pipeline, traffic history'
 arch=('x86_64')
 url='https://github.com/emoeem/emobox'
@@ -25,8 +25,15 @@ conflicts=('sing-box-panel' 'dracpanel' 'dracula-panel-for-sing-box')
 replaces=('sing-box-panel' 'dracpanel' 'dracula-panel-for-sing-box')
 # source 加显式文件名前缀：builder 的共享 SRCDEST 缓存与包名/git basename
 # 同为 "emobox"，无前缀时 makepkg 会撞上缓存里的半成品目录而报 not a clone。
-source=("emobox-${pkgver}.tar.gz::git+https://github.com/emoeem/emobox.git#tag=v${pkgver}")
-sha256sums=('SKIP')
+source=("emobox-${pkgver}.tar.gz::git+https://github.com/emoeem/emobox.git#tag=v${pkgver}"
+        "0001-fix-panel-backend-bootstrap.patch")
+sha256sums=('SKIP'
+            '6c1c2938ebce37a83d7d06e1dd972dbe62343df0e8ebc19e0d26e61385a619d6')
+
+prepare() {
+    cd "$srcdir/emobox-${pkgver}.tar.gz"
+    patch -Np1 -i "$srcdir/0001-fix-panel-backend-bootstrap.patch"
+}
 
 build() {
     cd "$srcdir/emobox-${pkgver}.tar.gz"
